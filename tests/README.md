@@ -6,6 +6,8 @@
 
 该目录随 GoogleTest 集成由提交 `8525ad1e`（2026-09-02）首次创建；提交 `60681aaa`（2026-09-02）加入 Euler backend contract test。当前包含原始 `hello_test` smoke test 和 CPU Euler backend contract test；Kunshan HIP contract test 由对应 port 的 CMake 选项按需构建。
 
+默认行为是 CPU-only：根目录 CMake/CTest 不会申请或调用海光 DCU。Kunshan port 的 `ONEFLOW_1D_ENABLE_HIP` 和 `ONEFLOW_1D_ENABLE_GTEST` 默认均为 `OFF`，只有专用计算节点作业显式设置为 `ON` 时才构建并运行 HIP/DCU contract test。
+
 mkdir build && cd build
 cmake ..
 cmake --build .
