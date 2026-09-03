@@ -361,7 +361,7 @@ target_compile_definitions ( ${PROJECT_NAME}
 )
 
 set ( PRJ_SYSTEM_DIR ${PRJ_ROOT_DIR}/system/ )
-set ( PRJ_DOCUMENT_DIR ${PRJ_ROOT_DIR}/doc/ )
+set ( PRJ_DOCUMENT_DIR ${PRJ_ROOT_DIR}/docs/ )
 
 install ( TARGETS ${PROJECT_NAME} ${USER_LIBS} ${THIRD_LIBRARIES}
     RUNTIME DESTINATION bin 
@@ -369,6 +369,6 @@ install ( TARGETS ${PROJECT_NAME} ${USER_LIBS} ${THIRD_LIBRARIES}
     ARCHIVE DESTINATION lib
 )
 install ( DIRECTORY "${PRJ_SYSTEM_DIR}" DESTINATION "bin/system" )
-install ( DIRECTORY "${PRJ_DOCUMENT_DIR}" DESTINATION "doc" )
+install ( DIRECTORY "${PRJ_DOCUMENT_DIR}" DESTINATION "docs" )
 
 message ( STATUS "--- Exit ${CMAKE_CURRENT_LIST_FILE}! ---" )

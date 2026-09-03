@@ -30,7 +30,7 @@ test/
   only when the accepted numerical result changes.
 - Write generated logs, results, reports, and temporary files outside
   `test/`.
-- Maintain project reports under `doc/reports/` using stable filenames.
+- Maintain project reports under `docs/reports/` using stable filenames.
 - Do not create a new dated report for every regression run. CI run evidence
   belongs in workflow artifacts; durable conclusions update the stable report.
 
@@ -94,5 +94,5 @@ adapters can be added without changing the solver-facing interface.
 The maintained delivery report is:
 
 ```text
-doc/reports/architecture/oneflow-gpu-backend-delivery.md
+docs/reports/architecture/oneflow-gpu-backend-delivery.md
 ```

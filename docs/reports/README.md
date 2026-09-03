@@ -7,8 +7,8 @@ the isolated cluster run directories, not in this directory.
 ## Regression and residuals
 
 - [Regression and residual integration (HTML)](regression/oneflow-residual-integration-20260901.html)
-- [One-dimensional Euler validation](regression/oneflow-euler-validation.md)
-- [One-dimensional Euler validation (HTML)](regression/oneflow-euler-validation.html)
+- [One-dimensional Euler validation](regression/oneflow-euler-validation-current.md)
+- [One-dimensional Euler validation (HTML)](regression/oneflow-euler-validation-current.html)
 
 ## Performance
 
