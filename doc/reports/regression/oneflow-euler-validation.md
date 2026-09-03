@@ -1,8 +1,8 @@
 # OneFLOW 一维 Euler 原生 HIP 验证记录
 
-> 记录日期：2026-09-03（持续维护报告；历史性能数据保留原始日期）
+> 记录日期：2026-08-28
 > 本文是当前一维主线的结果记录，不代表完整 Navier–Stokes GPU 化，也不替代
-> `docs/reports/architecture/oneflow-gpu-backend-delivery.md` 中较早的 GPU backend 框架交付报告。
+> `doc/reports/architecture/oneflow-gpu-backend-delivery.md` 中较早的 GPU backend 框架交付报告。
 
 ## 1. 当前结论
 
@@ -251,7 +251,7 @@ workload（50 steps，2 repeats，1 warmup）完成四个规模测试。benchmar
 6. 根据新 profile 再做 Euler kernel/dataflow 优化。
 
 完整阶段、接口建议和验收指标见
-`docs/reports/architecture/oneflow-euler-optimization-plan.md`。Euler 达到验收
+`doc/reports/architecture/oneflow-euler-optimization-plan.md`。Euler 达到验收
 条件后再恢复 WENO5；二维、三维继续后移。
 
 
@@ -373,7 +373,7 @@ MPI 8-rank/1-DCU：验证共享卡域分解下的综合 wall time
 完整原始输出、运行参数和可复现脚本见：
 
 ```text
-docs/reports/performance/oneflow-euler-performance-20260828.md
+doc/reports/performance/oneflow-euler-performance-20260828.md
 ci/kunshan/euler-mpi-cpu-32.slurm
 ci/kunshan/euler-mpi-gpu8-1.slurm
 ```

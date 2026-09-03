@@ -55,7 +55,7 @@
 
 ## 3. Backend 架构
 
-新增目录 [`codes/accel/`](../../../codes/accel/)。
+新增目录 [`codes/accel/`](../../codes/accel/)。
 
 | 层次 | 组件 | 当前职责 |
 |---|---|---|
@@ -87,7 +87,7 @@ OneFLOW solver
 
 ### 3.1 配置入口
 
-[`codes/CMakeLists.txt`](../../../codes/CMakeLists.txt) 新增：
+[`codes/CMakeLists.txt`](../../codes/CMakeLists.txt) 新增：
 
 - `ONEFLOW_ACCEL_BACKEND=CPU|HIP|CUDA|KOKKOS`
 - `ONEFLOW_ENABLE_MULTI_DEVICE`
@@ -112,17 +112,17 @@ export ONEFLOW_ACCEL_BACKEND=CPU
 
 ### 3.2 生命周期
 
-[`codes/main/src/SimuImp.cpp`](../../../codes/main/src/SimuImp.cpp) 在并行环境和
+[`codes/main/src/SimuImp.cpp`](../../codes/main/src/SimuImp.cpp) 在并行环境和
 控制参数初始化后启动 backend runtime，并在程序结束前 finalize。
 
-[`codes/cuda/src/HybridParallel.cpp`](../../../codes/cuda/src/HybridParallel.cpp)
+[`codes/cuda/src/HybridParallel.cpp`](../../codes/cuda/src/HybridParallel.cpp)
 增加了非 MPI 编译保护，并使用同一个 backend runtime 入口。
 
 ## 4. 回归测试标准
 
 ### 4.1 CPU 基准算例
 
-测试清单由 [`test/suites/cpu-serial.txt`](../../../test/suites/cpu-serial.txt) 定义。参考结果使用
+测试清单由 [`test/suites/cpu-serial.txt`](../../test/suites/cpu-serial.txt) 定义。参考结果使用
 各算例已有的 `autotest/` 输出。
 
 | 算例 | 覆盖范围 | 实测耗时 |
@@ -192,7 +192,7 @@ REGRESSION_RC=0 TOTAL_ELAPSED_SECONDS=152
 持有本地 zone，其余 rank 的 `dataList` 为空。旧实现无条件访问
 `dataList[0]`，导致 `ResMax::CalcMax()` 越界。
 
-[`codes/residual/src/Residual.cpp`](../../../codes/residual/src/Residual.cpp) 的
+[`codes/residual/src/Residual.cpp`](../../codes/residual/src/Residual.cpp) 的
 修复包括：
 
 - 空 `dataList` 使用安全哨兵值。
@@ -251,7 +251,7 @@ REGRESSION_RC=0 TOTAL_ELAPSED_SECONDS=152
 
 ### 6.1 `test.py`
 
-[`test/test.py`](../../../test/test.py) 已修复：
+[`test/test.py`](../../test/test.py) 已修复：
 
 - 文件一方提前 EOF 时不再误判为通过。
 - 求解进程非零退出码会导致测试失败。
@@ -263,7 +263,7 @@ REGRESSION_RC=0 TOTAL_ELAPSED_SECONDS=152
 ### 6.2 残差基线数据库
 
 残差数据库位于
-[`test/baselines/residual-baseline.json`](../../../test/baselines/residual-baseline.json)。
+[`test/baselines/residual-baseline.json`](../../test/baselines/residual-baseline.json)。
 它保存五个 CPU 串行算例的完整残差曲线，而不是只保存最后一个残差。
 
 | 内容 | 说明 |
@@ -292,7 +292,7 @@ python3 test/baselines/build_residual_db.py \
 ### 6.3 昆山 workflow
 
 新增
-[`kunshan-regression.yml`](../../../.github/workflows/kunshan-regression.yml)，
+[`kunshan-regression.yml`](../../.github/workflows/kunshan-regression.yml)，
 支持手动选择：
 
 - `cpu-serial`
@@ -368,8 +368,8 @@ KUNSHAN_REMOTE_ROOT/runs/<github-run-id>_<attempt>/
 
 | 内容 | 路径 |
 |---|---|
-| 完整交付报告 | `docs/reports/architecture/oneflow-gpu-backend-delivery.md` |
-| HTML 报告 | `docs/reports/architecture/oneflow-gpu-backend-delivery.html` |
+| 完整交付报告 | `doc/reports/architecture/oneflow-gpu-backend-delivery.md` |
+| HTML 报告 | `doc/reports/architecture/oneflow-gpu-backend-delivery.html` |
 | 测试规范 | `test/README.md` |
 | CPU suite | `test/suites/cpu-serial.txt` |
 | Backend 框架 | `codes/accel/` |

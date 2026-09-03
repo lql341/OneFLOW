@@ -1,6 +1,6 @@
 # OneFLOW 文档
 
-`docs/` 是 OneFLOW 的统一文档根目录，包含历史手册、Sphinx 网站文档和项目报告。
+`doc/` 是 OneFLOW 的统一文档根目录，包含历史手册、Sphinx 网站文档和项目报告。
 
 ## 目录结构
 
@@ -14,11 +14,11 @@
 在仓库根目录执行：
 
 ```bash
-cd docs
+cd doc
 make html
 ```
 
-生成结果位于 `docs/build/html/`。CI 和 Read the Docs 均使用 `docs/source/`
+生成结果位于 `doc/build/html/`。CI 和 Read the Docs 均使用 `doc/source/`
 作为 Sphinx 源目录。
 
-新增或更新工程文档时，统一放在 `docs/` 下。
+新增或更新工程文档时，统一放在 `doc/` 下；不要重新创建顶层 `docs/` 目录。
