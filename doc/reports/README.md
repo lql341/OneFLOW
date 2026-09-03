@@ -21,6 +21,8 @@ the isolated cluster run directories, not in this directory.
 - [GPU backend delivery report (Markdown)](architecture/oneflow-gpu-backend-delivery.md)
 - [GPU backend delivery report (HTML)](architecture/oneflow-gpu-backend-delivery.html)
 - [One-dimensional Euler backend optimization plan](architecture/oneflow-euler-optimization-plan.md)
+- [Project handoff (2026-09-03)](architecture/oneflow-project-handoff-20260903.md)
+- [OneFLOW DCU porting playbook (2026-09-03)](architecture/oneflow-dcu-porting-playbook-20260903.md)
 
 ## Drafts
 
