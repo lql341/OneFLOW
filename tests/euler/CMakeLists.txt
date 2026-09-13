@@ -29,3 +29,31 @@ target_link_libraries(oneflow_euler_backend_cpu_test
 gtest_discover_tests(oneflow_euler_backend_cpu_test
   DISCOVERY_MODE PRE_TEST
 )
+
+add_executable(oneflow_flux_backend_bridge_test
+  flux_backend_bridge_test.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDEuler.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDEulerBackend.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDWeno5.cpp
+  ${CMAKE_SOURCE_DIR}/codes/accel/src/CpuFluxBackend.cpp
+)
+
+target_include_directories(oneflow_flux_backend_bridge_test
+  PRIVATE
+    ${ONEFLOW_EULER_BACKEND_DIR}
+    ${CMAKE_SOURCE_DIR}/codes/accel/include
+    ${CMAKE_SOURCE_DIR}/codes/project/include
+    ${CMAKE_SOURCE_DIR}/codes/basic/include
+)
+
+target_compile_options(oneflow_flux_backend_bridge_test
+  PRIVATE
+    -ffp-contract=off
+)
+
+target_link_libraries(oneflow_flux_backend_bridge_test
+  PRIVATE
+)
+
+# Bridge test is a standalone main(), not a gtest
+# Run manually: ./bin/oneflow_flux_backend_bridge_test
