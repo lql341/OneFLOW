@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-13
+> 最后更新：2026-09-13（本轮：Phase 1-3 完成，共 7 commits）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -105,7 +105,7 @@ git show dev:doc/reports/architecture/oneflow-development-todo.md
 | 项目 | 状态 |
 |---|---|
 | 主分支 | `upstream/master` = PR #147 merge（含昆山 CI 脚本、TEST_PREFIX、文档） |
-| 进行中的 PR | **#149**（9 commits）：路径修复 + 昆山环境要求 + 2026-09-13 性能报告 + 4-DCU 基线勘误 + 标准工作区/套件 + `AGENTS.md`/`CLAUDE.md`。CI 全绿，等上游 review |
+| 进行中的 PR | **#149**：CI 全绿，等上游 review |
 | 分支 | `fix/contract-test-cmake-path`（#149）；`dev`（WENO5 统一接口已完成，commit `6eaf46d2` + `6f341cef` + `cc2ef93b`） |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
@@ -120,10 +120,23 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | ✅ 完成（commit `11b98029`） |
-| Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | ✅ 完成（commit `c4764c48`，机器精度一致） |
-| Phase 3 | HipEulerBackend 接入 AccelBackend 统一设备管理 | ✅ 完成（commit `983641c8`） |
-| Phase 4 | 主求解器 NsInvFlux 接入 FluxBackend 虚接口 | 待开始 |
+| Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | ✅ `11b98029` |
+| Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | ✅ `c4764c48`（机器精度 2.22e-16） |
+| Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | ✅ `983641c8` |
+| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 🔜 下一步 |
+
+**port / accel / NS 三层关系（统一后）**：
+
+| 层 | 角色 | GPU 状态 |
+|----|------|----------|
+| **port** (`ports/kunshan/`) | 最小实验闭环：1D Euler, persistent state, FullTrace, 合约测试 | ✅ 完整 |
+| **accel** (`codes/accel/`) | 生产基础设施：AccelRuntime, FluxBackend, DeviceBuffer | ✅ 完整（标量+Euler） |
+| **NS** (`codes/ns/` + `codes/uns/`) | 主求解器：5 方程, 8 种通量格式, 逐面 CPU 循环 | ❌ 待接入 |
+
+**OpenAI NS 解决公告 (2026-09-08) 参考**：
+- 数学证明（奇点存在性），非数值求解器，与 OneFLOW 直接技术关联有限
+- 方法论可借鉴：Euler 先做热身 → NS；形式化验证 1/6 工时（对应 Phase 2 桥接测试）
+- 行业信号：AI+CFD 交叉领域在加速，GPU 求解器基础设施具有战略价值
 
 ## 2. 待办事项
 
@@ -133,10 +146,12 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P1 — 下一步（建议按序）
 
-- [x] **Phase 2：FluxBackend ↔ EulerBackend 验证桥**
-  - ✅ CPU 侧 4 分辨率全部通过，误差 ≤ 2.22e-16（机器精度）。
-  - 桥接测试已加入 `tests/euler/flux_backend_bridge_test.cpp`。
-  - HIP 版本待昆山运行。
+- [ ] **Phase 4：主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化**
+  - 目标：复制 FieldSolver 已有的 `FluxBackend` 接入模式到 NS 求解器。
+  - 范围：`UNsInvFlux::CalcInvFlux()` 的逐面循环 → 批量 `FaceStateView` + `FluxBackend::CalcInvFlux`。
+  - 切入点：`LaxFriedrichs` 格式（Rusanov 等价，Phase 1-2 已验证）。
+  - 注意：Eric 在活跃重构 NS 代码（重命名/现代化），改动要聚焦不扩散。
+  - 验收：CPU 侧 NS 通量与原有逐面循环一致；HIP 侧在昆山通过 correctness。
 
 - [ ] **昆山 HIP contract 6/6 验证 WENO5**（WENO5 统一接口 CPU 侧已完成 8/8）
   - 在昆山用 `dcu-single` 套件跑 HIP contract test，确认 WENO5 的 GPU 路径同样通过。
@@ -207,6 +222,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-13 | Phase 3: port HipState 接入 AccelBackend + DeviceBuffer（消除 hipMalloc/hipMemcpy 重复） | commit `983641c8` |
 | 2026-09-13 | Phase 3: port HipState 接入 AccelBackend + DeviceBuffer（消除 hipMalloc/hipMemcpy 重复） | commit `983641c8` |
 | 2026-09-13 | Phase 2: FluxBackend ↔ EulerBackend 数值桥接验证（4 分辨率，机器精度一致） | commit `c4764c48` |
 | 2026-09-13 | Phase 1: FluxBackend 扩展为 Euler 多方程 Rusanov（CPU 验证通过：3eq 1D Euler + 5eq 3D NS）；HIP kernel 已编写待昆山验证 | commit `11b98029` |
