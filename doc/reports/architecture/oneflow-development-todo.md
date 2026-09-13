@@ -164,17 +164,6 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P2 — 后续技术工作
 
-- [x] **Phase 3：HipEulerBackend 接入 AccelBackend**
-  - 内容：HipState 用 `AccelBackend::Allocate/Copy` 替代裸 `hipMalloc/hipMemcpy`。
-  - 收益：设备选择统一由 `AccelRuntime` 管理（多 GPU 映射、环境变量），内存管理复用现有错误检查。
-  - 注意：stream/event/kernel launch 保持 HIP 特定（AccelBackend 不抽象这些）。
-
-- [ ] **Phase 4：主求解器 NsInvFlux 接入**
-  - 内容：在 `NsInvFlux::Solve`/`LaxFriedrichs` 中检测 HIP backend 可用性，通过 `FluxBackend` 虚接口调用 GPU。
-  - 需要上游配合或不轻易改动主求解器逻辑；可先从 `LaxFriedrichs` 单一格式开始验证。
-
-- [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
-
 - [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
   - 内容：checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
   - 参考：`doc/reports/architecture/oneflow-euler-optimization-plan.md` 阶段 C/D。
@@ -222,7 +211,6 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
-| 2026-09-13 | Phase 3: port HipState 接入 AccelBackend + DeviceBuffer（消除 hipMalloc/hipMemcpy 重复） | commit `983641c8` |
 | 2026-09-13 | Phase 3: port HipState 接入 AccelBackend + DeviceBuffer（消除 hipMalloc/hipMemcpy 重复） | commit `983641c8` |
 | 2026-09-13 | Phase 2: FluxBackend ↔ EulerBackend 数值桥接验证（4 分辨率，机器精度一致） | commit `c4764c48` |
 | 2026-09-13 | Phase 1: FluxBackend 扩展为 Euler 多方程 Rusanov（CPU 验证通过：3eq 1D Euler + 5eq 3D NS）；HIP kernel 已编写待昆山验证 | commit `11b98029` |
