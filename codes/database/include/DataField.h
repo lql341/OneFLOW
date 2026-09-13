@@ -22,51 +22,43 @@ License
 
 #pragma once
 #include "NamespaceMacros.h"
-#include <set>
+#include <unordered_map>
 #include <string>
 
 BeginNameSpace( ONEFLOW )
 
 class PointerWrap;
 
-class DataF
+class FieldEntry
 {
 public:
-    DataF();
-    DataF( const std::string & name, PointerWrap * data );
-    ~DataF();
+    FieldEntry();
+    FieldEntry( const std::string & name, PointerWrap * data );
+    ~FieldEntry();
 public:
-    std::string  name;
+    std::string   name;
     PointerWrap * data;
 public:
-    std::string & GetName() { return name;  }
-    PointerWrap * GetPointerWrap() { return data;  }
-};
-
-class CompareDataF
-{
-public:
-    bool operator()( const DataF * lhs, const DataF * rhs ) const
-    {
-        return lhs->name < rhs->name;
-    }
+    std::string & GetName() { return name; }
+    PointerWrap * GetPointerWrap() { return data; }
 };
 
 class DataField
 {
 public:
-    typedef std::set< DataF *, CompareDataF > DataSET;
+    // Use unordered_map for O(1) average lookup
+    using DataMap = std::unordered_map<std::string, FieldEntry*>;
 public:
     DataField();
     ~DataField();
 protected:
-    DataSET * dataSet;
+    DataMap * dataMap;
 public:
-    void UpdateDataF( DataF * dataf );
-    DataF * GetDataF( const std::string & name );
-    void DeleteDataF( const std::string & name );
+    void UpdateFieldEntry( FieldEntry * fieldEntry );
+    FieldEntry * GetFieldEntry( const std::string & name );
+    void DeleteFieldEntry( const std::string & name );
 
-    DataSET * GetDataSet() { return dataSet; }
+    DataMap * GetDataMap() { return dataMap; }
 };
 
 EndNameSpace

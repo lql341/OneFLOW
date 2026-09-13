@@ -38,10 +38,10 @@ License
 #include "GridElem.h"
 #include "ElemFeature.h"
 #include "ElementHome.h"
-#include "PointFactory.h"
-#include "PointSearch.h"
+#include "PointManager.h"
+#include "PointLocator.h"
 #include "FaceSolver.h"
-#include "Stop.h"
+#include "Fatal.h"
 #include <iostream>
 #include <iomanip>
 
@@ -146,7 +146,7 @@ void CgnsZone::ConvertToInnerDataStandard()
 
 }
 
-void CgnsZone::ConstructCgnsGridPoints( PointFactory * point_factory )
+void CgnsZone::ConstructCgnsGridPoints( MeshPointManager * point_factory )
 {
     NodeMesh * nodeMesh = this->cgnsCoor->GetNodeMesh();
     RealField & x = nodeMesh->xN;

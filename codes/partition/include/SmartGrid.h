@@ -23,7 +23,7 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "PointFactory.h"
+#include "PointManager.h"
 #include <map>
 
 
@@ -35,8 +35,8 @@ public:
     PointAction();
     ~PointAction();
 public:
-    typedef Point< Real > PointType;
-    typedef std::map< PointType , int, PointCompare< Real > > PointMap;
+    using PointType = Point< Real >;
+    using PointMap = std::map< PointType , int, PointCompare< Real > >;
 public:
     PointMap pointMap;
     HXVector< PointType > pointList;
@@ -76,7 +76,7 @@ public:
     IdTool() ;
     ~IdTool();
 public:
-   typedef std::map< Ids, int, CompareIds > IDSMap;
+   using IDSMap = std::map< Ids, int, CompareIds >;
    IDSMap ids_map;
    std::vector< Ids > ids_list;
    Ids vint;
@@ -132,33 +132,12 @@ public:
 public:
     void CalcTopology();
 public:
-    typedef std::map< Ids, int, CompareIds > PointMap;
+    using PointMap = std::map< Ids, int, CompareIds >;
 public:
     IdTool elementIdTool;
 public:
     TopoSort * topo_sort;
 };
-
-//class MyBcRegion
-//{
-//public:
-//    MyBcRegion();
-//    ~MyBcRegion();
-//public:
-//    std::string name;
-//
-//};
-//
-//
-//class BcAction
-//{
-//public:
-//    BcAction();
-//    ~BcAction();
-//public:
-//    void CreatBCRegion( const std::string "LeftOutFlow", ONEFLOW::BCOutflow );
-//};
-
 
 class SmartGrid
 {

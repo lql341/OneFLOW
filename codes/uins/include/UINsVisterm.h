@@ -33,7 +33,7 @@ public:
 	UINsVisterm();
     ~UINsVisterm();
 public:
-    typedef void ( UINsVisterm:: * VisPointer )();
+    using VisPointer = void ( UINsVisterm:: * )();
     VisPointer visPointer;
     MRField * visflux;
 
@@ -44,7 +44,7 @@ public:
     
 	void CalcVisterm();
 	void CalcFaceVisterm();
-	void CalcBcFaceVisterm();
+	//void CalcBcFaceVisterm();
 
     void Alloc();
     void DeAlloc();
@@ -61,7 +61,7 @@ public:
     void PrepareCellGeom();
 };
 
-void ICalcLaminarViscosity( int flag );
+//void ICalcLaminarViscosity( int flag );
 
 
 

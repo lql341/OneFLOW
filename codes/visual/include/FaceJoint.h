@@ -28,7 +28,7 @@ BeginNameSpace( ONEFLOW )
 
 class FaceJointManager;
 
-class PointSearch;
+class PointLocator;
 class FaceJoint;
 
 class FaceJointManager
@@ -49,9 +49,9 @@ class WallVisual;
 class FaceJoint
 {
 public:
-    typedef Point< Real > PointType;
-    typedef HXVector< PointType > PointField;
-    typedef HXVector< PointField > PointLink;
+    using PointType = Point< Real >;
+    using PointField = HXVector< PointType >;
+    using PointLink = HXVector< PointField >;
 public:
     FaceJoint();
     ~FaceJoint();
@@ -67,7 +67,7 @@ public:
 public:
     RealField pmin, pmax;
     Real dismin, dismax;
-    PointSearch * ps;
+    PointLocator * ps;
     WallVisual * wallVisual;
 public:
     void CalcBoundBox();

@@ -29,7 +29,7 @@ License
 #include "NodeMesh.h"
 #include "FaceTopo.h"
 #include "BcRecord.h"
-#include "PointSearch.h"
+#include "PointLocator.h"
 #include "HXMath.h"
 #include "Parallel.h"
 #include "PIO.h"
@@ -51,7 +51,7 @@ void SetPlateTask()
 void CreateLaminarPlateTask( StringField & data )
 {
     LaminarFlatPlateTask * task = new LaminarFlatPlateTask();
-    TaskState::task = task;
+    TaskState::createdTask = task;
 }
 
 LamVelCut::LamVelCut()

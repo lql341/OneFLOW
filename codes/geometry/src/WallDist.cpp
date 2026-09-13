@@ -69,7 +69,7 @@ void SetWallTask()
 void FillWallStructTask( StringField & data )
 {
     CFillWallStructTaskImp * task = new CFillWallStructTaskImp();
-    TaskState::task = task;
+    TaskState::createdTask = task;
 }
 
 void FillWallStruct( StringField & data )
@@ -210,7 +210,7 @@ CFillWallStructTaskImp::~CFillWallStructTaskImp()
 
 void CFillWallStructTaskImp::Run()
 {
-    ActionState::dataBook = this->dataBook;
+    ActionState::dataBook = this->dataBook.get();
     this->Create();
 
 
@@ -283,7 +283,7 @@ Real CalcPoint2FaceDist( WallStructure::PointType node, WallStructure::PointFiel
 
         Segment< 3, Real > segment( point1, point2 );
 
-        typedef DCPQuery<Real, Vector< 3, Real >, Segment< 3, Real > > SuperLine;
+        using SuperLine = DCPQuery<Real, Vector< 3, Real >, Segment< 3, Real > >;
 
         SuperLine b;
 

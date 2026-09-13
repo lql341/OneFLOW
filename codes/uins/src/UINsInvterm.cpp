@@ -27,6 +27,7 @@ License
 #include "BcData.h"
 #include "INsBcSolver.h"
 #include "Zone.h"
+#include "Fatal.h"
 #include "Atmosphere.h"
 #include "UnsGrid.h"
 #include "DataBase.h"
@@ -204,10 +205,14 @@ void UINsInvterm::Initflux()
 	iinv.sjw.resize(ug.nTCell);
 	iinv.fq.resize(ug.nFaces);
 	iinv.spc.resize(ug.nTCell);
-	iinv.ai.resize(ug.nFaces,2);
-	iinv.biu.resize(ug.nFaces,2);
-	iinv.biv.resize(ug.nFaces,2);
-	iinv.biw.resize(ug.nFaces,2);
+	//iinv.ai.resize(ug.nFaces,2);
+	//iinv.biu.resize(ug.nFaces,2);
+	//iinv.biv.resize(ug.nFaces,2);
+	//iinv.biw.resize(ug.nFaces,2);
+	ONEFLOW::AllocateVector(iinv.ai,ug.nFaces,2);
+	ONEFLOW::AllocateVector(iinv.biu,ug.nFaces,2);
+	ONEFLOW::AllocateVector(iinv.biv,ug.nFaces,2);
+	ONEFLOW::AllocateVector(iinv.biw,ug.nFaces,2);
 	//iinv.sj.resize(ug.nTCell, 4);
 	//iinv.sd.resize(ug.nTCell, 4);
 	//iinv.sjp.resize(ug.nTCell, 4);
@@ -1098,8 +1103,10 @@ void UINsInvterm::CalcCorrectPresscoef()
 		int fn = (*ug.c2f)[ug.cId].size();
 		if (ctrl.currTime == 0.001 && Iteration::innerSteps == 1)
 		{
-			iinv.sjp.resize(ug.nTCell, fn);
-			iinv.sjd.resize(ug.nTCell, fn);
+			//iinv.sjp.resize(ug.nTCell, fn);
+			//iinv.sjd.resize(ug.nTCell, fn);
+            ONEFLOW::Resize2D( iinv.sjp, ug.nTCell, fn );
+            ONEFLOW::Resize2D( iinv.sjd, ug.nTCell, fn );
 		}
 		for (int iFace = 0; iFace < fn; ++iFace)
 		{
@@ -2075,8 +2082,11 @@ void UINsInvterm::ReadTmp()
 	if (iii) return;
 	iii = 1;
 	std::fstream file;
-	file.open("nsflow.dat", std::ios_base::in | std::ios_base::binary);
-	if (!file) exit(0);
+	file.open( "nsflow.dat", std::ios_base::in | std::ios_base::binary );
+	if ( ! file )
+	{
+		Fatal( "Failed to open file: nsflow.dat" );
+	}
 
 	uinsf.Init();
 

@@ -23,13 +23,12 @@ License
 #include "IFaceLink.h"
 #include "InterFace.h"
 #include "Grid.h"
-#include "PointSearch.h"
+#include "PointLocator.h"
 #include "FaceSearch.h"
 #include "CgnsPeriod.h"
 #include "NodeMesh.h"
 #include <algorithm>
 #include <iostream>
-
 
 BeginNameSpace( ONEFLOW )
 IFaceLink::IFaceLink( Grids & grids )
@@ -40,7 +39,7 @@ IFaceLink::IFaceLink( Grids & grids )
     this->l2g.resize( nZone );
 
     this->face_search = new FaceSearch();
-    this->point_search = new PointSearch();
+    this->point_search = new PointLocator();
     this->point_search->Initialize( grids );
 }
 
@@ -64,35 +63,34 @@ void IFaceLink::AddFace( const IntField & facePointIndexes )
 
 void IFaceLink::CreateLink( IntField & faceNode, int zid, int lCount )
 {
-    int nTIFace = this->gI2Zid.size();
+    // Add face to the face list
+    this->AddFace(faceNode);
 
-    this->AddFace( faceNode );
+    // Find or add the face (HXLookup automatically sorts the nodes)
+    auto [gIid, isNew] = this->faceLookup.FindOrAdd(faceNode);
 
-    std::sort( faceNode.begin(), faceNode.end() );
-    HXSort< IntField > face( faceNode, nTIFace );
-    std::set < HXSort< IntField > >::iterator iter = this->inFaceList.find( face );
-
-    if ( iter == this->inFaceList.end() )
+    if ( isNew )
     {
-        this->inFaceList.insert( face );
-        this->l2g[ zid ][ lCount ] = nTIFace;
+        // New face: update local-to-global mapping
+        this->l2g[zid][lCount] = gIid;
+
+        // Initialize face connectivity data
         IntField zids;
         IntField lIid;
-        zids.push_back( zid );
-        lIid.push_back( lCount );
-
-        this->gI2Zid.push_back( zids );
-        this->g2l.push_back( lIid );
+        zids.push_back(zid);
+        lIid.push_back(lCount);
+        this->gI2Zid.push_back(std::move(zids));
+        this->g2l.push_back(std::move(lIid));
     }
     else
     {
-        int gIid = iter->index;
-        this->l2g[ zid ][ lCount ] = gIid;
-        this->gI2Zid[ gIid ].push_back( zid );
-        this->g2l[ gIid ].push_back( lCount );
-        //this->inFaceList.erase( iter ); //??
+        // Existing face: use the existing global face ID
+        this->l2g[zid][lCount] = gIid;
+        this->gI2Zid[gIid].push_back(zid);
+        this->g2l[gIid].push_back(lCount);
     }
 }
+
 
 void IFaceLink::ReconstructInterFace()
 {
@@ -191,8 +189,8 @@ void IFaceLink::MatchPeoridicInterface( Grid * grid )
         int nZid = this->gI2Zid [ gIFace ][ iIZone ];
         int lId  = this->g2l[ gIFace ][ iIZone ];
 
-        FaceSort * faceSort = this->face_search->faceArray[ gIFace ];
-        IntField & nodeId = faceSort->nodeId;
+        // faceArray now stores IntField directly
+        const IntField & nodeId = this->face_search->faceArray[ gIFace ];
 
         RealField xList, yList, zList;
         this->point_search->GetFaceCoorList( nodeId, xList, yList, zList );

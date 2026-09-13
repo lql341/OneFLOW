@@ -75,7 +75,7 @@ void DumpWallDist( StringField & data )
 void CreateCalcMetricsTask( StringField & data )
 {
     CalcMetricsTask * task = new CalcMetricsTask();
-    TaskState::task = task;
+    TaskState::createdTask = task;
 }
 
 void CalcMetrics( StringField & data )
@@ -86,7 +86,7 @@ void CalcMetrics( StringField & data )
 
 void CalcMetricsTask::Run()
 {
-    ActionState::dataBook = this->dataBook;
+    ActionState::dataBook = this->dataBook.get();
     for ( int zId = 0; zId < ZoneState::nZones; ++ zId )
     {
         ZoneState::zid = zId;

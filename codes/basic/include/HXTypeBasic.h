@@ -20,18 +20,19 @@ License
 
 \*---------------------------------------------------------------------------*/
 #pragma once
+
 #include "NamespaceMacros.h"
-#include <vector>
-#include <sstream>
+#include <cstddef>
+#include <ios>
 
 BeginNameSpace( ONEFLOW )
 
-typedef double Real;
-typedef std::size_t HXSize_t;
-typedef std::streamsize HXLongLong_t;
+using Real = double;
 
-const double LARGE = 1.0e40;
-const double SMALL = 1.0e-40;
-const double TINY  = 1.0e-40;
+// Unsigned type for sizes and counts (non-negative)
+using HXSize_t = std::size_t;
+
+// Signed type for positions, offsets, and seek operations (can be negative, supports large files)
+using HXOffset_t = std::streamsize;
 
 EndNameSpace

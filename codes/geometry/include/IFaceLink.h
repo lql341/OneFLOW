@@ -22,7 +22,7 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "HXSort.h"
+#include "HXLookup.h"
 #include "GridDef.h"
 #include <set>
 
@@ -30,7 +30,7 @@ BeginNameSpace( ONEFLOW )
 
 class Grid;
 class FaceSearch;
-class PointSearch;
+class PointLocator;
 class NodeMesh;
 
 class IFaceLink
@@ -39,8 +39,8 @@ public:
     IFaceLink( Grids & grids );
     ~IFaceLink();
 public:
-    //faceListis used primarily as a search list for global face
-    std::set< HXSort< IntField > > inFaceList;
+    // HXLookup automatically sorts the node list as key
+    HXLookup<int> faceLookup;
     //In general, each interface is made up of two different blocks of surface.
     //This requires each surface to have a block number and the serial number of the surface in this block
     LinkField gI2Zid;
@@ -55,7 +55,7 @@ public:
 
     FaceSearch * face_search;
 
-    PointSearch * point_search;
+    PointLocator * point_search;
 
     Grids grids;
 public:

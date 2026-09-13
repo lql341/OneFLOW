@@ -56,7 +56,6 @@ void Post::Run()
     textFileParser.OpenPrjFile( fileName, std::ios_base::in );
     textFileParser.SetDefaultSeparator( separator );
     int count = 0;
-    //std::vector< Real > xList, yList, zList;
     MakeCurveClass makeCurve;
     while ( ! textFileParser.ReachTheEndOfFile() )
     {
@@ -288,43 +287,36 @@ bool CurveData::CheckEdge( int p, int q )
 
 void CurveData::AddExtremeEdge( int p, int q )
 {
-    IntField pq;
-    pq.push_back( p );
-    pq.push_back( q );
+    // Build sorted edge key
+    IntField edgeKey;
+    edgeKey.push_back(p);
+    edgeKey.push_back(q);
 
-    std::sort( pq.begin(), pq.end() );
+    // Update point-to-point connectivity
+    this->p2p[ p ].insert( q );
+    this->p2p[ q ].insert( p );
 
-    p2p[ p ].insert( q );
-    p2p[ q ].insert( p );
+    // Find or add the edge (HXLookup automatically sorts the nodes)
+    auto [edgeId, isNew] = this->edgeLookup.FindOrAdd(edgeKey);
 
-    int id = searchEdgeList.size();
-
-    HXSort< IntField > edge( pq, id );
-
-    std::set < HXSort< IntField > >::iterator iter = this->searchEdgeList.find( edge );
-
-    if ( iter == this->searchEdgeList.end() )
+    if ( isNew )
     {
-        this->extremeEdgeList.push_back( pq );
-        this->searchEdgeList.insert( edge );
+        // New edge: store the sorted key
+        // Note: HXKey already sorted the nodes internally, but we keep a sorted version here
+        std::sort(edgeKey.begin(), edgeKey.end());
+        extremeEdgeList.push_back(std::move(edgeKey));
     }
 }
 
 bool CurveData::FindEdge( int p, int q )
 {
-    IntField pq;
-    pq.push_back( p );
-    pq.push_back( q );
+    // Build edge key (two nodes)
+    IntField edgeKey;
+    edgeKey.push_back(p);
+    edgeKey.push_back(q);
 
-    std::sort( pq.begin(), pq.end() );
-
-    int id = searchEdgeList.size();
-
-    HXSort< IntField > edge( pq, id );
-
-    std::set < HXSort< IntField > >::iterator iter = this->searchEdgeList.find( edge );
-
-    return iter != this->searchEdgeList.end();
+    // Use HXLookup for O(log n) lookup (nodes are automatically sorted)
+    return this->edgeLookup.Find(edgeKey) != INVALID_INDEX;
 }
 
 void CurveData::InitP2p()

@@ -21,23 +21,30 @@ License
 \*---------------------------------------------------------------------------*/
 #pragma once
 #include "NamespaceMacros.h"
+#include "SimuBase.h"
 #include <vector>
 #include <string>
 
-BeginNameSpace( ONEFLOW )
+BeginNameSpace(ONEFLOW)
 
 class Simulation
 {
 public:
-    Simulation( int argc, char ** argv );
+    Simulation(int argc, char** argv);
     virtual ~Simulation();
+
 public:
-    void Run();
-public:
-    void ProcessCmdLineArgs( int argc, char ** argv );
-    void RunDefaultSimu();
+    // Public entry point: never throws, returns 0 or EXIT_FAILURE
+    int Run();
+
 private:
-    //Command line parameters
+    void ProcessCmdLineArgs(int argc, char** argv);
+    // create lightweight test instance for no-argument(default) mode
+    std::unique_ptr<SimuBase> MakeDefaultSimulation();
+    // Real work, may throw
+    void RunImpl();
+
+private:
     std::vector<std::string> args;
 };
 

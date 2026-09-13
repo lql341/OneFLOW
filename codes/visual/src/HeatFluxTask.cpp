@@ -31,7 +31,7 @@ License
 #include "Boundary.h"
 #include "BcRecord.h"
 #include "NsCtrl.h"
-#include "PointSearch.h"
+#include "PointLocator.h"
 #include "Zone.h"
 #include "ZoneState.h"
 #include "HXMath.h"
@@ -83,7 +83,7 @@ void HeatFluxTask::AllocVariable()
 
 void HeatFluxTask::CollectWallFaceNode()
 {
-    ActionState::dataBook = this->dataBook;
+    ActionState::dataBook = this->dataBook.get();
 
     for ( int zId = 0; zId < ZoneState::nZones; ++ zId )
     {
@@ -102,7 +102,7 @@ void HeatFluxTask::CollectWallFaceNode()
 
 void HeatFluxTask::CollectWallFaceValue()
 {
-    ActionState::dataBook = this->dataBook;
+    ActionState::dataBook = this->dataBook.get();
 
     for ( int zId = 0; zId < ZoneState::nZones; ++ zId )
     {
@@ -240,7 +240,7 @@ void AddWallFaceValue( FaceJointManager * walldata, int iZone )
 void CollectWallFaceValue()
 {
     ActionState::dataBook->MoveToBegin();
-    ActionState::dataBook->ReSize( 0 );
+    ActionState::dataBook->Resize( 0 );
 
     Grid * gridIn = Zone::GetGrid();
     UnsGrid * grid = UnsGridCast( gridIn );

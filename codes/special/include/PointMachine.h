@@ -24,11 +24,11 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "Point.h"
-#include "PointFactory.h"
+#include "PointManager.h"
 
 BeginNameSpace( ONEFLOW )
 
-typedef Point< Real > PointType;
+using PointType = Point< Real >;
 
 class PointMachine
 {
@@ -37,7 +37,7 @@ public:
     ~PointMachine();
 public:
     HXVector< PointType * > ptList;
-    PointBasic ptBasic;
+    PointManager ptBasic;
 public:
     void AddPoint( Real x, Real y, Real z, int id = 0 );
     PointType * GetPoint( int id );

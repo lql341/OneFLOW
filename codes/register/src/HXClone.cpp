@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "HXClone.h"
+#include "Fatal.h"
 #include <iostream>
 
 
@@ -30,11 +31,22 @@ std::map< std::string, HXClone * > * HXClone::classMap = 0;
 
 HXClone * HXClone::SafeClone( const std::string & type )
 {
-    std::map < std::string, HXClone * >::iterator iter = HXClone::classMap->find( type );
+    // FIX: classMap may be null if nothing has been Register()'d yet.
+    // Fatal(...) throws std::runtime_error, so callers of SafeClone must
+    // be prepared to handle that exception (or let it propagate) rather
+    // than expecting a null return - the `return nullptr;` lines below
+    // are unreachable and exist only to satisfy the compiler.
+    if ( ! HXClone::classMap )
+    {
+        Fatal( type + " class not found" );
+        return nullptr;
+    }
+
+    auto iter = HXClone::classMap->find( type );
     if ( iter == HXClone::classMap->end() )
     {
-        std::cout << type << " class not found" << std::endl;
-        exit( 0 );
+        Fatal( type + " class not found" );
+        return nullptr;
     }
 
     return iter->second->Clone();

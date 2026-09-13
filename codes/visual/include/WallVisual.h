@@ -23,7 +23,6 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "HXSort.h"
 
 BeginNameSpace( ONEFLOW )
 
@@ -42,8 +41,8 @@ void Reorder( T & field, IntField & order_map )
 class PointDebug
 {
 public:
-    PointDebug() {}
-    ~PointDebug() {}
+    PointDebug() = default;
+    ~PointDebug() = default;
 public:
     RealField xArray, yArray, zArray;
     Real tolerance;
@@ -69,7 +68,6 @@ public:
 
     IntField faceType;
     IntField elementType;
-    std::set< HXSort< IntField > > * faceSet;
 public:
     RealField xN, yN, zN;
 public:

@@ -89,7 +89,7 @@ public:
 	INsInvterm();
     ~INsInvterm();
 public:
-    //typedef void (INsInvterm:: * InvtermPointer )();
+    //using InvtermPointer = void (INsInvterm:: * )();
 public:
     void Solve();
 public:
@@ -110,10 +110,10 @@ public:
 public:
 };
 
-void INsCalcEnthalpy( RealField & prim, Real gama, Real & enthalpy );
-void INsCalcTotalEnthalpyChange( RealField & prim, Real & gama, RealField & dq, Real & dh );
-void INsPrimToQ( RealField & prim, Real gama, RealField & q );
-void INsQToPrim( RealField & q, Real gama, RealField & prim, RealField & temp );
-void INsCalcInternalEnergy( RealField & prim, Real gama, Real & em );
+//void INsCalcEnthalpy( RealField & prim, Real gama, Real & enthalpy );
+//void INsCalcTotalEnthalpyChange( RealField & prim, Real & gama, RealField & dq, Real & dh );
+//void INsPrimToQ( RealField & prim, Real gama, RealField & q );
+//void INsQToPrim( RealField & q, Real gama, RealField & prim, RealField & temp );
+//void INsCalcInternalEnergy( RealField & prim, Real gama, Real & em );
 
 EndNameSpace

@@ -23,156 +23,200 @@ License
 #include "DataPage.h"
 #include "BasicParallel.h"
 #include "Parallel.h"
-#include "Stop.h"
+#include "Fatal.h"
+#include <cstring>
 
-#ifndef _WINDOWS
-   #include <string.h>
-#endif
+//#ifndef _WINDOWS
+//   #include <string.h>
+//#endif
 #include <fstream>
 
 
 BeginNameSpace( ONEFLOW )
 DataPage::DataPage()
 {
-    this->dataMemory = new CharMemory();
     this->currPos = 0;
 }
 
 DataPage::~DataPage()
 {
-    delete this->dataMemory;
 }
 
 void DataPage::MoveToPosition( HXSize_t position )
 {
-    if ( ( 0 < position ) && ( position < GetSize() ) )
-    {
-        this->currPos = position;
-    }
-    else if ( 0 == position )
+    // position == size() is a valid "end/append" position.
+    if ( position <= size() )
     {
         this->currPos = position;
     }
     else
     {
-        Stop( "Out of Range: position \n" );
+        Fatal( "Out of Range: position \n" );
     }
 }
 
-void DataPage::MoveForwardPosition( HXSize_t dataSize )
+void DataPage::Advance( HXOffset_t offset )
 {
-    this->currPos += dataSize;
+    this->currPos += offset;
 }
 
-HXSize_t DataPage::GetSize()
+HXSize_t DataPage::size() const
 {
-    return dataMemory->size();
+    return dataMemory.size();
 }
 
-char * DataPage::GetBeginDataPointer()
+char * DataPage::data()
 {
-    if ( this->GetSize() == 0 )
+    // Use data() instead of operator[] to avoid UB.
+    return dataMemory.data();
+}
+
+const char * DataPage::data() const
+{
+    // Provide a const overload for read-only access.
+    return dataMemory.data();
+}
+
+char * DataPage::CurrentPtr()
+{
+    // currPos may legitimately equal size() (the "append/end" position).
+    // vector::data() + size() is well-defined as long as it is never dereferenced,
+    // unlike operator[](size()) which is UB even just to take its address.
+    //return dataMemory.data() + currPos;
+    return this->PtrAt( currPos );
+}
+
+char * DataPage::PtrAt( int offset )
+{
+    // Same reasoning as above; offset == size() must be safe to compute.
+    return dataMemory.data() + offset;
+}
+
+void DataPage::ToString( std::string & str ) const
+{
+    if ( this->size() )
     {
-        return 0;
+        str.append( this->data(), this->size() );
     }
-    return &( ( * dataMemory )[ 0 ] );
 }
 
-char * DataPage::GetCurrentDataPointer()
+void DataPage::Write( const void * data, HXSize_t dataSize )
 {
-    if ( this->GetSize() == 0 )
+    if ( dataSize == 0 || data == nullptr )
     {
-        return 0;
+        return;
     }
-    return &( ( * dataMemory )[ currPos ] );
-}
 
-void DataPage::ToString( std::string & str )
-{
-    if ( this->GetSize() )
+    // Check for buffer overflow before writing.
+    if ( this->currPos + dataSize > this->size() )
     {
-        str.append( this->GetBeginDataPointer(), this->GetSize() );
+        throw std::out_of_range("DataPage::Write - Buffer overflow");
     }
-}
 
-void DataPage::Write( void * data, HXSize_t dataSize )
-{
-    if ( dataSize <= 0 ) return;
-
-    memcpy( this->GetCurrentDataPointer(), data, dataSize );
-    this->MoveForwardPosition( dataSize );
+    std::memcpy( this->CurrentPtr(), data, dataSize );
+    this->Advance( dataSize );
 }
 
 void DataPage::Read( void * data, HXSize_t dataSize )
 {
-    if ( dataSize <= 0 ) return;
-    memcpy( data, this->GetCurrentDataPointer(), dataSize );
-    this->MoveForwardPosition( dataSize );
+    if ( dataSize == 0 || data == nullptr )
+    {
+        return;
+    }
+
+    // Prevent potential integer overflow and check bound.
+    if ( dataSize > this->size() - this->currPos )
+    {
+        throw std::out_of_range("DataPage::Read - Attempted to read past end of buffer");
+    }
+
+    std::memcpy( data, this->CurrentPtr(), dataSize );
+    this->Advance( dataSize );
 }
 
-void DataPage::Write( void * data, HXSize_t dataSize, HXSize_t position )
+void DataPage::Write( const void * data, HXSize_t position, HXSize_t dataSize )
 {
-    this->MoveToPosition( position );
-    this->Write( data, dataSize );
+    if ( dataSize == 0 || data == nullptr )
+    {
+        return;
+    }
+
+    // Check bounds for the specific window without changing internal state.
+    if ( position > this->size() || dataSize > this->size() - position )
+    {
+        throw std::out_of_range("DataPage::Write - Buffer overflow at specified position");
+    }
+
+    std::memcpy( this->data() + position, data, dataSize );
 }
 
-void DataPage::Read( void * data, HXSize_t dataSize, HXSize_t position )
+void DataPage::Read( void * data, HXSize_t position, HXSize_t dataSize ) const
 {
-    this->MoveToPosition( position );
-    this->Read( data, dataSize );
+    if ( dataSize == 0 || data == nullptr )
+    {
+        return;
+    }
+
+    // Check bounds for the specific window without changing internal state.
+    if ( position > this->size() || dataSize > this->size() - position )
+    {
+        throw std::out_of_range("DataPage::Read - Attempted to read past end of buffer");
+    }
+
+    std::memcpy( data, this->data() + position, dataSize );
 }
 
 void DataPage::ReSize( HXSize_t newSize )
 {
-    this->dataMemory->resize( newSize );
+    this->dataMemory.resize( newSize );
 }
 
-void DataPage::Send( int pId, int tag )
+void DataPage::Send( int pId, int tag ) const
 {
-    HXSize_t nLength = this->GetSize();
+    HXSize_t nLength = this->size();
 
     if ( nLength <= 0 ) return;
-    ONEFLOW::HXSend( this->GetBeginDataPointer(), nLength, PL_CHAR, pId, tag );
+    ONEFLOW::HXSend( this->data(), nLength, PL_CHAR, pId, tag );
 }
 
 void DataPage::Recv( int pId, int tag )
 {
-    HXSize_t nLength = this->GetSize();
+    HXSize_t nLength = this->size();
 
     if ( nLength <= 0 ) return;
 
-    ONEFLOW::HXRecv( this->GetBeginDataPointer(), nLength, PL_CHAR, pId, tag );
+    ONEFLOW::HXRecv( this->data(), nLength, PL_CHAR, pId, tag );
 }
 
 void DataPage::Bcast( int rootid )
 {
-    HXSize_t nLength = this->GetSize();
+    HXSize_t nLength = this->size();
 
     if ( nLength <= 0 ) return;
-    HXBcast( this->GetBeginDataPointer(), nLength, rootid );
+    HXBcast( this->data(), nLength, rootid );
 }
 
 void DataPage::ReadFile( std::fstream & file )
 {
-    HXSize_t nLength = this->GetSize();
+    HXSize_t nLength = this->size();
 
     if ( nLength <= 0 ) return;
 
-    char * data = this->GetBeginDataPointer();
+    char * data = this->data();
 
     file.read( data, nLength );
 }
 
-void DataPage::WriteFile( std::fstream & file )
+void DataPage::WriteFile( std::fstream & file ) const
 {
-    HXSize_t nLength = this->GetSize();
+    HXSize_t nLength = this->size();
 
     if ( nLength <= 0 )
     {
         return;
     }
 
-    char * data = this->GetBeginDataPointer();
+    const char * data = this->data();
 
     file.write( data, nLength );
 }

@@ -21,7 +21,6 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "CgnsTest.h"
-#include "CgnsTestTmp.h"
 #include "CgnsFile.h"
 #include "CgnsBase.h"
 #include "CgnsFactory.h"
@@ -31,6 +30,7 @@ License
 #include "CgnsZbc.h"
 #include "CgnsZbcBoco.h"
 #include "CgnsBcBoco.h"
+#include "SimuBase.h"
 #include <cstring>
 #include <iostream>
 #include <iomanip>
@@ -1010,5 +1010,6 @@ void CgnsTest::mytest_write()
     delete cgnsFile;
 }
 
-
 EndNameSpace
+WRAP_TEST_CLASS(CgnsTest, "cgns_test");
+
