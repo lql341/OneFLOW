@@ -76,6 +76,23 @@ module load openmpi      # openmpi/5.0.10
 - 系统无 sudo、无 pip、家目录可能只读；不要在 `/tmp` 里留下需要长期保留的
   工具（tmpfs 会被清理）。
 
+## 新会话如何开始（给智能体/接手者）
+
+```bash
+git fetch origin
+git checkout dev && git pull --ff-only
+cat doc/reports/architecture/oneflow-development-todo.md
+```
+
+如果工作区必须停在别的分支（例如提 PR 期间），不必切分支也能读：
+
+```bash
+git show dev:doc/reports/architecture/oneflow-development-todo.md
+```
+
+读完 §1（现状）+ §2（待办）后选任务开工；**收工前更新本文档**。本文档只存在
+于 `dev` 分支（本地 + fork），master/upstream 上都没有。
+
 ## 0. 怎么用这份文档
 
 - **开工前**：读 §1 当前状态 + §2 待办，按优先级选一件。
