@@ -106,7 +106,7 @@ git show dev:doc/reports/architecture/oneflow-development-todo.md
 |---|---|
 | 主分支 | `upstream/master` = PR #147 merge（含昆山 CI 脚本、TEST_PREFIX、文档） |
 | 进行中的 PR | **#149**（9 commits）：路径修复 + 昆山环境要求 + 2026-09-13 性能报告 + 4-DCU 基线勘误 + 标准工作区/套件 + `AGENTS.md`/`CLAUDE.md`。CI 全绿，等上游 review |
-| 分支 | `fix/contract-test-cmake-path`（#149）；`feat/weno5-backend-unification`（原 #148 内容，待重做） |
+| 分支 | `fix/contract-test-cmake-path`（#149）；`dev`（WENO5 统一接口已完成，commit `6eaf46d2` + `6f341cef` + `cc2ef93b`） |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
@@ -124,14 +124,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P1 — 下一步（建议按序）
 
-- [ ] **WENO5 统一接口重做**（原 PR #148 被关闭的内容）
-  - 目标：`EulerMethod { Rusanov, Weno5 }` 枚举；CPU/HIP 的 `Advance` 按方法分发；
-    新增 3 个 contract tests（WENO5 与旧实现逐位一致、WENO5≠Rusanov、FullTrace 拒绝）。
-  - 已知要带上两处修复：`tests/euler/CMakeLists.txt` 链接 `OneDWeno5.cpp`；
-    contract test 补 `using EulerMethod/EulerRkStages/Weno5Trace`。
-  - 参考：本地分支 `feat/weno5-backend-unification`（此前本地 8/8 通过）。
-  - 流程（#148 的教训）：本地全量构建 + 8/8 测试 → 推送 → **等 CI 绿** → 提 PR。
-  - 验收：本地 CPU contract 8/8；昆山 HIP contract 6/6（扩展套件 `dcu-single`）。
+- [ ] **昆山 HIP contract 6/6 验证 WENO5**（WENO5 统一接口 CPU 侧已完成 8/8）
+  - 在昆山用 `dcu-single` 套件跑 HIP contract test，确认 WENO5 的 GPU 路径同样通过。
+  - 本地 CPU 8/8 已通过（commit `cc2ef93b`），还需昆山 HIP 6/6。
 
 - [ ] **昆山回归 eric 的完整测试套件**
   - 范围：`tests/` 下 `task/`、`database/`、`register/`、`adt/`（框架重构的下游兼容）。
@@ -145,13 +140,13 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - 参考：`doc/reports/architecture/oneflow-euler-optimization-plan.md` 阶段 C/D。
   - 验收：Kunshan 四规模 correctness 不变；D2H 占比进一步下降；性能复测。
 
-- [ ] **WENO5 数值内核的 DCU 验证**（依赖 P1 第一项的接口稳定）
+- [ ] **WENO5 数值内核的 DCU 验证**（接口已稳定，CPU 8/8 通过）
   - 内容：用统一接口跑 WENO5 的 CPU/HIP 对比与四规模性能。
 
 ### P3 — 维护与清理
 
 - [ ] 本地分支清理：`docs/kunshan-20260913-measurements`（内容已并入 #149）；
-      保留 `feat/weno5-backend-unification` 直到重做完成。
+      `feat/weno5-backend-unification`（内容已合入 dev，可删除）。
 - [ ] 昆山 `<workspace>/work/`、`tmp/` 定期清理（均可重建）。
 - [ ] `oneflow-dev` 技能更新流程：改技能仓库 → `git push` → 各环境 `git pull`。
 
@@ -187,6 +182,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-13 | WENO5 统一接口重做完成：EulerMethod 枚举、CPU/HIP Advance 分发、3 个新 contract test；根级 CMake 补链 OneDWeno5.cpp | commits `6eaf46d2`, `6f341cef`, `cc2ef93b`；本地 CPU 8/8 PASSED |
 | 2026-09-13 | 昆山 CPU/DCU 全面复测：五算例 normal+strict、HIP contract 6/6、CPU/4-DCU MPI 四规模；4-DCU 与 9-02 一致（274.68 vs 277.22 ms） | `oneflow-euler-performance-20260913.md` |
 | 2026-09-13 | 历史报告 4-DCU 基线勘误：13.10× → 25.55×（repeats 口径错配） | 同报告 §4.4；三份维护报告已修正 |
 | 2026-09-13 | 昆山工作区规范化 + 标准四套件文档 + 作业脚本路径更新 | `ci/kunshan/README.md`；集群侧 README |
