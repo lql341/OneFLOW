@@ -19,6 +19,7 @@ the isolated cluster run directories, not in this directory.
 
 ## Architecture and delivery
 
+- [Development todo and handoff (living document, fork-only)](architecture/oneflow-development-todo.md)
 - [GPU backend delivery report (Markdown)](architecture/oneflow-gpu-backend-delivery.md)
 - [GPU backend delivery report (HTML)](architecture/oneflow-gpu-backend-delivery.html)
 - [One-dimensional Euler backend optimization plan](architecture/oneflow-euler-optimization-plan.md)
