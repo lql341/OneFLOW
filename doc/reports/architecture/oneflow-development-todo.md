@@ -10,25 +10,24 @@
 ## 存储约定（长期）
 
 本文档是 **fork-only 文档**：只存在于 lql341 的 fork 与本地仓库
-（分支 `docs/development-todo`），**不进入 upstream PR，也不提交到
-upstream 仓库**。原因：它是个人/团队的工作衔接记录，不属于上游项目文档。
+（分支 `dev`），**不进入 upstream PR，也不提交到 upstream 仓库**。
+原因：它是个人/团队的工作衔接记录，不属于上游项目文档。
 
 更新流程：
 
 ```bash
-git checkout docs/development-todo
-# 编辑本文件（§1 状态、§2 勾选/新增、完成的移入 §5）
+# 本文档在 dev 分支上，直接编辑即可
+vim doc/reports/architecture/oneflow-development-todo.md
 git commit -am "Update development todo: <一句话摘要>"
-git push origin docs/development-todo
-git checkout <当前工作分支>
+git push origin dev
 ```
 
-基线维护：当 upstream `master` 前进（例如相关 PR 合并）后，把本分支
-rebase 到新的 `upstream/master`，让它只包含本文档自身的改动，不携带
-已合并的历史。
+基线维护：当 upstream `master` 前进（例如相关 PR 合并）后，把 `dev`
+rebase 到新的 `upstream/master`，让它只包含本文档 + 开发中的功能，
+不携带已合并的历史。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
+功能 commit（排除文档 commit）。
 
-智能体配合：`oneflow-dev` 技能的 `references/workflow.md` 记录了该约定，
-agent 在收尾时会走上述流程而不是 PR。
+智能体配合：`oneflow-dev` 技能的 `references/workflow.md` 记录了该约定。
 
 ## 协作约定（重要）
 
@@ -36,8 +35,7 @@ agent 在收尾时会走上述流程而不是 PR。
 
 - **`master`**：与 `upstream/master` 保持同步，只作为 PR 基线和只读参考。
 - **`dev`**：本地与 fork 上唯一的常住工作分支。个人工作全部在这里：
-  fork-only 待办文档、进行中的功能（当前含 WENO5 统一接口）、笔记等；
-  推送到 `origin/dev` 即完成云端备份。
+  本文档、进行中的功能、笔记等；推送到 `origin/dev` 即完成云端备份。
 - **临时分支**：仅在需要向上游提 PR 时创建，从 `upstream/master` 分叉，
   cherry-pick `dev` 上的功能 commit（**排除文档 commit**），提完后删除。
 
