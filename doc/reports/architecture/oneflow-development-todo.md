@@ -116,6 +116,15 @@ git show dev:doc/reports/architecture/oneflow-development-todo.md
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 主 solver 的 accelerator backend 目前只是接口骨架。
 
+**GPU 融入路线图 (2026-09-13 启动)**：
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | ✅ 完成（commit `11b98029`） |
+| Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | ✅ 完成（commit `c4764c48`，机器精度一致） |
+| Phase 3 | HipEulerBackend 接入 AccelBackend 统一设备管理 | 待开始 |
+| Phase 4 | 主求解器 NsInvFlux 接入 FluxBackend 虚接口 | 待开始 |
+
 ## 2. 待办事项
 
 ### P0 — 等待中
@@ -123,6 +132,11 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - [ ] **PR #149 合并**（等上游 review；合并后同步本地 `master`，见 §4 收尾流程）。
 
 ### P1 — 下一步（建议按序）
+
+- [x] **Phase 2：FluxBackend ↔ EulerBackend 验证桥**
+  - ✅ CPU 侧 4 分辨率全部通过，误差 ≤ 2.22e-16（机器精度）。
+  - 桥接测试已加入 `tests/euler/flux_backend_bridge_test.cpp`。
+  - HIP 版本待昆山运行。
 
 - [ ] **昆山 HIP contract 6/6 验证 WENO5**（WENO5 统一接口 CPU 侧已完成 8/8）
   - 在昆山用 `dcu-single` 套件跑 HIP contract test，确认 WENO5 的 GPU 路径同样通过。
@@ -134,6 +148,17 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - 验收：全部通过；把结果补进 `dcu-single`/`cpu-regression` 的运行证据。
 
 ### P2 — 后续技术工作
+
+- [ ] **Phase 3：HipEulerBackend 接入 AccelBackend**
+  - 内容：HipState 用 `AccelBackend::Allocate/Copy` 替代裸 `hipMalloc/hipMemcpy`。
+  - 收益：设备选择统一由 `AccelRuntime` 管理（多 GPU 映射、环境变量），内存管理复用现有错误检查。
+  - 注意：stream/event/kernel launch 保持 HIP 特定（AccelBackend 不抽象这些）。
+
+- [ ] **Phase 4：主求解器 NsInvFlux 接入**
+  - 内容：在 `NsInvFlux::Solve`/`LaxFriedrichs` 中检测 HIP backend 可用性，通过 `FluxBackend` 虚接口调用 GPU。
+  - 需要上游配合或不轻易改动主求解器逻辑；可先从 `LaxFriedrichs` 单一格式开始验证。
+
+- [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
 
 - [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
   - 内容：checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
@@ -182,6 +207,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-13 | Phase 2: FluxBackend ↔ EulerBackend 数值桥接验证（4 分辨率，机器精度一致） | commit `c4764c48` |
+| 2026-09-13 | Phase 1: FluxBackend 扩展为 Euler 多方程 Rusanov（CPU 验证通过：3eq 1D Euler + 5eq 3D NS）；HIP kernel 已编写待昆山验证 | commit `11b98029` |
 | 2026-09-13 | WENO5 统一接口重做完成：EulerMethod 枚举、CPU/HIP Advance 分发、3 个新 contract test；根级 CMake 补链 OneDWeno5.cpp | commits `6eaf46d2`, `6f341cef`, `cc2ef93b`；本地 CPU 8/8 PASSED |
 | 2026-09-13 | 昆山 CPU/DCU 全面复测：五算例 normal+strict、HIP contract 6/6、CPU/4-DCU MPI 四规模；4-DCU 与 9-02 一致（274.68 vs 277.22 ms） | `oneflow-euler-performance-20260913.md` |
 | 2026-09-13 | 历史报告 4-DCU 基线勘误：13.10× → 25.55×（repeats 口径错配） | 同报告 §4.4；三份维护报告已修正 |
