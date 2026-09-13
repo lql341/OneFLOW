@@ -32,13 +32,49 @@ agent 在收尾时会走上述流程而不是 PR。
 
 ## 协作约定（重要）
 
-- **默认在 fork 完成**：开发、测试、文档更新都在 lql341 的 fork 与本地仓库进行，
-  推送到 fork 的相应分支即可，**不主动创建 upstream PR**。
-- **PR 需要明确指令**：只有收到“可以提 PR”的指示后才向 upstream 提交；
-  在此之前所有成果留在 fork（本分支、工作分支或 fork 上的验证分支）。
-- 提 PR 时从 fork 分支准备，推 upstream 后等 review；后续修改仍先在 fork 完成。
-- fork-first 的收益：不打扰上游 CI（每次 push 到 PR 分支都会在 base 仓库触发
-  workflow 运行）、随时可 rebase、不会被半成品 PR 绑定。
+### 分支模型：master + dev
+
+- **`master`**：与 `upstream/master` 保持同步，只作为 PR 基线和只读参考。
+- **`dev`**：本地与 fork 上唯一的常住工作分支。个人工作全部在这里：
+  fork-only 待办文档、进行中的功能（当前含 WENO5 统一接口）、笔记等；
+  推送到 `origin/dev` 即完成云端备份。
+- **临时分支**：仅在需要向上游提 PR 时创建，从 `upstream/master` 分叉，
+  cherry-pick `dev` 上的功能 commit（**排除文档 commit**），提完后删除。
+
+### 不主动提 PR
+
+- 只有收到“可以提 PR”的指示后才向 upstream 提交；在此之前所有成果留在
+  `dev` 或 fork。
+- fork-first 的收益：不打扰上游 CI（每次 push 到 PR 分支都会在 base 仓库
+  触发 workflow 运行）、随时可 rebase、不会被半成品 PR 绑定。
+
+### dev 的日常操作
+
+```bash
+git checkout dev
+# 写代码 / 更新本文档
+git add -A && git commit -m "<type>: <summary>"
+git push origin dev
+```
+
+保持文档更新为**单文件、独立 commit**，方便提 PR 时用
+`git cherry-pick` 精确排除。
+
+## 本机开发环境
+
+本机（开发工作站）有用户级 Environment Modules，优先使用而不是下载工具链：
+
+```bash
+source /home/kylinlu/Downloads/agent/repo/kylinflow/module-init.sh
+module load cmake        # cmake/4.4.3
+module load openmpi      # openmpi/5.0.10
+```
+
+- `module avail` 当前提供：`cmake/4.4.3`、`openmpi/5.0.10`、`kylinflow/0.1`。
+- 本机角色：**推送前的快速验证**（编译 port、跑 contract test，秒级反馈）；
+  目标环境验证（DTK/HIP、真实 DCU、性能数据）在昆山完成。
+- 系统无 sudo、无 pip、家目录可能只读；不要在 `/tmp` 里留下需要长期保留的
+  工具（tmpfs 会被清理）。
 
 ## 0. 怎么用这份文档
 
