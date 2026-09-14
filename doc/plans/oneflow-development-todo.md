@@ -117,24 +117,24 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | ✅ `11b98029` |
-| Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | ✅ `c4764c48`（机器精度 2.22e-16） |
-| Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | ✅ `983641c8` |
-| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 🔜 下一步 |
+| 阶段 | 内容 | 阶段含义（中文） | 状态 |
+|------|------|------------------|------|
+| Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | 先让批量通量 backend 能处理标量、3 方程 Euler 和 5 方程 NS 数据。 | ✅ `11b98029` |
+| Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | 用独立桥接测试证明新 backend 与已有 CPU oracle 的数值结果一致。 | ✅ `c4764c48`（机器精度 2.22e-16） |
+| Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | 统一 accelerator runtime 和设备内存管理，避免 backend 各自维护重复资源。 | ✅ `983641c8` |
+| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🔜 下一步 |
 
 **融合后的唯一执行主线**：架构 contract 解决生命周期/所有权，FluxBackend 解决批量通量计算；两者在主 solver CPU adapter 汇合，再复用到 HIP/DCU。
 
-| 融合层 | 交付物 | 状态 |
-|---|---|---|
-| A. 运行基线 | master 与 origin/upstream 同步 | ✅ |
-| B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | ✅ |
-| C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | ✅ Phase 1-3 |
-| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 🟨 E1 完成；E2 owner 已接入，生产钩子待做 |
-| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | ⬜ 当前主任务 |
-| F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | ⬜ |
-| G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | ⬜ |
+| 融合层 | 交付物 | 阶段含义（中文） | 状态 |
+|---|---|---|---|
+| A. 运行基线 | master 与 origin/upstream 同步 | 先固定共同代码基线，确保两条开发线从同一个上游版本继续。 | ✅ |
+| B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | 用最小可控算例验证状态生命周期、CPU/HIP 后端和 MPI 基础能力。 | ✅ |
+| C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | 建立与具体 solver 解耦的运行时、设备内存和批量 kernel 基础设施。 | ✅ Phase 1-3 |
+| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | 🟨 E1 完成；E2 owner 已接入，生产钩子待做 |
+| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | 先在 CPU 主 solver 上打通初始化、通量、时间推进和逐面数值对照闭环。 | ⬜ 当前主任务 |
+| F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | 在 CPU oracle 通过后，把同一条 solver 路径安全切换到真实 DCU 节点。 | ⬜ |
+| G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
 **整合约束**：`FluxBackend` 当前接收 equation-major conserved face state；`UNsInvFlux` 当前提供 reconstructed primitive state，且 area 由旧路径单独处理。接入前必须完成变量转换、面积/法向约定和 face connectivity 对齐，并用旧 CPU 逐面路径做 oracle。
 
@@ -162,32 +162,32 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 
-- [ ] **大阶段 E：CPU vertical slice**
-  - [x] E1：完成 domain contract 泛化，保留 1D Euler specialization。
+- [ ] **大阶段 E：CPU vertical slice** —— 在 CPU 主 solver 上完成第一条可验证的端到端加速纵切线。
+  - [x] E1：完成 domain contract 泛化，保留 1D Euler specialization。说明：定义数据布局、几何、连通性和能力边界，但不改变旧 solver 行为。
     - [x] E1.1：明确 field representation、equation layout、face-area ownership。
     - [x] E1.2：补充 cell/face geometry view 和 face connectivity view。
     - [x] E1.3：补充 ghost/halo 元数据与 3/5 方程 capability 声明。
     - [x] E1.4：为 view shape、layout 和 geometry 约束补 contract tests。
-  - [ ] E2：完成 StateRegistry 生产化。
+  - [ ] E2：完成 StateRegistry 生产化。说明：让每次 solver/zone/grid/backend 执行拥有可复用、可失效且按顺序释放的 state。
     - [x] E2.1：确定 `SimuImp`/`FieldSimu` 生命周期 owner，不把 state 塞入 kernel。
     - [x] E2.2：覆盖 solver + zone + grid level + backend/device identity。
     - [x] E2.3：接入 create/reuse/invalidate/clear 生命周期钩子。
     - [ ] E2.4：覆盖重复创建、缺失 state、restart invalidate 的测试。
-  - [ ] E3：完成 CPU adapter。
+  - [ ] E3：完成 CPU adapter。说明：把主 solver 的 primitive face 数据转换、批量通量计算和 residual 回写串成一条 CPU 路径。
     - [x] E3.1：定义 primitive-to-conserved 的 3/5 方程转换。
     - [x] E3.2：按 equation-major 约定 pack face state。
     - [x] E3.3：建立 `FaceStateView` → `CpuFluxBackend` 调用。
     - [x] E3.4：按显式 connectivity map 回写 residual。
     - [ ] E3.5：保留旧逐面路径作为 feature-gated fallback。
-  - [ ] E4：接入 INIT_FLOWFIELD/restart。
+  - [ ] E4：接入 INIT_FLOWFIELD/restart。说明：初始化和重启都必须显式建立或刷新 backend state，不能复用过期设备数据。
     - [ ] E4.1：初始化完成后 create + Upload。
     - [ ] E4.2：restart 后 invalidate + Upload，禁止复用旧 device state。
     - [ ] E4.3：补初始化/重启状态一致性测试。
-  - [ ] E5：接入 RungeKutta。
+  - [ ] E5：接入 RungeKutta。说明：让时间推进阶段复用 adapter，同时保持现有 stage 顺序和不满足能力时的回退行为。
     - [ ] E5.1：增加 solver-aware fast path capability check。
     - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
     - [ ] E5.3：不满足能力时回退原 task 序列。
-  - [ ] E6：建立 CPU oracle 与主 solver 验收门。
+  - [ ] E6：建立 CPU oracle 与主 solver 验收门。说明：只有逐面数值一致、物理量有效且回归通过，CPU vertical slice 才能算完成。
     - [ ] E6.1：新 batch 路径 vs 旧逐面路径逐 face/逐 equation 对照。
     - [ ] E6.2：检查 finite、positive density/pressure、conservation。
     - [ ] E6.3：补 lifecycle、state reuse、invalid request、batch equality CTest。
@@ -195,11 +195,17 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P1 — DCU 与回归验证
 
+说明：CPU vertical slice 通过后，才在昆山真实 DCU 节点验证 HIP/DCU 和完整回归套件。
+
+
 - [ ] 昆山 HIP contract 6/6 验证 WENO5。
 - [ ] 主 solver CPU batch 通过后，把同一 adapter 切换到 HIP/DCU，并在昆山做 correctness。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
+
+说明：功能正确性稳定后，再做设备归约、WENO5 DCU 验证和性能优化。
+
 
 - [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
   - 内容：checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
@@ -210,6 +216,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - 内容：用统一接口跑 WENO5 的 CPU/HIP 对比与四规模性能。
 
 ### P3 — 维护与清理
+
+说明：清理临时分支和工作区，并把验证后的协作流程沉淀回技能与文档。
+
 
 - [ ] 本地分支清理：`docs/kunshan-20260913-measurements`（内容已并入 #149）；
       `feat/weno5-backend-unification`（内容已合入 dev，可删除）。
