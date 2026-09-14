@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：架构纵切线与 accelerator Phase 1-3 融合到 dev；CPU 验证闭环；主 solver adapter 待做）
+> 最后更新：2026-09-14（本轮：E1 domain contract 元数据与校验完成；主 solver adapter 待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -131,7 +131,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | A. 运行基线 | master 与 origin/upstream 同步 | ✅ |
 | B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | ✅ |
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | ✅ Phase 1-3 |
-| D. domain contract | EulerDomain views、StateRegistry；后续泛化到 3/5 方程和 face geometry | 🟨 已恢复到 dev，需适配主 solver |
+| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 🟨 E1 完成，StateRegistry 与主 solver 适配待做 |
 | E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | ⬜ 当前主任务 |
 | F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | ⬜ |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | ⬜ |
@@ -162,14 +162,36 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 
-- [ ] **泛化 domain contract**：保留 1D Euler specialization，同时补充 equation layout、cell/face geometry、connectivity、ghost/halo 和 3/5 方程能力声明。
-- [ ] **StateRegistry 生产化**：由 `SimuImp`/`FieldSimu` 生命周期 owner 管理，覆盖 solver + zone + grid level + backend/device。
-- [ ] **CPU adapter**：在 `UNsInvFlux::CalcInvFlux()` 建立 pack → primitive-to-conserved → `FaceStateView` → `CpuFluxBackend` → residual 的路径。
-- [ ] **面积/法向/face 顺序对齐**：禁止重复乘 `faceArea`；保持旧 `AddF2CField` 的边界和 connectivity 语义。
-- [ ] **CPU oracle**：新 batch 路径与旧逐面 CPU 路径逐 face、逐 equation 对照，并检查 finite、positive、conservation。
-- [ ] **INIT_FLOWFIELD 接入**：初始化后创建并 Upload state；restart 后 invalidate + Upload。
-- [ ] **RungeKutta 接入**：先做 solver-aware fast path，能力不满足时回退原 task 序列。
-- [ ] **主 solver contract/adapter CTest**：补齐生命周期、state reuse、invalid request 和 batch equality。
+- [ ] **大阶段 E：CPU vertical slice**
+  - [x] E1：完成 domain contract 泛化，保留 1D Euler specialization。
+    - [x] E1.1：明确 field representation、equation layout、face-area ownership。
+    - [x] E1.2：补充 cell/face geometry view 和 face connectivity view。
+    - [x] E1.3：补充 ghost/halo 元数据与 3/5 方程 capability 声明。
+    - [x] E1.4：为 view shape、layout 和 geometry 约束补 contract tests。
+  - [ ] E2：完成 StateRegistry 生产化。
+    - [ ] E2.1：确定 `SimuImp`/`FieldSimu` 生命周期 owner，不把 state 塞入 kernel。
+    - [ ] E2.2：覆盖 solver + zone + grid level + backend/device identity。
+    - [ ] E2.3：接入 create/reuse/invalidate/clear 生命周期钩子。
+    - [ ] E2.4：覆盖重复创建、缺失 state、restart invalidate 的测试。
+  - [ ] E3：完成 CPU adapter。
+    - [ ] E3.1：定义 primitive-to-conserved 的 3/5 方程转换。
+    - [ ] E3.2：按 equation-major 约定 pack face state。
+    - [ ] E3.3：建立 `FaceStateView` → `CpuFluxBackend` 调用。
+    - [ ] E3.4：按显式 connectivity map 回写 residual。
+    - [ ] E3.5：保留旧逐面路径作为 feature-gated fallback。
+  - [ ] E4：接入 INIT_FLOWFIELD/restart。
+    - [ ] E4.1：初始化完成后 create + Upload。
+    - [ ] E4.2：restart 后 invalidate + Upload，禁止复用旧 device state。
+    - [ ] E4.3：补初始化/重启状态一致性测试。
+  - [ ] E5：接入 RungeKutta。
+    - [ ] E5.1：增加 solver-aware fast path capability check。
+    - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
+    - [ ] E5.3：不满足能力时回退原 task 序列。
+  - [ ] E6：建立 CPU oracle 与主 solver 验收门。
+    - [ ] E6.1：新 batch 路径 vs 旧逐面路径逐 face/逐 equation 对照。
+    - [ ] E6.2：检查 finite、positive density/pressure、conservation。
+    - [ ] E6.3：补 lifecycle、state reuse、invalid request、batch equality CTest。
+    - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，再更新 `origin/dev`。
 
 ### P1 — DCU 与回归验证
 
@@ -226,6 +248,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-14 | E1 domain contract 元数据：补充 field layout/representation、face-area policy、geometry/connectivity、ghost/halo 与 3/5 方程 capability，并新增 5 项 contract assertions | `codes/accel/include/AccelViews.h`; `tests/euler_domain_contract_test.cpp`; contract test 5/5；bridge 4/4；根工程增量编译通过 |
 | 2026-09-14 | 融合两条路线：最新 upstream 基线 + accelerator Phase 1-3 + EulerDomain/StateRegistry contract，统一进入本地 `dev` | `dev`；原 WIP 已从 stash 恢复并提交 |
 | 2026-09-14 | 融合后本机验证：根工程编译 100%，根 CTest 163/163 通过，domain contract 3/3、StateRegistry 3/3 | `/tmp/oneflow-merged-dev-root`；1 个测试明确 Disabled |
 | 2026-09-14 | 将架构 contract 测试注册到根 CTest 路由 | commit `6fc67556` |
