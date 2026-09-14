@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：E1 与 E2.1–E2.3 完成；E2.4 INIT/restart 证据待做）
+> 最后更新：2026-09-14（本轮：E1、E2.1–E2.3、E3.1–E3.3 完成；主 solver residual 接入待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -174,9 +174,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] E2.3：接入 create/reuse/invalidate/clear 生命周期钩子。
     - [ ] E2.4：覆盖重复创建、缺失 state、restart invalidate 的测试。
   - [ ] E3：完成 CPU adapter。
-    - [ ] E3.1：定义 primitive-to-conserved 的 3/5 方程转换。
-    - [ ] E3.2：按 equation-major 约定 pack face state。
-    - [ ] E3.3：建立 `FaceStateView` → `CpuFluxBackend` 调用。
+    - [x] E3.1：定义 primitive-to-conserved 的 3/5 方程转换。
+    - [x] E3.2：按 equation-major 约定 pack face state。
+    - [x] E3.3：建立 `FaceStateView` → `CpuFluxBackend` 调用。
     - [ ] E3.4：按显式 connectivity map 回写 residual。
     - [ ] E3.5：保留旧逐面路径作为 feature-gated fallback。
   - [ ] E4：接入 INIT_FLOWFIELD/restart。
@@ -248,6 +248,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-14 | E3 CPU adapter seam：新增 3/5 方程 primitive→conserved、equation-major face pack，并通过 `CpuFluxBackend` 计算 batch flux；主 solver `UNsInvFlux` 尚未接入 | `codes/accel/include/EulerCpuAdapter.h`; `codes/accel/src/EulerCpuAdapter.cpp`; `tests/euler_cpu_adapter_test.cpp`; 4/4；测试 target 编译通过 |
 | 2026-09-14 | E2 registry lifecycle：`GetOrCreate`/`Invalidate`/`Clear` 已接入 registry，覆盖 create/reuse/invalidate/teardown 语义；restart task hook 仍待接入 | `codes/accel/include/EulerDomainStateRegistry.h`; `codes/accel/src/EulerDomainStateRegistry.cpp`; registry 4/4；SimuContext 12/12 |
 | 2026-09-14 | E2 registry owner：`SimuContext` 持有 accelerator state registry，teardown 先清 state 再 finalize runtime；key contract 覆盖 solver/zone/grid/backend | `codes/main/include/SimuContext.h`; `codes/main/src/SimuContextEnv.cpp`; `tests/main/simu_context_test.cpp`; 12/12；根 target 编译阶段通过（最终链接受构建目录 METIS cache 影响） |
 | 2026-09-14 | E1 domain contract 元数据：补充 field layout/representation、face-area policy、geometry/connectivity、ghost/halo 与 3/5 方程 capability，并新增 5 项 contract assertions | `codes/accel/include/AccelViews.h`; `tests/euler_domain_contract_test.cpp`; contract test 5/5；bridge 4/4；根工程增量编译通过 |
