@@ -184,6 +184,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] E4.2：restart 显式 invalidate 后重新 create + Upload，失败时不登记半初始化 state。
     - [x] E4.3：补 mock backend 测试，覆盖初始化替换、restart fresh state、Upload 失败不登记，以及 3/5 方程 field contract。
     - [ ] E4.4：把生命周期 service 接入实际 `INIT_FLOWFIELD`、`READ_RESTART` task chain，并绑定生产 solver 的 MRField view。
+      - [ ] E4.4a：实现生产 CPU `EulerDomainBackend`，明确 q 的 internal/boundary/ghost extent 与 state layout。
+      - [ ] E4.4b：让 `SolveFieldTask`/`FieldSimu` 使用同一可变 `SimuContext` owner，不引入隐式全局 registry。
+      - [ ] E4.4c：在 `INIT_FIRST`、`INIT_RESTART`/`READ_RESTART` 完成后按 solver/zone/grid key 调用 Initialize/Restart hook。
   - [ ] E5：接入 RungeKutta。说明：让时间推进阶段复用 adapter，同时保持现有 stage 顺序和不满足能力时的回退行为。
     - [ ] E5.1：增加 solver-aware fast path capability check。
     - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
