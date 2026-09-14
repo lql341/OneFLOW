@@ -193,6 +193,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - [ ] E5：接入 RungeKutta。说明：让时间推进阶段复用 adapter，同时保持现有 stage 顺序和不满足能力时的回退行为。
     - E5 前置审计（2026-09-14）：当前 `EulerDomainState` 仅承载 internal-cell lifecycle snapshot；主 solver RK fast path 还缺 face geometry/connectivity、residual/boundary/halo、stage buffer 与 primitive/conserved 表示，暂不调用 standalone `Advance`。
     - [ ] E5.1：增加 solver-aware fast path capability check。
+      - [x] E5.1a：新增独立 capability contract，明确 NS/单 local zone/finest grid/5 方程/Lax/显式 RK/无 viscous-source-limiter-interface 条件，并返回具体 fallback 原因；尚未接入 TimeIntegral。
     - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
     - [ ] E5.3：不满足能力时回退原 task 序列。
   - [ ] E6：建立 CPU oracle 与主 solver 验收门。说明：只有逐面数值一致、物理量有效且回归通过，CPU vertical slice 才能算完成。
@@ -269,6 +270,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | 日期 | 事项 | 证据 |
 |---|---|---|
 | 2026-09-14 | E4.4c MRField hook：新增只上传 internal cells 的 equation-major snapshot；FieldSimu 在 INIT_FLOWFIELD 后按 solver/grid key 选择 Initialize/Restart lifecycle；真实 `m6wingroe_sa` 初始化 50 步与 `startStrategy=1` restart 均通过，初始化 residual baseline 最大绝对差 `4.07e-20` | `codes/main/include/EulerDomainMrFieldAdapter.h`; `codes/main/src/EulerDomainMrFieldAdapter.cpp`; `codes/global/src/FieldSimu.cpp`; adapter 2/2、合并回归 29/29、root build 100% |
+| 2026-09-14 | E5.1a capability contract：新增 solver-aware RK fast-path 判定与具体拒绝原因；当前 backend Advance 未实现时明确返回 `backend_advance_unsupported`，生产 TimeIntegral wiring 留待 E5.2/E5.3 | `codes/solver/include/EulerRungeKuttaCapability.h`; `codes/solver/src/EulerRungeKuttaCapability.cpp`; `tests/euler_runge_kutta_capability_test.cpp`; capability 2/2、root build 100% |
 | 2026-09-14 | E4.4b context-aware task seam：`ISimuTask::Execute`、`SolveFieldTask` 与 `FieldSimu` 显式传递可变 `SimuContext`；回归证明 task 可修改 owner 状态 | `codes/main/include/SimuTask.h`; `codes/main/src/SimuTaskReg.cpp`; `codes/global/include/FieldSimu.h`; `tests/main/simu_context_test.cpp`; context/task tests 17/17 |
 | 2026-09-14 | E4.4a CPU state backend：生产 host state 完成 equation-major Upload/Download；非 CPU key 拒绝；Advance 在 E5 前显式拒绝正步数 | `codes/accel/include/CpuEulerDomainBackend.h`; `codes/accel/src/CpuEulerDomainBackend.cpp`; `tests/euler_cpu_domain_backend_test.cpp`; 相关回归 27/27 |
 | 2026-09-14 | E4 lifecycle contract：初始化/restart 统一走 invalidate → create → Upload → registry insert；SimuContext 暴露 owner API；主 solver task chain 尚未绑定 | `codes/accel/include/EulerDomainStateLifecycle.h`; `codes/main/include/SimuContext.h`; `tests/euler_domain_state_lifecycle_test.cpp`; 相关 contract/context/lifecycle 测试 24/24 |
