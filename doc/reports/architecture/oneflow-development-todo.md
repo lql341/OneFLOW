@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-13（本轮：Phase 1-3 完成并推送 origin/dev，共 8 commits；Phase 4 待后续）
+> 最后更新：2026-09-14（本轮：架构纵切线与 accelerator Phase 1-3 融合到 dev；CPU 验证闭环；主 solver adapter 待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -63,12 +63,13 @@ git push origin dev
 本机（开发工作站）有用户级 Environment Modules，优先使用而不是下载工具链：
 
 ```bash
-source /home/kylinlu/Downloads/agent/repo/kylinflow/module-init.sh
-module load cmake        # cmake/4.4.3
-module load openmpi      # openmpi/5.0.10
+module load cmake/4.2.0
+module load openmpi/4.1.4
+module load oneflow/metis-5.1.0
+module load oneflow/cgns-3.4.0
 ```
 
-- `module avail` 当前提供：`cmake/4.4.3`、`openmpi/5.0.10`、`kylinflow/0.1`。
+- `module avail` 当前机器已验证：`cmake/4.2.0`、`openmpi/4.1.4`、`oneflow/metis-5.1.0`、`oneflow/cgns-3.4.0`；目标节点以 `ci/kunshan/README.md` 为准。
 - 本机角色：**推送前的快速验证**（编译 port、跑 contract test，秒级反馈）；
   目标环境验证（DTK/HIP、真实 DCU、性能数据）在昆山完成。
 - 系统无 sudo、无 pip、家目录可能只读；不要在 `/tmp` 里留下需要长期保留的
@@ -102,9 +103,9 @@ git show dev:doc/reports/architecture/oneflow-development-todo.md
 
 | 项目 | 状态 |
 |---|---|
-| 主分支 | `upstream/master` = PR #147 merge（含昆山 CI 脚本、TEST_PREFIX、文档） |
-| 进行中的 PR | **#149**：CI 全绿，等上游 review |
-| 分支 | `fix/contract-test-cmake-path`（#149）；`dev`（WENO5 统一接口已完成，commit `6eaf46d2` + `6f341cef` + `cc2ef93b`） |
+| 主分支 | `master` = `origin/master` = `upstream/master` = `90749492`（已同步） |
+| 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
+| 分支 | 本地 `dev` = 最新上游基线 + accelerator Phase 1-3 + 架构 contract WIP；`origin/dev` 尚未强推更新 |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
@@ -112,7 +113,7 @@ git show dev:doc/reports/architecture/oneflow-development-todo.md
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
-主 solver 的 accelerator backend 目前只是接口骨架。
+`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 的 NS/Euler accelerator execution path 仍未接入。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -122,6 +123,20 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | ✅ `c4764c48`（机器精度 2.22e-16） |
 | Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | ✅ `983641c8` |
 | Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 🔜 下一步 |
+
+**融合后的唯一执行主线**：架构 contract 解决生命周期/所有权，FluxBackend 解决批量通量计算；两者在主 solver CPU adapter 汇合，再复用到 HIP/DCU。
+
+| 融合层 | 交付物 | 状态 |
+|---|---|---|
+| A. 运行基线 | master 与 origin/upstream 同步 | ✅ |
+| B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | ✅ |
+| C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | ✅ Phase 1-3 |
+| D. domain contract | EulerDomain views、StateRegistry；后续泛化到 3/5 方程和 face geometry | 🟨 已恢复到 dev，需适配主 solver |
+| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | ⬜ 当前主任务 |
+| F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | ⬜ |
+| G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | ⬜ |
+
+**整合约束**：`FluxBackend` 当前接收 equation-major conserved face state；`UNsInvFlux` 当前提供 reconstructed primitive state，且 area 由旧路径单独处理。接入前必须完成变量转换、面积/法向约定和 face connectivity 对齐，并用旧 CPU 逐面路径做 oracle。
 
 **port / accel / NS 三层关系（统一后）**：
 
@@ -138,27 +153,29 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ## 2. 待办事项
 
-### P0 — 等待中
+### P0 — dev 融合基线
 
-- [ ] **PR #149 合并**（等上游 review；合并后同步本地 `master`，见 §4 收尾流程）。
+- [x] 最新 `origin/master` / `upstream/master` 已同步到本地 `master`。
+- [x] 协同开发 Phase 1-3、旧架构 contract/StateRegistry 已统一恢复到本地 `dev`。
+- [x] standalone CPU、根工程、根 CTest、CPU bridge 已完成本机验证。
+- [ ] 完成融合后 dev 的 contract/adapter 验证，再更新 `origin/dev`。
 
-### P1 — 下一步（建议按序）
+### P1 — 主 solver CPU vertical slice（按序）
 
-- [ ] **Phase 4：主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化**
-  - 目标：复制 FieldSolver 已有的 `FluxBackend` 接入模式到 NS 求解器。
-  - 范围：`UNsInvFlux::CalcInvFlux()` 的逐面循环 → 批量 `FaceStateView` + `FluxBackend::CalcInvFlux`。
-  - 切入点：`LaxFriedrichs` 格式（Rusanov 等价，Phase 1-2 已验证）。
-  - 注意：Eric 在活跃重构 NS 代码（重命名/现代化），改动要聚焦不扩散。
-  - 验收：CPU 侧 NS 通量与原有逐面循环一致；HIP 侧在昆山通过 correctness。
+- [ ] **泛化 domain contract**：保留 1D Euler specialization，同时补充 equation layout、cell/face geometry、connectivity、ghost/halo 和 3/5 方程能力声明。
+- [ ] **StateRegistry 生产化**：由 `SimuImp`/`FieldSimu` 生命周期 owner 管理，覆盖 solver + zone + grid level + backend/device。
+- [ ] **CPU adapter**：在 `UNsInvFlux::CalcInvFlux()` 建立 pack → primitive-to-conserved → `FaceStateView` → `CpuFluxBackend` → residual 的路径。
+- [ ] **面积/法向/face 顺序对齐**：禁止重复乘 `faceArea`；保持旧 `AddF2CField` 的边界和 connectivity 语义。
+- [ ] **CPU oracle**：新 batch 路径与旧逐面 CPU 路径逐 face、逐 equation 对照，并检查 finite、positive、conservation。
+- [ ] **INIT_FLOWFIELD 接入**：初始化后创建并 Upload state；restart 后 invalidate + Upload。
+- [ ] **RungeKutta 接入**：先做 solver-aware fast path，能力不满足时回退原 task 序列。
+- [ ] **主 solver contract/adapter CTest**：补齐生命周期、state reuse、invalid request 和 batch equality。
 
-- [ ] **昆山 HIP contract 6/6 验证 WENO5**（WENO5 统一接口 CPU 侧已完成 8/8）
-  - 在昆山用 `dcu-single` 套件跑 HIP contract test，确认 WENO5 的 GPU 路径同样通过。
-  - 本地 CPU 8/8 已通过（commit `cc2ef93b`），还需昆山 HIP 6/6。
+### P1 — DCU 与回归验证
 
-- [ ] **昆山回归 eric 的完整测试套件**
-  - 范围：`tests/` 下 `task/`、`database/`、`register/`、`adt/`（框架重构的下游兼容）。
-  - 方式：扩展现有 `cpu-regression` 作业脚本（增加构建/运行这些 target）。
-  - 验收：全部通过；把结果补进 `dcu-single`/`cpu-regression` 的运行证据。
+- [ ] 昆山 HIP contract 6/6 验证 WENO5。
+- [ ] 主 solver CPU batch 通过后，把同一 adapter 切换到 HIP/DCU，并在昆山做 correctness。
+- [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
 
