@@ -110,6 +110,8 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
+| 当前进度 | E1–E5 已完成；E6 是当前主线。E5 已接入 3D 主 solver 的 CPU RK capability guard、stage scheduler 和 legacy fallback；不是 standalone 1D kernel，也不是 DCU execution。 |
+| 最新验证 | 根工程 100% 编译；CMake 4.2 CTest 186/186 通过，1 个既有测试 Disabled；E5 scheduler 4/4、capability 2/2；3D m6 RK fallback 1-step 通过。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
@@ -204,6 +206,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，并按确认更新 `origin/dev`。
       - [x] E6.4a：在昆山 CPU 队列完成融合后 dev 的 contract/adapter 与主 solver 回归验证；origin/dev 推送另行处理。
       - [ ] E6.4b：在确认后更新 `origin/dev`。
+
+    **下一阶段执行顺序：** 先完成 E6.1a 逐 face/逐 equation trace，再补 E6.2 的 finite/positive/conservation 检查，最后把 E6.3 contract 回归和 E6.4 云端同步作为验收收口。
 
 ### P1 — DCU 与回归验证
 
