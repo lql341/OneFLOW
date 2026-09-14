@@ -17,7 +17,7 @@
 
 ```bash
 # 本文档在 dev 分支上，直接编辑即可
-vim doc/reports/architecture/oneflow-development-todo.md
+vim doc/plans/oneflow-development-todo.md
 git commit -am "Update development todo: <一句话摘要>"
 git push origin dev
 ```
@@ -80,13 +80,13 @@ module load oneflow/cgns-3.4.0
 ```bash
 git fetch origin
 git checkout dev && git pull --ff-only
-cat doc/reports/architecture/oneflow-development-todo.md
+cat doc/plans/oneflow-development-todo.md
 ```
 
 如果工作区必须停在别的分支（例如提 PR 期间），不必切分支也能读：
 
 ```bash
-git show dev:doc/reports/architecture/oneflow-development-todo.md
+git show dev:doc/plans/oneflow-development-todo.md
 ```
 
 读完 §1（现状）+ §2（待办）后选任务开工；**收工前更新本文档**。本文档只存在
@@ -181,7 +181,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 - [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
   - 内容：checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
-  - 参考：`doc/reports/architecture/oneflow-euler-optimization-plan.md` 阶段 C/D。
+  - 参考：`doc/plans/oneflow-euler-optimization-plan.md` 阶段 C/D。
   - 验收：Kunshan 四规模 correctness 不变；D2H 占比进一步下降；性能复测。
 
 - [ ] **WENO5 数值内核的 DCU 验证**（接口已稳定，CPU 8/8 通过）

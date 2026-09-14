@@ -177,4 +177,4 @@ The run also captured two reusable rules: resolve CMake before `module purge`,
 and never treat CTest's `No tests were found!` with exit code 0 as validation
 success. The CTest harness is now fixed with backend-specific prefixes and a
 fresh PRE_TEST discovery list; the broader migration guidance is maintained in
-[`oneflow-dcu-porting-playbook-20260903.md`](oneflow-dcu-porting-playbook-20260903.md).
+[`oneflow-dcu-porting-playbook-20260903.md`](../runbooks/oneflow-dcu-porting-playbook-20260903.md).

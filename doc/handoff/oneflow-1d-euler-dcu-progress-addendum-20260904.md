@@ -2,7 +2,7 @@
 
 更新时间：2026-09-04
 
-本补充对应 `oneflow-1d-euler-dcu-porting-checklist-20260904.md`。由于当前 sandbox 的文件更新 helper 无法读取既有 `tests/CMakeLists.txt`，新增 contract 测试目前以独立编译方式验证，尚未宣称已注册进 CTest。
+本补充对应 `../plans/oneflow-1d-euler-dcu-porting-checklist-20260904.md`。由于当前 sandbox 的文件更新 helper 无法读取既有 `tests/CMakeLists.txt`，新增 contract 测试目前以独立编译方式验证，尚未宣称已注册进 CTest。
 
 ## 本轮新增交付物
 

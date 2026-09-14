@@ -82,7 +82,7 @@ state and fewer validation/trace copies, with correctness rechecked after each c
 
 The current implementation priority is the Euler stateful backend and persistent
 device execution described in
-`doc/reports/architecture/oneflow-euler-optimization-plan.md`. WENO5 and
+`doc/plans/oneflow-euler-optimization-plan.md`. WENO5 and
 dimensional expansion remain deferred until the Euler correctness and performance
 acceptance gates pass.
 

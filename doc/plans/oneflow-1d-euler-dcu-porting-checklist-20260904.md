@@ -15,7 +15,7 @@
 - [x] 形成 CPU/HIP/CUDA/KOKKOS 能力边界表
 - [x] 明确 upstream、fork DCU 分支和本地 artifact 的代码分流
 
-交付物：[架构审计报告](oneflow-1d-euler-dcu-architecture-audit-20260904.md)
+交付物：[架构审计报告](../architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md)
 
 ## 阶段 1：CPU baseline 和公共回归骨架
 
