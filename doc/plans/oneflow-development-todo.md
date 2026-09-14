@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：E4.4c MRField hook 已完成真实 init/restart runtime 验证）
+> 最后更新：2026-09-14（本轮：E4.4c runtime 验证、E5.1a RK capability contract 完成；production RK wiring 待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
