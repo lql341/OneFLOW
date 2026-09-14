@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：E1 domain contract 元数据与校验完成；主 solver adapter 待做）
+> 最后更新：2026-09-14（本轮：E1 与 E2.1–E2.3 完成；E2.4 INIT/restart 证据待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -131,7 +131,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | A. 运行基线 | master 与 origin/upstream 同步 | ✅ |
 | B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | ✅ |
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | ✅ Phase 1-3 |
-| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 🟨 E1 完成，StateRegistry 与主 solver 适配待做 |
+| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 🟨 E1 完成；E2 owner 已接入，生产钩子待做 |
 | E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | ⬜ 当前主任务 |
 | F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | ⬜ |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | ⬜ |
@@ -169,9 +169,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] E1.3：补充 ghost/halo 元数据与 3/5 方程 capability 声明。
     - [x] E1.4：为 view shape、layout 和 geometry 约束补 contract tests。
   - [ ] E2：完成 StateRegistry 生产化。
-    - [ ] E2.1：确定 `SimuImp`/`FieldSimu` 生命周期 owner，不把 state 塞入 kernel。
-    - [ ] E2.2：覆盖 solver + zone + grid level + backend/device identity。
-    - [ ] E2.3：接入 create/reuse/invalidate/clear 生命周期钩子。
+    - [x] E2.1：确定 `SimuImp`/`FieldSimu` 生命周期 owner，不把 state 塞入 kernel。
+    - [x] E2.2：覆盖 solver + zone + grid level + backend/device identity。
+    - [x] E2.3：接入 create/reuse/invalidate/clear 生命周期钩子。
     - [ ] E2.4：覆盖重复创建、缺失 state、restart invalidate 的测试。
   - [ ] E3：完成 CPU adapter。
     - [ ] E3.1：定义 primitive-to-conserved 的 3/5 方程转换。
@@ -248,6 +248,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-14 | E2 registry lifecycle：`GetOrCreate`/`Invalidate`/`Clear` 已接入 registry，覆盖 create/reuse/invalidate/teardown 语义；restart task hook 仍待接入 | `codes/accel/include/EulerDomainStateRegistry.h`; `codes/accel/src/EulerDomainStateRegistry.cpp`; registry 4/4；SimuContext 12/12 |
+| 2026-09-14 | E2 registry owner：`SimuContext` 持有 accelerator state registry，teardown 先清 state 再 finalize runtime；key contract 覆盖 solver/zone/grid/backend | `codes/main/include/SimuContext.h`; `codes/main/src/SimuContextEnv.cpp`; `tests/main/simu_context_test.cpp`; 12/12；根 target 编译阶段通过（最终链接受构建目录 METIS cache 影响） |
 | 2026-09-14 | E1 domain contract 元数据：补充 field layout/representation、face-area policy、geometry/connectivity、ghost/halo 与 3/5 方程 capability，并新增 5 项 contract assertions | `codes/accel/include/AccelViews.h`; `tests/euler_domain_contract_test.cpp`; contract test 5/5；bridge 4/4；根工程增量编译通过 |
 | 2026-09-14 | 融合两条路线：最新 upstream 基线 + accelerator Phase 1-3 + EulerDomain/StateRegistry contract，统一进入本地 `dev` | `dev`；原 WIP 已从 stash 恢复并提交 |
 | 2026-09-14 | 融合后本机验证：根工程编译 100%，根 CTest 163/163 通过，domain contract 3/3、StateRegistry 3/3 | `/tmp/oneflow-merged-dev-root`；1 个测试明确 Disabled |
