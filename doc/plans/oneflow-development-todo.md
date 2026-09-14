@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：E1、E2.1–E2.3、E3.1–E3.4 完成；主 solver 接入与 fallback 待做）
+> 最后更新：2026-09-14（本轮：E1、E2.1–E2.3、E3.1–E3.5 完成；INIT/restart、RungeKutta 与完整 oracle 待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -113,7 +113,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
-`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 的 NS/Euler accelerator execution path 仍未接入。
+`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU inviscid batch seam，但完整 NS/Euler accelerator execution path 仍未验证。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -122,7 +122,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | 先让批量通量 backend 能处理标量、3 方程 Euler 和 5 方程 NS 数据。 | ✅ `11b98029` |
 | Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | 用独立桥接测试证明新 backend 与已有 CPU oracle 的数值结果一致。 | ✅ `c4764c48`（机器精度 2.22e-16） |
 | Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | 统一 accelerator runtime 和设备内存管理，避免 backend 各自维护重复资源。 | ✅ `983641c8` |
-| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🔜 下一步 |
+| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🟨 CPU batch seam 已接入；HIP/DCU 待 F |
 
 **融合后的唯一执行主线**：架构 contract 解决生命周期/所有权，FluxBackend 解决批量通量计算；两者在主 solver CPU adapter 汇合，再复用到 HIP/DCU。
 
@@ -136,7 +136,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | 在 CPU oracle 通过后，把同一条 solver 路径安全切换到真实 DCU 节点。 | ⬜ |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
-**整合约束**：`FluxBackend` 当前接收 equation-major conserved face state；`UNsInvFlux` 当前提供 reconstructed primitive state，且 area 由旧路径单独处理。接入前必须完成变量转换、面积/法向约定和 face connectivity 对齐，并用旧 CPU 逐面路径做 oracle。
+**整合约束：** `FluxBackend` 接收 equation-major conserved face state；`UNsInvFlux` 提供 reconstructed primitive state，adapter 负责转换，backend 负责面面积；face connectivity 仍由主 solver 的 `AddF2CField` 处理。CPU batch 入口必须以旧 CPU 逐面路径为 oracle。
 
 **port / accel / NS 三层关系（统一后）**：
 
@@ -178,7 +178,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] E3.2：按 equation-major 约定 pack face state。
     - [x] E3.3：建立 `FaceStateView` → `CpuFluxBackend` 调用。
     - [x] E3.4：按显式 connectivity map 回写 residual。
-    - [ ] E3.5：保留旧逐面路径作为 feature-gated fallback。
+    - [x] E3.5：主 solver `UNsInvFlux` 增加 `ONEFLOW_ENABLE_UNS_CPU_BATCH=1` 的 3D 五方程 CPU batch 入口；仅在 CPU + Lax-Friedrichs 时启用，其他情况保留旧逐面 fallback。
   - [ ] E4：接入 INIT_FLOWFIELD/restart。说明：初始化和重启都必须显式建立或刷新 backend state，不能复用过期设备数据。
     - [ ] E4.1：初始化完成后 create + Upload。
     - [ ] E4.2：restart 后 invalidate + Upload，禁止复用旧 device state。
@@ -257,6 +257,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-14 | E3.5 主 solver CPU batch seam：`UNsInvFlux` 在显式开关、CPU、5 方程、Lax-Friedrichs 条件下调用 adapter；新增 OneFLOW Lax-Friedrichs Roe-平均 scheme，默认路径不变 | `codes/uns/src/UNsInvFlux.cpp`; `codes/accel/src/CpuFluxBackend.cpp`; `tests/euler_cpu_adapter_test.cpp`; UNsInvFlux/CpuFluxBackend 单对象编译通过；相关测试 14/14 |
 | 2026-09-14 | E3.4 residual mapping：CPU backend/adapter 支持显式 `boundaryMask`，非 boundary-first ordering 不再误用 `nBoundaryFaces`；HIP 显式 mask 待后续 DCU 阶段 | `codes/accel/src/CpuFluxBackend.cpp`; `tests/euler_cpu_adapter_test.cpp`; adapter test 5/5 |
 | 2026-09-14 | E3 CPU adapter seam：新增 3/5 方程 primitive→conserved、equation-major face pack，并通过 `CpuFluxBackend` 计算 batch flux；主 solver `UNsInvFlux` 尚未接入 | `codes/accel/include/EulerCpuAdapter.h`; `codes/accel/src/EulerCpuAdapter.cpp`; `tests/euler_cpu_adapter_test.cpp`; 4/4；测试 target 编译通过 |
 | 2026-09-14 | E2 registry lifecycle：`GetOrCreate`/`Invalidate`/`Clear` 已接入 registry，覆盖 create/reuse/invalidate/teardown 语义；restart task hook 仍待接入 | `codes/accel/include/EulerDomainStateRegistry.h`; `codes/accel/src/EulerDomainStateRegistry.cpp`; registry 4/4；SimuContext 12/12 |
