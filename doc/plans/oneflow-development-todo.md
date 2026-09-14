@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-14（本轮：E1、E2.1–E2.4、E3.1–E3.5 完成；INIT/restart、RungeKutta 与完整 oracle 待做）
+> 最后更新：2026-09-14（本轮：E1、E2.1–E2.4、E3.1–E3.5、E6.1 完成；INIT/restart、RungeKutta 与 E6 其余验收待做）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -113,7 +113,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
-`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU inviscid batch seam，但完整 NS/Euler accelerator execution path 仍未验证。
+`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU inviscid batch seam，并已在昆山 CPU 队列完成主 solver 回归与 3D legacy/batch oracle；HIP/DCU 和完整 NS/Euler accelerator execution path 仍未验证。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -131,8 +131,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | A. 运行基线 | master 与 origin/upstream 同步 | 先固定共同代码基线，确保两条开发线从同一个上游版本继续。 | ✅ |
 | B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | 用最小可控算例验证状态生命周期、CPU/HIP 后端和 MPI 基础能力。 | ✅ |
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | 建立与具体 solver 解耦的运行时、设备内存和批量 kernel 基础设施。 | ✅ Phase 1-3 |
-| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | 🟨 E1 完成；E2 owner 已接入，生产钩子待做 |
-| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | 先在 CPU 主 solver 上打通初始化、通量、时间推进和逐面数值对照闭环。 | ⬜ 当前主任务 |
+| D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | 🟨 E1、E2.1–E2.4 已完成；INIT/restart 生产钩子待做 |
+| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | 先在 CPU 主 solver 上打通初始化、通量、时间推进和逐面数值对照闭环。 | 🟨 E3 与 E6.1 已完成；E4/E5 与 E6 其余验收待做 |
 | F. DCU vertical slice | 同一 adapter 切换 HIP/DCU，保留 capability guard 和 fallback | 在 CPU oracle 通过后，把同一条 solver 路径安全切换到真实 DCU 节点。 | ⬜ |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
@@ -158,7 +158,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - [x] 最新 `origin/master` / `upstream/master` 已同步到本地 `master`。
 - [x] 协同开发 Phase 1-3、旧架构 contract/StateRegistry 已统一恢复到本地 `dev`。
 - [x] standalone CPU、根工程、根 CTest、CPU bridge 已完成本机验证。
-- [ ] 完成融合后 dev 的 contract/adapter 验证，再更新 `origin/dev`。
+- [x] 完成融合后 dev 的 contract/adapter 验证；origin/dev 更新待用户确认。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 
@@ -188,10 +188,13 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
     - [ ] E5.3：不满足能力时回退原 task 序列。
   - [ ] E6：建立 CPU oracle 与主 solver 验收门。说明：只有逐面数值一致、物理量有效且回归通过，CPU vertical slice 才能算完成。
-    - [ ] E6.1：新 batch 路径 vs 旧逐面路径逐 face/逐 equation 对照。
+    - [x] E6.1：完成 3D m6wing Lax-Friedrichs 主 solver 的 legacy vs batch 50-step 输出级 oracle；`aero/res/turbres` 完全一致，`wallaero` 最大绝对差约 1.00e-12、最大相对差约 2.79e-11。
+      - [ ] E6.1a：补充逐 face/逐 equation 的主 solver trace 对照，形成比输出文件更细的定位证据。
     - [ ] E6.2：检查 finite、positive density/pressure、conservation。
     - [ ] E6.3：补 lifecycle、state reuse、invalid request、batch equality CTest。
-    - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，再更新 `origin/dev`。
+    - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，并按确认更新 `origin/dev`。
+      - [x] E6.4a：在昆山 CPU 队列完成融合后 dev 的 contract/adapter 与主 solver 回归验证；origin/dev 推送另行处理。
+      - [ ] E6.4b：在确认后更新 `origin/dev`。
 
 ### P1 — DCU 与回归验证
 
@@ -257,6 +260,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-14 | E6.1 主 solver CPU oracle：同一 3D m6wing Lax-Friedrichs case 分别运行 legacy 与 `ONEFLOW_ENABLE_UNS_CPU_BATCH=1` 50 步；四类结果文件通过数值比较，Slurm 完成且退出码 0 | `ci/kunshan/e3-cpu-oracle.slurm`；`aero/res/turbres` 最大差 0；`wallaero` 最大绝对差 1.0000056338554941e-12、最大相对差 2.788493125767199e-11 |
+| 2026-09-14 | 集群 CPU 回归：主 solver 构建、normal/strict 五算例、port CPU contract 均通过 | 集群 `kshcnormal`；normal 5/5、strict 5/5、contract 8/8；Slurm 完成且退出码 0 |
 | 2026-09-14 | E3.5 主 solver CPU batch seam：`UNsInvFlux` 在显式开关、CPU、5 方程、Lax-Friedrichs 条件下调用 adapter；新增 OneFLOW Lax-Friedrichs Roe-平均 scheme，默认路径不变 | `codes/uns/src/UNsInvFlux.cpp`; `codes/accel/src/CpuFluxBackend.cpp`; `tests/euler_cpu_adapter_test.cpp`; UNsInvFlux/CpuFluxBackend 单对象编译通过；相关测试 14/14 |
 | 2026-09-14 | E2.4 registry restart 失效：新增测试证明 invalidate 后再次 GetOrCreate 会创建 fresh state，覆盖重复创建、缺失 state 与 restart 语义 | `tests/euler_domain_state_registry_test.cpp`; registry test 5/5 |
 | 2026-09-14 | E3.4 residual mapping：CPU backend/adapter 支持显式 `boundaryMask`，非 boundary-first ordering 不再误用 `nBoundaryFaces`；HIP 显式 mask 待后续 DCU 阶段 | `codes/accel/src/CpuFluxBackend.cpp`; `tests/euler_cpu_adapter_test.cpp`; adapter test 5/5 |
