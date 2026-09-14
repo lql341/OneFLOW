@@ -191,6 +191,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
         - [x] E4.4c.2：`FieldSimu` 在 `INIT_FLOWFIELD` 完成后遍历 solver/grid，按 `startStrategy` 调用 Initialize 或 Restart；production object compile 已通过。
         - [x] E4.4c.3：真实 `m6wingroe_sa` root case 初始化 50 步通过，restart 副本 `startStrategy=1` 正常返回；初始化输出 residual baseline 通过。
   - [ ] E5：接入 RungeKutta。说明：让时间推进阶段复用 adapter，同时保持现有 stage 顺序和不满足能力时的回退行为。
+    - E5 前置审计（2026-09-14）：当前 `EulerDomainState` 仅承载 internal-cell lifecycle snapshot；主 solver RK fast path 还缺 face geometry/connectivity、residual/boundary/halo、stage buffer 与 primitive/conserved 表示，暂不调用 standalone `Advance`。
     - [ ] E5.1：增加 solver-aware fast path capability check。
     - [ ] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。
     - [ ] E5.3：不满足能力时回退原 task 序列。
