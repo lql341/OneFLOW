@@ -20,7 +20,7 @@ License
 
 \*---------------------------------------------------------------------------*/
 // Concrete ISimuTask wrappers around existing free functions.
-// Execute(const SimuContext&) receives context; production bodies still call
+// Execute(SimuContext&) receives context; production bodies still call
 // the original free functions (ctx unused until a task needs rank/args).
 
 #include "SimuTask.h"
@@ -42,51 +42,51 @@ class SolveFieldTask : public ISimuTask
 {
 public:
     bool NeedsSystemMap() const override { return true; }
-    void Execute( const SimuContext& /*ctx*/ ) override { FieldSimu(); }
+    void Execute( SimuContext& ctx ) override { FieldSimu( ctx ); }
 };
 
 class CreateGridTask : public ISimuTask
 {
 public:
     bool NeedsSystemMap() const override { return true; }
-    void Execute( const SimuContext& /*ctx*/ ) override { GenerateGrid(); }
+    void Execute( SimuContext& /*ctx*/ ) override { GenerateGrid(); }
 };
 
 class WallDistTask : public ISimuTask
 {
 public:
     bool NeedsSystemMap() const override { return true; }
-    void Execute( const SimuContext& /*ctx*/ ) override { WalldistSimu(); }
+    void Execute( SimuContext& /*ctx*/ ) override { WalldistSimu(); }
 };
 
 class FunctionTestTask : public ISimuTask
 {
 public:
-    void Execute( const SimuContext& /*ctx*/ ) override { FunctionTest(); }
+    void Execute( SimuContext& /*ctx*/ ) override { FunctionTest(); }
 };
 
 class TheoryTask : public ISimuTask
 {
 public:
-    void Execute( const SimuContext& /*ctx*/ ) override { TheorySimu(); }
+    void Execute( SimuContext& /*ctx*/ ) override { TheorySimu(); }
 };
 
 class ToyModelTask : public ISimuTask
 {
 public:
-    void Execute( const SimuContext& /*ctx*/ ) override { ToyModelSimu(); }
+    void Execute( SimuContext& /*ctx*/ ) override { ToyModelSimu(); }
 };
 
 class PostTask : public ISimuTask
 {
 public:
-    void Execute( const SimuContext& /*ctx*/ ) override { PostSimu(); }
+    void Execute( SimuContext& /*ctx*/ ) override { PostSimu(); }
 };
 
 class PartitionGridTask : public ISimuTask
 {
 public:
-    void Execute( const SimuContext& /*ctx*/ ) override
+    void Execute( SimuContext& /*ctx*/ ) override
     {
         throw std::runtime_error(
             "Task \"Partition\" is registered but not implemented in this build." );

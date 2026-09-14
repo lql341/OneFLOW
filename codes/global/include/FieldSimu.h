@@ -24,7 +24,9 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-void FieldSimu();
+class SimuContext;
+
+void FieldSimu( SimuContext & context );
 
 void InitFlowSimuGlobal();
 void InitializeSolver();

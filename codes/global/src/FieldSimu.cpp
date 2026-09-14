@@ -34,8 +34,9 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-void FieldSimu()
+void FieldSimu( SimuContext & context )
 {
+    ( void ) context;
     InitFlowSimuGlobal();
     MultiBlock::LoadGridAndBuildLink();
     MultiBlock::ProcessFlowWallDist();
