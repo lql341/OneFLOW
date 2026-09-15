@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-15（本轮：合并 upstream/master、保留 mutable SimuContext contract，并完成 206/206 CTest）
+> 最后更新：2026-09-15（本轮：F1 root HIP 编译/contract 与同 revision CPU normal+strict 门禁完成）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -105,17 +105,17 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `upstream/master` 合并结果 + accelerator Phase 1-3 + 架构 contract；`origin/dev` 尚未推送本轮 merge |
+| 分支 | 本地 `dev` = `origin/dev` = `ca14118c`；F1 backend seam、capability guard 与 fail-fast policy 已推送 |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | E1–E5 已完成；E6 是当前主线。E5 已接入 3D 主 solver 的 CPU RK capability guard、stage scheduler 和 legacy fallback；不是 standalone 1D kernel，也不是 DCU execution。 |
-| 最新验证 | merge 后根工程 100% 编译/链接；CMake 3.28.3 + OpenMPI 4.1.4 配置下 CTest 206/206 通过；E5 scheduler 4/4、capability 2/2；3D m6 RK fallback 1-step 通过。 |
+| 当前进度 | E1–E6 已完成；F1 已完成 root HIP backend registration、capability/fail-fast contract 与目标节点编译验证。F2 主 solver CPU/HIP one-call/one-step 数值门禁是当前主线。 |
+| 最新验证 | `ca14118c`：昆山 root HIP 生产 `OneFLOW` 编译链接、smoke、HIP GoogleTest/CTest 9/9；同 revision CPU 根 CTest 210/210、normal 5/5、strict 5/5、port CPU contract 8/8；两类作业均 scheduler/workload 成功。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
-`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU inviscid batch seam，并已在昆山 CPU 队列完成主 solver 回归与 3D legacy/batch oracle；HIP/DCU 和完整 NS/Euler accelerator execution path 仍未验证。
+`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU/HIP inviscid batch seam，并已完成 root HIP 编译与 contract。真实主 solver HIP one-call/one-step/3D execution、完整 NS/Euler accelerator path 仍未验证。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -124,7 +124,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | 先让批量通量 backend 能处理标量、3 方程 Euler 和 5 方程 NS 数据。 | ✅ `11b98029` |
 | Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | 用独立桥接测试证明新 backend 与已有 CPU oracle 的数值结果一致。 | ✅ `c4764c48`（机器精度 2.22e-16） |
 | Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | 统一 accelerator runtime 和设备内存管理，避免 backend 各自维护重复资源。 | ✅ `983641c8` |
-| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🟨 CPU batch seam 已接入；HIP/DCU 待 F |
+| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🟨 F1 编译/contract 已闭环；主 solver HIP 数值 case 待 F2 |
 
 **融合后的唯一执行主线**：架构 contract 解决生命周期/所有权，FluxBackend 解决批量通量计算；两者在主 solver CPU adapter 汇合，再复用到 HIP/DCU。
 
@@ -134,8 +134,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | B. standalone | 1D Euler CPU/HIP lifecycle、FullTrace/NoTrace、MPI 实验 | 用最小可控算例验证状态生命周期、CPU/HIP 后端和 MPI 基础能力。 | ✅ |
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | 建立与具体 solver 解耦的运行时、设备内存和批量 kernel 基础设施。 | ✅ Phase 1-3 |
 | D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | ✅ E1、E2 与生命周期 service、主 solver INIT/restart hook 已完成 |
-| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | 先在 CPU 主 solver 上打通初始化、通量、时间推进和逐面数值对照闭环。 | 🟨 E3、E4、E5 已完成；E6 仍需补齐逐面 trace、物理不变量与最终验收 |
-| F. DCU vertical slice | standalone 1D HIP contract 已在真实 Z100/gfx906 上闭环；HIP CTest 已接入共享注册 helper，主 solver DCU 尚未接入 | 先让 standalone 和根工程使用同一套 HIP CTest 架构，再证明 adapter 在真实 DCU 上可编译、可运行且与 CPU oracle 对齐，最后接主 solver。 | 🟨 |
+| E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | CPU 主 solver 初始化、通量、时间推进、逐面 trace 与物理门禁已闭环。 | ✅ E1–E6 |
+| F. DCU vertical slice | root 生产 HIP 编译、smoke、contract 与同 revision CPU 回归已闭环；主 solver HIP batch 数值 case 尚未执行 | F1 已证明生产 target 可编译链接且 fail-fast 可观测；F2 从 one-call 开始做 CPU/HIP flux、residual、state 与物理门禁。 | 🟨 |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
 **整合约束：** `FluxBackend` 接收 equation-major conserved face state；`UNsInvFlux` 提供 reconstructed primitive state，adapter 负责转换，backend 负责面面积；face connectivity 仍由主 solver 的 `AddF2CField` 处理。CPU batch 入口必须以旧 CPU 逐面路径为 oracle。
@@ -146,7 +146,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 |----|------|----------|
 | **port** (`ports/kunshan/`) | 最小实验闭环：1D Euler, persistent state, FullTrace, 合约测试 | ✅ 完整 |
 | **accel** (`codes/accel/`) | 生产基础设施：AccelRuntime, FluxBackend, DeviceBuffer | ✅ 完整（标量+Euler） |
-| **NS** (`codes/ns/` + `codes/uns/`) | 主求解器：5 方程, 8 种通量格式, 逐面 CPU 循环 | ❌ 待接入 |
+| **NS** (`codes/ns/` + `codes/uns/`) | 主求解器：5 方程；当前仅 Lax-Friedrichs HIP batch opt-in 满足 F1 capability | 🟨 已接 seam/guard，待真实主 solver 数值执行 |
 
 **OpenAI NS 解决公告 (2026-09-08) 参考**：
 - 数学证明（奇点存在性），非数值求解器，与 OneFLOW 直接技术关联有限
@@ -160,12 +160,12 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - [x] 最新 `origin/master` / `upstream/master` 已同步到本地 `master`。
 - [x] 协同开发 Phase 1-3、旧架构 contract/StateRegistry 已统一恢复到本地 `dev`。
 - [x] standalone CPU、根工程、根 CTest、CPU bridge 已完成本机验证。
-- [x] 完成融合后 dev 的 contract/adapter 验证；origin/dev 更新待用户确认。
+- [x] 完成融合后 dev 的 contract/adapter 验证并更新 `origin/dev`。
 - [x] 已将 `upstream/master` `a6c81105` 合并到 dev；保留 mutable `SimuContext&` 与 StateRegistry 生命周期，并吸收 upstream 的分阶段 `FieldSimu`、policy 和 parser 测试。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 
-- [ ] **大阶段 E：CPU vertical slice** —— 在 CPU 主 solver 上完成第一条可验证的端到端加速纵切线。
+- [x] **大阶段 E：CPU vertical slice** —— 在 CPU 主 solver 上完成第一条可验证的端到端加速纵切线。
   - [x] E1：完成 domain contract 泛化，保留 1D Euler specialization。说明：定义数据布局、几何、连通性和能力边界，但不改变旧 solver 行为。
     - [x] E1.1：明确 field representation、equation layout、face-area ownership。
     - [x] E1.2：补充 cell/face geometry view 和 face connectivity view。
@@ -199,12 +199,12 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
       - [x] E5.1a：新增独立 capability contract，明确 NS/单 local zone/finest grid/5 方程/Lax/显式 RK/无 viscous-source-limiter-interface 条件，并返回具体 fallback 原因；已接入 context-aware `TimeIntegral`。
     - [x] E5.2：fast path 与现有 task 序列保持同一 stage 顺序。说明：`LOAD_Q`、`CALC_TIME_STEP` 先执行，随后每个 stage 严格执行 `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD → CALC_BOUNDARY`。
     - [x] E5.3：不满足能力时回退原 task 序列。说明：guard reject、缺少 registry state 或空 RK coefficient 时调用原 `RungeKutta()`，既有 viscous 3D case 已完成 1-step runtime 验证。
-  - [ ] E6：建立 CPU oracle 与主 solver 验收门。说明：只有逐面数值一致、物理量有效且回归通过，CPU vertical slice 才能算完成。
+  - [x] E6：建立 CPU oracle 与主 solver 验收门。说明：只有逐面数值一致、物理量有效且回归通过，CPU vertical slice 才能算完成。
     - [x] E6.1：完成 3D m6wing Lax-Friedrichs 主 solver 的 legacy vs batch 50-step 输出级 oracle；`aero/res/turbres` 完全一致，`wallaero` 最大绝对差约 1.00e-12、最大相对差约 2.79e-11。
       - [x] E6.1a：新增 opt-in ONEFLOW_UNS_TRACE_FILE 二进制 trace，比较 qf1/qf2/invflux 的逐 face/逐 equation 数值；896256 faces × 5 equations，invflux 最大绝对差 1.11e-15、最大相对差 1.41e-10。
     - [x] E6.2：检查 finite、positive density/pressure、conservation。trace 两侧均 finite，最小 density 约 0.999999999998、最小 pressure 约 1.0135158932；adapter 内部面守恒 CTest 通过。
     - [x] E6.3：补 lifecycle、state reuse、invalid request、batch equality CTest；全量 CTest 187/187 通过，另有 1 个既有测试 Disabled。
-    - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，并按确认更新 `origin/dev`。
+    - [x] E6.4：完成融合后 dev 的 contract/adapter 验证，并按确认更新 `origin/dev`。
       - [x] E6.4a：在昆山 CPU 队列完成融合后 dev 的 contract/adapter 与主 solver 回归验证；origin/dev 推送另行处理。
       - [x] E6.4b：已将 merge 后 dev 推送到 `origin/dev`（`6d30b783`）。
 
@@ -218,17 +218,17 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - [x] 昆山 standalone 1D HIP contract：DTK 26.04、`gfx906`、`dcu:1`，GoogleTest/CTest 均 9/9 通过，含 WENO5 与 CPU oracle 对照。
 - [x] HIP CTest 统一架构：standalone 与根工程共用 `cmake/OneFLOWEulerContract.cmake`；根工程默认关闭，`ONEFLOW_ENABLE_HIP_TESTS=ON` 才注册硬件测试；Kunshan runner 用 `hardware` label + `HIP` 前缀门控，避免无 DCU 时阻塞普通 CPU CTest。
 - [ ] **F：主 solver DCU vertical slice**。说明：把已通过 CPU oracle 的主 solver batch seam 切换到 HIP/DCU；standalone HIP 通过不等于主 solver DCU 已完成。
-  - [ ] F1：主 solver HIP backend registration。说明：在不改变 CPU 默认路径的前提下，将 HIP backend、device state 和 capability guard 接入生产 solver。
-    - [ ] F1.1：明确主 solver 的 HIP `CreateState`/`Upload`/`Advance`/`Download` 生命周期与 `SimuContext` owner 的绑定。
-    - [ ] F1.2：把 `UNsInvFlux` 的 HIP path 限定在已定义的 5 方程、Lax-Friedrichs、单 local zone、finest grid capability contract。
-    - [ ] F1.3：保留 CPU legacy fallback；无 DCU、非法 capability 或 runtime error 必须显式失败或回退并可观测。
+  - [x] F1：主 solver HIP backend registration。说明：在不改变 CPU 默认路径的前提下，将 HIP backend 与 capability/fail-fast guard 接入生产 solver；`HipFluxBackend` 为无状态执行对象，不冒充 `EulerDomainState` 生命周期。
+    - [x] F1.1：`d5005ad6` 完成统一 `FluxBackend&` 注入与 CPU/HIP 共用 pack；`ONEFLOW_ENABLE_HIP_TESTS=ON` 联动生产 HIP backend。
+    - [x] F1.2：`ca14118c` 将 `UNsInvFlux` HIP path 限定为受支持 solver、5 方程、Lax-Friedrichs、单 local zone、finest/single grid，并逐项返回稳定拒绝原因。
+    - [x] F1.3：默认/CPU 路径不变；显式请求 HIP 而 build/runtime/backend/capability 不满足时 fail-fast，不静默回退。
   - [ ] F2：主 solver CPU/HIP numerical gate。说明：先用小 case 复现 CPU oracle，再逐步扩大到 3D m6 case。
     - [ ] F2.1：HIP one-step/one-stage 与 CPU 对比，检查 face flux、residual、state trace。
     - [ ] F2.2：检查 finite、positive density/pressure、boundary semantics 和 conservation。
     - [ ] F2.3：主 solver FullTrace/NoTrace CTest 在 Kunshan `dcu:1` 通过。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
-    - [ ] F3.1：更新 Kunshan runner，使 root HIP opt-in 构建与 standalone contract 使用同一测试门禁。
-    - [ ] F3.2：完成 CPU queue regression + DCU correctness；未完成 MPI/多卡与性能不提前标记。
+    - [ ] F3.1：把本轮一次性 root HIP runner 沉淀为仓库标准 runner；当前已验证 root HIP opt-in 与共享 contract helper。
+    - [ ] F3.2：CPU queue regression 已完成；DCU 构建/contract 已完成，主 solver one-call/one-step/3D correctness 尚未完成；MPI/多卡与性能不提前标记。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
@@ -262,9 +262,10 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 ## 3. 接手前的关键上下文
 
-1. **两套构建分离**：根构建是 CPU solver（MPI+METIS+CGNS）；
-   一维 Euler HIP 代码在 `ports/kunshan/oneflow_1d_hip`，用 DTK 工具链独立构建。
-   根构建结果不能证明 DCU 能力。
+1. **构建与证据边界**：根工程默认仍是 CPU solver（MPI+METIS+CGNS）；
+   `ONEFLOW_ENABLE_HIP_TESTS=ON` 才显式编译生产 HIP backend 与硬件 contract。
+   `ports/kunshan/oneflow_1d_hip` 仍是独立最小闭环；root HIP contract 通过不能替代
+   主 solver one-call/one-step/3D case 的 DCU 数值证据。
 2. **四个标准套件**：`cpu-regression` / `dcu-single` / `cpu-mpi` / `dcu-mpi`；
    资源配比、通过判据、统一规模见 `ci/kunshan/README.md`。
 3. **回归门槛**：数值/后端改动必须跑五算例 CPU 套件（normal `1e-8` + strict `1e-15`）；
@@ -287,6 +288,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-15 | F1 root HIP registration/guard 目标节点闭环：生产 `OneFLOW`、HIP smoke 与 root HIP contract 在 DTK 26.04 / `gfx906` / `dcu:1` 编译运行；同 revision CPU oracle 全套复验 | commits `d5005ad6`, `ca14118c`；root HIP GoogleTest/CTest 9/9；CPU 根 CTest 210/210、normal 5/5（最大 absolute difference `4.97e-10`）、strict 5/5（最大 `1.11e-17`）、port CPU 8/8；scheduler/workload 均成功 |
 | 2026-09-14 | E4.4c MRField hook：新增只上传 internal cells 的 equation-major snapshot；FieldSimu 在 INIT_FLOWFIELD 后按 solver/grid key 选择 Initialize/Restart lifecycle；真实 `m6wingroe_sa` 初始化 50 步与 `startStrategy=1` restart 均通过，初始化 residual baseline 最大绝对差 `4.07e-20` | `codes/main/include/EulerDomainMrFieldAdapter.h`; `codes/main/src/EulerDomainMrFieldAdapter.cpp`; `codes/global/src/FieldSimu.cpp`; adapter 2/2、合并回归 29/29、root build 100% |
 | 2026-09-15 | E6.1a/E6.2/E6.3 主 solver 细粒度验收：新增 opt-in ONEFLOW_UNS_TRACE_FILE，对 m6 3D Lax-Friedrichs legacy/batch 比较 qf1/qf2/invflux 全部 face/equation；896256 faces × 5 equations，invflux 最大绝对差 1.11e-15、最大相对差 1.41e-10；两侧 finite 且 density/pressure 为正；内部面守恒与全量 CTest 通过 | codes/uns/include/UNsInvFlux.h; codes/uns/src/UNsInvFlux.cpp; ci/kunshan/e6-cpu-trace-verify.py; ci/kunshan/e6-cpu-trace.slurm; tests/euler_cpu_adapter_test.cpp; trace verifier PASS、physicality/conservation CTest、全量 CTest 187/187 |
 | 2026-09-14 | E5 RungeKutta 主 solver 接入：新增 CPU backend host stage scheduler，`TimeIntegral` 显式接收 `SimuContext` 并按 capability guard 选择 RK seam 或 legacy fallback；阶段顺序保持不变，3D 粘性 m6 case 的 RK fallback 1-step runtime 通过；无粘性改造副本因旧案例的 `nTModel=0` 空字段假设在初始化阶段退出，未作为 E5 oracle | `codes/accel/include/EulerDomain.h`; `codes/accel/src/CpuEulerDomainBackend.cpp`; `codes/main/src/EulerDomainStateSync.cpp`; `codes/multigrid/src/Multigrid.cpp`; `codes/solver/src/TimeIntegral.cpp`; CPU scheduler 4/4、capability 2/2、root build/link 100% |
