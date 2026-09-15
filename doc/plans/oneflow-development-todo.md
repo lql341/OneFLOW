@@ -105,17 +105,17 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `origin/dev` = `8e08c376`；F2.1 adapter one-call CPU/HIP oracle 已推送 |
+| 分支 | 本地 `dev` = `origin/dev` = `2f597a04`；F2.2 多帧 stage trace 与昆山 runner 已推送 |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | E1–E6、F1 与 F2.1 已完成；当前主线是 F2.2 主 solver one-step/one-stage CPU/HIP 数值门禁。 |
-| 最新验证 | `8e08c376`：昆山 root HIP 生产 `OneFLOW` 编译链接、smoke、HIP GoogleTest 9/9、hardware HIP CTest 10/10；adapter one-call 257 faces × 5 equations，flux 最大差 `6.661e-16`、显式 mask residual 最大差 `1.110e-15`。同 revision CPU 根 CTest 210/210、normal 5/5、strict 5/5、port CPU contract 8/8；两类作业均 scheduler/workload 成功。 |
+| 当前进度 | E1–E6、F1、F2.1 与 F2.2 小 case 1-step 已完成；当前主线是 F2.3 物理/离散语义与 F2.4 3D m6。 |
+| 最新验证 | `2f597a04`：昆山 5 方程 `plateuns2dslau2` Lax-Friedrichs 1-step LU-SGS，legacy CPU / CPU batch / HIP batch face-residual-state 三路 trace 通过；HIP invflux/residual 最大差 `1.4210854715202004e-14`，state 最大差 `6.514681130330882e-19`，finite 且 density/pressure 为正。root HIP GoogleTest 9/9、CTest 10/10；同 revision CPU 根 CTest 210/210、normal/strict 5/5、port 8/8；两类作业均 scheduler/workload 成功。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
-`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU/HIP inviscid batch seam，并已完成 root HIP 编译、contract 与 adapter one-call。真实主 solver HIP one-step/3D execution、完整 NS/Euler accelerator path 仍未验证。
+`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；主 solver 已有受控的 CPU/HIP inviscid batch seam，并已完成 root HIP 编译、contract、adapter one-call 与小 case 1-step。真实主 solver HIP RK multi-stage/3D execution、完整 NS/Euler accelerator path 仍未验证。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -124,7 +124,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | Phase 1 | FluxBackend 扩展为 Euler 多方程 Rusanov（CPU+HIP kernel） | 先让批量通量 backend 能处理标量、3 方程 Euler 和 5 方程 NS 数据。 | ✅ `11b98029` |
 | Phase 2 | 验证桥：FluxBackend vs port EulerBackend 数值一致性 | 用独立桥接测试证明新 backend 与已有 CPU oracle 的数值结果一致。 | ✅ `c4764c48`（机器精度 2.22e-16） |
 | Phase 3 | HipEulerBackend 接入 AccelBackend + DeviceBuffer 统一设备管理 | 统一 accelerator runtime 和设备内存管理，避免 backend 各自维护重复资源。 | ✅ `983641c8` |
-| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🟨 F2.1 adapter one-call 已闭环；主 solver one-step/3D case 待验证 |
+| Phase 4 | 主求解器 UNsInvFlux::CalcInvFlux 批量 GPU 化 | 把生产主 solver 的逐面通量循环改造成可切换的批量 CPU/HIP/DCU 路径。 | 🟨 F2.2 小 case 1-step 已闭环；RK multi-stage/3D m6 待验证 |
 
 **融合后的唯一执行主线**：架构 contract 解决生命周期/所有权，FluxBackend 解决批量通量计算；两者在主 solver CPU adapter 汇合，再复用到 HIP/DCU。
 
@@ -135,7 +135,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | 建立与具体 solver 解耦的运行时、设备内存和批量 kernel 基础设施。 | ✅ Phase 1-3 |
 | D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | ✅ E1、E2 与生命周期 service、主 solver INIT/restart hook 已完成 |
 | E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | CPU 主 solver 初始化、通量、时间推进、逐面 trace 与物理门禁已闭环。 | ✅ E1–E6 |
-| F. DCU vertical slice | root 生产 HIP 编译、smoke、contract、adapter one-call 与同 revision CPU 回归已闭环；主 solver one-step/3D case 尚未执行 | F2.1 已证明 5 方程 Lax-Friedrichs flux 与显式 mask residual 对齐 CPU oracle；F2.2 继续做 state/trace 与物理门禁。 | 🟨 |
+| F. DCU vertical slice | root 生产 HIP 编译、smoke、contract、adapter one-call、小 case 1-step 与同 revision CPU 回归已闭环；RK multi-stage/3D m6 尚未执行 | F2.2 已证明生产 solver 的 face、inviscid residual 与更新后 state 对齐；F2.3/F2.4 继续做完整物理语义和 3D 门禁。 | 🟨 |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
 **整合约束：** `FluxBackend` 接收 equation-major conserved face state；`UNsInvFlux` 提供 reconstructed primitive state，adapter 负责转换，backend 负责面面积；face connectivity 仍由主 solver 的 `AddF2CField` 处理。CPU batch 入口必须以旧 CPU 逐面路径为 oracle。
@@ -224,12 +224,12 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] F1.3：默认/CPU 路径不变；显式请求 HIP 而 build/runtime/backend/capability 不满足时 fail-fast，不静默回退。
   - [ ] F2：主 solver CPU/HIP numerical gate。说明：先用小 case 复现 CPU oracle，再逐步扩大到 3D m6 case。
     - [x] F2.1：adapter one-call CPU/HIP oracle；257 faces × 5 equations，覆盖 3D normals、ALE mesh-normal velocity、face area 与非 boundary-first 显式 mask；flux 最大差 `6.661e-16`，residual 最大差 `1.110e-15`。
-    - [ ] F2.2：HIP one-step/one-stage 与 legacy CPU、CPU batch 对比，检查 `qf1`、`qf2`、face flux、residual、state trace。
+    - [x] F2.2：HIP 小 case 1-step LU-SGS 与 legacy CPU、CPU batch 对比，检查 `qf1`、`qf2`、face flux、residual、state trace。
     - [ ] F2.3：检查 finite、positive density/pressure、boundary semantics 和 conservation。
     - [ ] F2.4：主 solver FullTrace/NoTrace CTest 在 Kunshan `dcu:1` 通过，并扩大到 3D m6 case。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
     - [ ] F3.1：把本轮一次性 root HIP runner 沉淀为仓库标准 runner；当前已验证 root HIP opt-in 与共享 contract helper。
-    - [ ] F3.2：CPU queue regression 与 DCU 构建/contract/adapter one-call 已完成；主 solver one-step/3D correctness 尚未完成；MPI/多卡与性能不提前标记。
+    - [ ] F3.2：CPU queue regression 与 DCU 构建/contract/adapter one-call/小 case one-step 已完成；RK multi-stage/3D correctness 尚未完成；MPI/多卡与性能不提前标记。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
@@ -266,7 +266,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 1. **构建与证据边界**：根工程默认仍是 CPU solver（MPI+METIS+CGNS）；
    `ONEFLOW_ENABLE_HIP_TESTS=ON` 才显式编译生产 HIP backend 与硬件 contract。
    `ports/kunshan/oneflow_1d_hip` 仍是独立最小闭环；root HIP contract 通过不能替代
-   主 solver one-step/3D case 的 DCU 数值证据。
+   主 solver RK multi-stage/3D case 的 DCU 数值证据。
 2. **四个标准套件**：`cpu-regression` / `dcu-single` / `cpu-mpi` / `dcu-mpi`；
    资源配比、通过判据、统一规模见 `ci/kunshan/README.md`。
 3. **回归门槛**：数值/后端改动必须跑五算例 CPU 套件（normal `1e-8` + strict `1e-15`）；
@@ -289,6 +289,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-15 | F2.2 主 solver 小 case 1-step：新增 opt-in 多帧 face/inviscid-residual/state trace 与昆山三路 verifier；保持既有 E6 trace 兼容 | commits `156f94fc`, `2f597a04`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：`plateuns2dslau2` 五方程 Lax-Friedrichs 1-step LU-SGS，HIP qf1/qf2 与 legacy 一致，invflux/residual 最大差 `1.4210854715202004e-14`，state 最大差 `6.514681130330882e-19`，finite 且正状态；root HIP 9/9、CTest 10/10；同 revision CPU 210/210、normal/strict 5/5、port 8/8；scheduler/workload 均成功 |
 | 2026-09-15 | F2.1 主 solver adapter one-call：修复 HIP backend 忽略 Lax-Friedrichs `scheme=1` 与 residual kernel 假定 boundary-first 的 contract 漂移；新增显式 `boundaryMask`、3D normals、ALE mesh-normal velocity 和 face-area 覆盖 | commit `8e08c376`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：257 faces × 5 equations，flux 最大差 `6.661e-16`、residual 最大差 `1.110e-15`，hardware HIP CTest 10/10；同 revision CPU 根 CTest 210/210、normal/strict 5/5、port CPU 8/8；scheduler/workload 均成功 |
 | 2026-09-15 | F1 root HIP registration/guard 目标节点闭环：生产 `OneFLOW`、HIP smoke 与 root HIP contract 在 DTK 26.04 / `gfx906` / `dcu:1` 编译运行；同 revision CPU oracle 全套复验 | commits `d5005ad6`, `ca14118c`；root HIP GoogleTest/CTest 9/9；CPU 根 CTest 210/210、normal 5/5（最大 absolute difference `4.97e-10`）、strict 5/5（最大 `1.11e-17`）、port CPU 8/8；scheduler/workload 均成功 |
 | 2026-09-14 | E4.4c MRField hook：新增只上传 internal cells 的 equation-major snapshot；FieldSimu 在 INIT_FLOWFIELD 后按 solver/grid key 选择 Initialize/Restart lifecycle；真实 `m6wingroe_sa` 初始化 50 步与 `startStrategy=1` restart 均通过，初始化 residual baseline 最大绝对差 `4.07e-20` | `codes/main/include/EulerDomainMrFieldAdapter.h`; `codes/main/src/EulerDomainMrFieldAdapter.cpp`; `codes/global/src/FieldSimu.cpp`; adapter 2/2、合并回归 29/29、root build 100% |

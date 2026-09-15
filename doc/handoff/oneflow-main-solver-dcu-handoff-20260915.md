@@ -2,11 +2,12 @@
 
 **日期：** 2026-09-15
 **工作分支：** `dev`
-**已推送基线：** `8e08c376`（`origin/dev`）
+**已推送基线：** `2f597a04`（`origin/dev`）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
-**交接状态：** F2.1 one-call 已通过；下一步是 F2.2 one-step/one-stage
+**F2.2 checkpoint：** `156f94fc` + `2f597a04`（多帧 stage trace 与已验证模块顺序，已推送）
+**交接状态：** F2.2 小 case 1-step 已通过；下一步是 F2.3/F2.4 物理语义与 3D m6
 
 ## 1. 一句话结论
 
@@ -17,7 +18,9 @@ CPU vertical slice 已闭环，standalone 1D HIP contract 已在昆山真实 DCU
 DTK 26.04、`gfx906` 完成生产 `OneFLOW` HIP 编译链接、smoke 与 root HIP
 contract。`8e08c376` 又修复 HIP Lax-Friedrichs scheme 与显式
 `boundaryMask` 语义，并在真实 DCU 上完成 257 faces × 5 equations 的主 solver
-adapter one-call flux/residual CPU oracle。one-step/one-stage 和 3D case 数值
+adapter one-call flux/residual CPU oracle。`2f597a04` 又在 5 方程
+`plateuns2dslau2` Lax-Friedrichs 小 case 上完成 legacy CPU、CPU batch、HIP batch
+的 1-step LU-SGS face/residual/state trace。RK multi-stage、完整物理语义和 3D m6
 门禁仍未完成，因此不能宣称主 solver 已具备 DCU 能力。
 
 ## 2. 全景进度
@@ -34,8 +37,8 @@ adapter one-call flux/residual CPU oracle。one-step/one-stage 和 3D case 数�
 - [ ] 阶段 F：DCU vertical slice——把同一主 solver batch contract 切到 HIP，
   在真实 DCU 上完成编译、运行和 CPU/HIP 数值一致性。
   - [x] F1：HIP backend registration——`d5005ad6` + `ca14118c`，目标节点编译与 contract 已通过。
-  - [ ] F2：CPU/HIP numerical gate——F2.1 one-call 已完成，当前进入 F2.2 one-step/one-stage。
-  - [ ] F3：target-node evidence——构建/contract/one-call/CPU regression 已有证据；主 solver case 待运行。
+  - [ ] F2：CPU/HIP numerical gate——F2.1/F2.2 已完成，当前进入物理语义与 3D m6。
+  - [ ] F3：target-node evidence——构建/contract/one-call/小 case one-step/CPU regression 已有证据；3D case 待运行。
 - [ ] 阶段 G：MPI/性能——在单卡正确性闭环后再做 halo、多卡和性能优化。
 
 ## 3. Git 状态与 F1 checkpoint
@@ -81,8 +84,17 @@ F2.1 checkpoint `8e08c376`（`feat: validate main solver HIP flux one-call`）
   mesh-normal velocity、face area 与非 boundary-first mask；
 - 注册 `HIP.MainSolverFluxOneCall`，并标记 `hardware;hip;dcu`。
 
-接手时应先确认 `dev` 与 `origin/dev` 均包含 `8e08c376`；不要 checkout、reset
-或覆盖 F1/F2.1 文件。
+F2.2 checkpoints `156f94fc`（多帧 stage trace）与 `2f597a04`
+（昆山已验证模块顺序）继续完成：
+
+- 新增独立 `ONEFLOW_UNS_STAGE_TRACE_FILE`，逐次追加 face、inviscid residual
+  与更新后 internal-cell state；既有 E6 trace 格式保持不变；
+- 新增 `ci/kunshan/f2-main-solver-stage.slurm` 与三路 trace verifier；
+- 5 方程小 case 1-step LU-SGS 的 legacy CPU / CPU batch / HIP batch 已在真实
+  DCU 上对齐。
+
+接手时应先确认 `dev` 与 `origin/dev` 均包含 `2f597a04`；不要 checkout、reset
+或覆盖 F1/F2.1/F2.2 文件。
 
 ## 4. 已完成验证与能力边界
 
@@ -105,6 +117,11 @@ F2.1 checkpoint `8e08c376`（`feat: validate main solver HIP flux one-call`）
 - [x] 主 solver adapter one-call：257 faces × 5 equations；CPU/HIP 全量 flux
   最大绝对差 `6.661e-16`，显式 mask residual 最大绝对差 `1.110e-15`；
   覆盖 3D normals、ALE mesh-normal velocity、face area 与非 boundary-first mask。
+- [x] 主 solver 小 case 1-step：`plateuns2dslau2` 五方程 Lax-Friedrichs，
+  legacy CPU / CPU batch / HIP batch 各生成 face、inviscid residual、state 三条记录；
+  HIP 对 legacy 的 qf1/qf2 完全一致，invflux/residual 最大绝对差
+  `1.4210854715202004e-14`，更新后 state 最大绝对差
+  `6.514681130330882e-19`；density/pressure finite 且为正。
 - [x] 同 revision 昆山 CPU 门禁：根 CTest `210/210`；五算例 normal
   `5/5`（最大 residual absolute difference 约 `4.97e-10`）；strict
   `5/5`（最大约 `1.11e-17`）；standalone CPU contract `8/8`。
@@ -113,9 +130,9 @@ F2.1 checkpoint `8e08c376`（`feat: validate main solver HIP flux one-call`）
 ### 4.2 尚未完成，禁止提前声明
 
 - [ ] `UNsInvFlux` HIP batch 尚未在真实 3D 主 solver case 中执行。
-- [ ] 尚无主 solver one-step/one-stage 的 `qf1`、`qf2`、face flux、residual
-  或 state trace 对比；当前证据只到 adapter one-call。
-- [ ] 尚未证明主 solver HIP 路径的 density/pressure positivity、finite、边界语义
+- [ ] 尚无 RK multi-stage 与 3D 主 solver case 的 `qf1`、`qf2`、face flux、
+  residual 或 state trace 对比；当前生产 case 证据只到小型 2D 1-step LU-SGS。
+- [ ] 小 case 的 density/pressure positivity 与 finite 已通过；尚未证明 3D 主 solver HIP 路径的边界语义
   与守恒。
 - [ ] 尚未完成主 solver DCU MPI、多卡或性能测试。
 - [ ] 根工程默认仍是 CPU-only；standalone HIP 通过不能替代主 solver DCU 证据。
@@ -137,9 +154,9 @@ UNs reconstructed primitive faces
 本身不是 state 生命周期错误。`SimuContext::AccelStates()` 管理的是跨阶段复用的
 `EulerDomainState`，不要为了形式统一把无状态 `HipFluxBackend` 强行塞进 registry。
 
-F1 已解决 backend registration、capability 与 fail-fast policy，F2.1 已完成
-同一 5 方程 face batch 的 CPU/HIP one-call 全量 flux/residual 对比。下一步关键问题是：
-- 在主 solver one-step/one-stage 中比较 `qf1`、`qf2`、`invflux`、residual 与 state；
+F1 已解决 backend registration、capability 与 fail-fast policy，F2.1/F2.2 已完成
+one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步关键问题是：
+- 扩大到 RK multi-stage 与 3D m6，逐 stage 比较 `qf1`、`qf2`、`invflux`、residual 与 state；
 - 检查 finite、density/pressure positivity、内部面守恒与 boundary semantics；
 - 当前 host pack + H2D + kernel + D2H 只用于正确性纵切线，不代表最终性能架构。
 
@@ -185,12 +202,12 @@ F1 已解决 backend registration、capability 与 fail-fast policy，F2.1 已�
   - [x] F2.1a：同一 3/5 方程 face batch 分别调用 CPU/HIP backend。
   - [x] F2.1b：比较所有 equation/face flux，使用既有 CPU oracle 容差。
   - [x] F2.1c：确保 CTest 名称有 `CPU.`/`HIP.` 前缀及 `hardware;hip;dcu` label。
-- [ ] F2.2：做主 solver one-step/one-stage gate。
-  - [ ] F2.2a：选择可控小 case，分别生成 legacy CPU、CPU batch、HIP batch trace。
-  - [ ] F2.2b：逐 face/equation 比较 `qf1`、`qf2`、`invflux`。
-  - [ ] F2.2c：比较 residual/state，定位误差来自 pack、kernel 还是回写。
+- [x] F2.2：做主 solver 小 case 1-step LU-SGS gate。
+  - [x] F2.2a：选择可控小 case，分别生成 legacy CPU、CPU batch、HIP batch trace。
+  - [x] F2.2b：逐 face/equation 比较 `qf1`、`qf2`、`invflux`。
+  - [x] F2.2c：比较 residual/state，定位误差来自 pack、kernel 还是回写。
 - [ ] F2.3：物理与离散语义检查。
-  - [ ] F2.3a：finite、positive density、positive pressure。
+  - [ ] F2.3a：finite、positive density、positive pressure（小 case 已通过，3D case 待验证）。
   - [ ] F2.3b：内部面守恒和 boundary-mask/boundary ordering 语义。
   - [ ] F2.3c：ALE mesh-normal velocity 与 face-area ownership 不重复计算。
 - [ ] F2.4：扩大到 E6 使用的 3D m6 Lax-Friedrichs case。
@@ -209,7 +226,7 @@ F1 已解决 backend registration、capability 与 fail-fast policy，F2.1 已�
   - [x] root HIP configure/build；
   - [x] HIP contract；
   - [x] 主 solver one-call；
-  - [ ] one-step/one-stage；
+  - [x] 小 case 1-step LU-SGS；
   - [ ] 3D case；
   - [x] 同 revision 的 CPU regression。
 - [x] F3.5：CPU 五算例 normal `1e-8`、strict `1e-15` 与相关根 CTest 全通过后，
@@ -280,7 +297,8 @@ F 阶段只有同时满足以下条件才可勾选完成：
 - [x] CPU 五算例 normal/strict 通过；
 - [x] 根工程 HIP opt-in 在昆山真实 DCU 节点编译、链接并发现预期测试；
 - [x] HIP contract 全部通过且测试集合非空；
-- [ ] 主 solver one-step/one-stage 与 CPU oracle 对齐；
+- [x] 主 solver 小 case 1-step LU-SGS 与 CPU oracle 对齐；
+- [ ] 主 solver RK multi-stage 与 CPU oracle 对齐；
 - [ ] finite、positivity、conservation、boundary semantics 全部通过；
 - [ ] 3D case 通过，再更新 living TODO；
 - [x] scheduler 状态和 workload exit code 均成功；
