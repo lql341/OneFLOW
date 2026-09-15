@@ -25,6 +25,8 @@ License
 
 #include "SimuTask.h"
 #include "SimuContext.h"
+#include "SimuTaskRequire.h"
+#include "EulerDomainStateSync.h"
 #include "FieldSimu.h"
 #include "GridFactory.h"
 #include "MultiBlock.h"
@@ -42,7 +44,19 @@ class SolveFieldTask : public ISimuTask
 {
 public:
     bool NeedsSystemMap() const override { return true; }
-    void Execute( SimuContext& ctx ) override { FieldSimu( ctx ); }
+    void Execute( SimuContext& ctx ) override
+    {
+        RequireSolveFieldContext( ctx );
+
+        // Same six stages as FieldSimu(); order must stay identical.
+        FieldSimuSetupGlobals();
+        FieldSimuLoadGrid();
+        FieldSimuPrepareWallDist();
+        FieldSimuCreateSolvers();
+        FieldSimuInitFlowField();
+        SyncAllEulerDomainStates( ctx );
+        FieldSimuRun( ctx );
+    }
 };
 
 class CreateGridTask : public ISimuTask

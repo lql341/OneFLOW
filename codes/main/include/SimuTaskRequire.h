@@ -19,54 +19,27 @@ License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
 \*---------------------------------------------------------------------------*/
+
 #pragma once
-#include "HXDefine.h"
+#include "SimuContext.h"
+#include <stdexcept>
+#include <string>
 
 BeginNameSpace( ONEFLOW )
 
-class Iteration
+// Preconditions for the production SolveFieldTask path.
+inline void RequireSolveFieldContext( const SimuContext& ctx )
 {
-public:
-    Iteration();
-    ~Iteration();
-public:
-    static int innerSteps;
-    static int outerSteps;
-    static int maxSteps;
-    static int maxIterSteps;
-    static int dualtime;
-    static int nFieldSave;
-    static int nVisualSave;
-    static int nResSave;
-    static int nForceSave;
-    static Real cfl;
-    static Real cflst;
-    static Real cfled;
-    static int ncfl;
-public:
-    static void Init();
-    static bool InnerOk();
-    static bool ResOk();
-    static bool ForceOk();
-};
-
-class SimuIterState
-{
-public:
-    SimuIterState();
-    ~SimuIterState();
-public:
-    static bool Running();
-    static bool InnerRunning();
-};
-
-class SaveState
-{
-public:
-    SaveState();
-    ~SaveState();
-public:
-    static int nFileSaveSteps;
-};
+    if ( ! ctx.IsEnvironmentReady() )
+    {
+        throw std::runtime_error(
+            "SolveFieldTask: environment not ready (SetupEnvironment required)" );
+    }
+    if ( ctx.TaskName() != "Solve" )
+    {
+        throw std::runtime_error(
+            "SolveFieldTask: unexpected task name \"" + ctx.TaskName() + "\"" );
+    }
+}
 
 EndNameSpace

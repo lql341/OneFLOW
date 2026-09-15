@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-15（本轮：HIP CTest 统一注册、硬件标签门控与 Kunshan dcu:1 复验完成）
+> 最后更新：2026-09-15（本轮：合并 upstream/master、保留 mutable SimuContext contract，并完成 206/206 CTest）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -103,15 +103,15 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 项目 | 状态 |
 |---|---|
-| 主分支 | `master` = `origin/master` = `upstream/master` = `90749492`（已同步） |
+| 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = 最新上游基线 + accelerator Phase 1-3 + 架构 contract WIP；`origin/dev` 尚未强推更新 |
+| 分支 | 本地 `dev` = `upstream/master` 合并结果 + accelerator Phase 1-3 + 架构 contract；`origin/dev` 尚未推送本轮 merge |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
 | 当前进度 | E1–E5 已完成；E6 是当前主线。E5 已接入 3D 主 solver 的 CPU RK capability guard、stage scheduler 和 legacy fallback；不是 standalone 1D kernel，也不是 DCU execution。 |
-| 最新验证 | 根工程 100% 编译；CMake 4.2 CTest 187/187 通过，1 个既有测试 Disabled；E5 scheduler 4/4、capability 2/2；3D m6 RK fallback 1-step 通过。 |
+| 最新验证 | merge 后根工程 100% 编译/链接；CMake 3.28.3 + OpenMPI 4.1.4 配置下 CTest 206/206 通过；E5 scheduler 4/4、capability 2/2；3D m6 RK fallback 1-step 通过。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
@@ -161,6 +161,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - [x] 协同开发 Phase 1-3、旧架构 contract/StateRegistry 已统一恢复到本地 `dev`。
 - [x] standalone CPU、根工程、根 CTest、CPU bridge 已完成本机验证。
 - [x] 完成融合后 dev 的 contract/adapter 验证；origin/dev 更新待用户确认。
+- [x] 已将 `upstream/master` `a6c81105` 合并到 dev；保留 mutable `SimuContext&` 与 StateRegistry 生命周期，并吸收 upstream 的分阶段 `FieldSimu`、policy 和 parser 测试。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 

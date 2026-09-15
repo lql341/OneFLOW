@@ -26,6 +26,17 @@ BeginNameSpace( ONEFLOW )
 
 class SimuContext;
 
+// CFD field-solve pipeline stages (order fixed; no numerical changes).
+void FieldSimuSetupGlobals();
+void FieldSimuLoadGrid();
+void FieldSimuPrepareWallDist();
+void FieldSimuCreateSolvers();
+void FieldSimuInitFlowField();
+void FieldSimuRun();
+void FieldSimuRun( SimuContext & context );
+
+// Convenience: run all stages in order (same as SolveFieldTask path).
+void FieldSimu();
 void FieldSimu( SimuContext & context );
 
 void InitFlowSimuGlobal();

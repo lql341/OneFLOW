@@ -19,54 +19,39 @@ License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
 \*---------------------------------------------------------------------------*/
+
+
 #pragma once
-#include "HXDefine.h"
+#include "NamespaceMacros.h"
 
 BeginNameSpace( ONEFLOW )
 
-class Iteration
+enum class FlowWallDistAction
 {
-public:
-    Iteration();
-    ~Iteration();
-public:
-    static int innerSteps;
-    static int outerSteps;
-    static int maxSteps;
-    static int maxIterSteps;
-    static int dualtime;
-    static int nFieldSave;
-    static int nVisualSave;
-    static int nResSave;
-    static int nForceSave;
-    static Real cfl;
-    static Real cflst;
-    static Real cfled;
-    static int ncfl;
-public:
-    static void Init();
-    static bool InnerOk();
-    static bool ResOk();
-    static bool ForceOk();
+    SkipAfterAlloc,  // inviscid / laminar NS: allocate only
+    Load,            // read existing wall distance
+    Create           // compute and write wall distance
 };
 
-class SimuIterState
+// Pure decision ¡ª no I/O, no tasks. Safe for unit tests.
+inline FlowWallDistAction DecideFlowWallDistAction(
+    int vismodel,
+    int startStrategy,
+    int ireadwdst )
 {
-public:
-    SimuIterState();
-    ~SimuIterState();
-public:
-    static bool Running();
-    static bool InnerRunning();
-};
-
-class SaveState
-{
-public:
-    SaveState();
-    ~SaveState();
-public:
-    static int nFileSaveSteps;
-};
+    if ( vismodel <= 1 )
+    {
+        return FlowWallDistAction::SkipAfterAlloc;
+    }
+    if ( startStrategy > 0 )
+    {
+        return FlowWallDistAction::Load;
+    }
+    if ( ireadwdst == 0 )
+    {
+        return FlowWallDistAction::Create;
+    }
+    return FlowWallDistAction::Load;
+}
 
 EndNameSpace

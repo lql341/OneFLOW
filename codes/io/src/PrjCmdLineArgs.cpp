@@ -19,34 +19,29 @@ You should have received a copy of the GNU General Public License
 along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
 \*---------------------------------------------------------------------------*/
-#pragma once
-#include "HXDefine.h"
-#include <string>
 
+// Pure command-line parsing for Prj::ProcessCmdLineArgs.
+// Deliberately kept dependency-free (no Fatal/OStream/FileUtils) so it can
+// be compiled and unit-tested in isolation from the rest of Prj.cpp.
+
+#include "Prj.h"
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
 
-class MultiBlock
+CmdLineOptions Prj::ParseCmdLineArgs( const std::vector<std::string> & args )
 {
-public:
-    MultiBlock();
-    ~MultiBlock();
-public:
-    static void ReadMultiBlockGrid();
-    static void SetUpMultigrid();
-    // Load grid from control "gridFileName", compute metrics, build zone topology.
-    static void LoadGridAndBuildLink();
-    static void InitMultiZoneTopo();
-    static void InitOversetTopo();
-    static void PrepareFlowGrid();
-    static void ProcessWallDist();
-    static void ProcessFlowWallDist();
-    static void AllocWallDist();
-};
+    if ( args.size() < 3 )
+    {
+        throw std::invalid_argument(
+            "Prj::ParseCmdLineArgs: expected at least 3 arguments "
+            "(exe, mode, prjName), got " + std::to_string( args.size() ) );
+    }
 
-std::string GetGridFileName();
-void WalldistSimu();
-void CreateWallDist();
-void LoadWallDist();
+    CmdLineOptions opt;
+    opt.debug   = ( args[ 1 ] == "d" );
+    opt.prjName = args[ 2 ];
+    return opt;
+}
 
 EndNameSpace

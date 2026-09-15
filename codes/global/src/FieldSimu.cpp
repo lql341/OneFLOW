@@ -42,19 +42,70 @@ License
 #include <iostream>
 #include <stdexcept>
 
-
 BeginNameSpace( ONEFLOW )
 
+namespace {
+
+    // CmxTask / MessageMap operation name; must match registration tables
+    constexpr const char* kInitFlowFieldTaskName = "INIT_FLOWFIELD";
+
+} // namespace
+
+void FieldSimuSetupGlobals()
+{
+    InitFlowSimuGlobal();
+}
+
+void FieldSimuLoadGrid()
+{
+    MultiBlock::LoadGridAndBuildLink();
+}
+
+void FieldSimuPrepareWallDist()
+{
+    MultiBlock::ProcessFlowWallDist();
+}
+
+void FieldSimuCreateSolvers()
+{
+    SolverMap::CreateSolvers();
+}
+
+void FieldSimuInitFlowField()
+{
+    // Stage entry: task name enters CmxTask here (no numerical change)
+    ONEFLOW::MultiSolverMultiGridTask( kInitFlowFieldTaskName );
+}
+
+void FieldSimuRun()
+{
+    MultigridSolve();
+}
+
+void FieldSimuRun( SimuContext & context )
+{
+    MultigridSolve( context );
+}
+
+void FieldSimu()
+{
+    FieldSimuSetupGlobals();
+    FieldSimuLoadGrid();
+    FieldSimuPrepareWallDist();
+    FieldSimuCreateSolvers();
+    FieldSimuInitFlowField();
+    FieldSimuRun();
+}
 
 void FieldSimu( SimuContext & context )
 {
-    InitFlowSimuGlobal();
-    MultiBlock::LoadGridAndBuildLink();
-    MultiBlock::ProcessFlowWallDist();
-    SolverMap::CreateSolvers();
-    InitializeSolver();
+    FieldSimuSetupGlobals();
+    FieldSimuLoadGrid();
+    FieldSimuPrepareWallDist();
+    FieldSimuCreateSolvers();
+    FieldSimuInitFlowField();
     SyncAllEulerDomainStates( context );
-    MultigridSolve( context );
+    FieldSimuRun( context );
 }
 
 void InitFlowSimuGlobal()
@@ -67,7 +118,8 @@ void InitFlowSimuGlobal()
 
 void InitializeSolver()
 {
-    ONEFLOW::MultiSolverMultiGridTask( "INIT_FLOWFIELD" );
+    // Compatibility alias for older call sites
+    FieldSimuInitFlowField();
 }
 
 EndNameSpace
