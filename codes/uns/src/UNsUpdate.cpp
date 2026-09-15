@@ -29,11 +29,80 @@ License
 #include "ZoneState.h"
 #include "HXMath.h"
 #include "Iteration.h"
+#include "GridState.h"
+#include <cstdlib>
+#include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+void AppendStateStageTrace(
+    const char * path,
+    std::uint32_t sequence,
+    std::uint64_t nItems,
+    std::uint32_t nEquations,
+    const MRField & field )
+{
+    std::ofstream output( path, std::ios::binary | std::ios::app );
+    if ( ! output )
+    {
+        throw std::runtime_error( "cannot open UNs stage trace file" );
+    }
+
+    const char magic[ 8 ] = "OFSTG01";
+    const std::uint32_t kind = 3;
+    const std::int32_t outerStep = Iteration::outerSteps;
+    const std::int32_t gridLevel = GridState::gridLevel;
+    const std::uint32_t nArrays = 1;
+    output.write( magic, sizeof( magic ) );
+    output.write(
+        reinterpret_cast< const char * >( & kind ), sizeof( kind ) );
+    output.write(
+        reinterpret_cast< const char * >( & sequence ), sizeof( sequence ) );
+    output.write(
+        reinterpret_cast< const char * >( & outerStep ), sizeof( outerStep ) );
+    output.write(
+        reinterpret_cast< const char * >( & gridLevel ), sizeof( gridLevel ) );
+    output.write(
+        reinterpret_cast< const char * >( & nEquations ),
+        sizeof( nEquations ) );
+    output.write(
+        reinterpret_cast< const char * >( & nArrays ), sizeof( nArrays ) );
+    output.write(
+        reinterpret_cast< const char * >( & nItems ), sizeof( nItems ) );
+
+    if ( field.GetNEqu() < nEquations )
+    {
+        throw std::runtime_error(
+            "UNs state trace field has an invalid equation extent" );
+    }
+    for ( std::uint32_t equation = 0;
+          equation < nEquations; ++ equation )
+    {
+        const auto & values = field[ equation ];
+        if ( values.size() < nItems )
+        {
+            throw std::runtime_error(
+                "UNs state trace field has an invalid cell extent" );
+        }
+        output.write(
+            reinterpret_cast< const char * >( values.data() ),
+            static_cast< std::streamsize >( nItems * sizeof( Real ) ) );
+    }
+    if ( ! output )
+    {
+        throw std::runtime_error( "failed while writing UNs state trace" );
+    }
+}
+
+}
 
 UNsUpdate::UNsUpdate()
 {
@@ -60,6 +129,26 @@ void UNsUpdate::UpdateFlowField( int solverType )
 
         this->UpdateFlowFieldValue();
     }
+
+    this->DumpUpdatedStateTrace();
+}
+
+void UNsUpdate::DumpUpdatedStateTrace()
+{
+    const char * traceFile = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    if ( traceFile == nullptr || traceFile[ 0 ] == 0 ) return;
+    if ( unsf.q == nullptr )
+    {
+        throw std::runtime_error(
+            "UNs state trace requested before flow state is available" );
+    }
+
+    static std::uint32_t sequence = 0;
+    AppendStateStageTrace(
+        traceFile, sequence,
+        static_cast< std::uint64_t >( ug.nCells ),
+        static_cast< std::uint32_t >( nscom.nTEqu ), * unsf.q );
+    ++ sequence;
 }
 
 void UNsUpdate::PrepareData()

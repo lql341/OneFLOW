@@ -53,6 +53,7 @@ public:
     void UpdateFaceInvFlux();
     void ReadTmp();
     void DumpInvFluxTrace();
+    void DumpInvFluxStageTrace();
 public:
     void GetQlQrField();
     void ReconstructFaceValueField();

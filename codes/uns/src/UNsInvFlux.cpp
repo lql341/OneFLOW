@@ -55,10 +55,80 @@ License
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <stdexcept>
 #include <vector>
 
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+void AppendStageTraceRecord(
+    const char * path,
+    std::uint32_t kind,
+    std::uint32_t sequence,
+    std::uint64_t nItems,
+    std::uint32_t nEquations,
+    const std::vector< const MRField * > & fields )
+{
+    std::ofstream output( path, std::ios::binary | std::ios::app );
+    if ( ! output )
+    {
+        throw std::runtime_error( "cannot open UNs stage trace file" );
+    }
+
+    const char magic[ 8 ] = "OFSTG01";
+    const std::int32_t outerStep = Iteration::outerSteps;
+    const std::int32_t gridLevel = GridState::gridLevel;
+    const std::uint32_t nArrays =
+        static_cast< std::uint32_t >( fields.size() );
+    output.write( magic, sizeof( magic ) );
+    output.write(
+        reinterpret_cast< const char * >( & kind ), sizeof( kind ) );
+    output.write(
+        reinterpret_cast< const char * >( & sequence ), sizeof( sequence ) );
+    output.write(
+        reinterpret_cast< const char * >( & outerStep ), sizeof( outerStep ) );
+    output.write(
+        reinterpret_cast< const char * >( & gridLevel ), sizeof( gridLevel ) );
+    output.write(
+        reinterpret_cast< const char * >( & nEquations ),
+        sizeof( nEquations ) );
+    output.write(
+        reinterpret_cast< const char * >( & nArrays ), sizeof( nArrays ) );
+    output.write(
+        reinterpret_cast< const char * >( & nItems ), sizeof( nItems ) );
+
+    for ( const MRField * field : fields )
+    {
+        if ( field == nullptr || field->GetNEqu() < nEquations )
+        {
+            throw std::runtime_error(
+                "UNs stage trace field has an invalid equation extent" );
+        }
+        for ( std::uint32_t equation = 0;
+              equation < nEquations; ++ equation )
+        {
+            const auto & values = ( * field )[ equation ];
+            if ( values.size() < nItems )
+            {
+                throw std::runtime_error(
+                    "UNs stage trace field has an invalid item extent" );
+            }
+            output.write(
+                reinterpret_cast< const char * >( values.data() ),
+                static_cast< std::streamsize >(
+                    nItems * sizeof( Real ) ) );
+        }
+    }
+    if ( ! output )
+    {
+        throw std::runtime_error( "failed while writing UNs stage trace" );
+    }
+}
+
+}
 
 UNsInvFlux::UNsInvFlux()
 {
@@ -151,6 +221,7 @@ void UNsInvFlux::CalcFlux()
     this->CalcInvFlux();
     this->DumpInvFluxTrace();
     this->AddInvFlux();
+    this->DumpInvFluxStageTrace();
 
     DeAlloc();
 }
@@ -391,6 +462,39 @@ void UNsInvFlux::DumpInvFluxTrace()
     {
         throw std::runtime_error( "failed while writing UNsInvFlux trace" );
     }
+}
+
+void UNsInvFlux::DumpInvFluxStageTrace()
+{
+    const char * traceFile = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    if ( traceFile == nullptr || traceFile[ 0 ] == 0 ) return;
+    if ( limf == nullptr || limf->qf1 == nullptr || limf->qf2 == nullptr
+         || invflux == nullptr )
+    {
+        throw std::runtime_error(
+            "UNs stage trace requested before face fields are available" );
+    }
+
+    UnsGrid * grid = Zone::GetUnsGrid();
+    MRField * residual = GetFieldPointer< MRField >( grid, "res" );
+    if ( residual == nullptr )
+    {
+        throw std::runtime_error(
+            "UNs stage trace requested before residual is available" );
+    }
+
+    static std::uint32_t sequence = 0;
+    const std::uint32_t nEquations =
+        static_cast< std::uint32_t >( limf->nEqu );
+    AppendStageTraceRecord(
+        traceFile, 1, sequence,
+        static_cast< std::uint64_t >( ug.nFaces ), nEquations,
+        { limf->qf1, limf->qf2, invflux } );
+    AppendStageTraceRecord(
+        traceFile, 2, sequence,
+        static_cast< std::uint64_t >( ug.nCells ), nEquations,
+        { residual } );
+    ++ sequence;
 }
 
 void UNsInvFlux::AddInvFlux()
