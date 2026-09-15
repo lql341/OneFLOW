@@ -39,9 +39,14 @@ License
 #include "Iteration.h"
 #include "TurbCom.h"
 #include "UTurbCom.h"
+#include "SolverDef.h"
+#include "SolverState.h"
+#include "ZoneState.h"
+#include "GridState.h"
 #include "AccelRuntime.h"
 #include "CpuFluxBackend.h"
 #include "EulerCpuAdapter.h"
+#include "EulerInvFluxCapability.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -197,24 +202,32 @@ bool UNsInvFlux::UseHipBatchAdapter() const
     const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BATCH" );
     if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
 
-#ifndef ONEFLOW_ENABLE_HIP
-    throw std::runtime_error(
-        "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 requires a OneFLOW build with HIP." );
-#else
-    const AccelRuntime & runtime = AccelRuntime::Instance();
-    if ( ! runtime.IsInitialized() || ! runtime.IsAccelerator() )
+    AccelRuntime & runtime = AccelRuntime::Instance();
+    EulerInvFluxCapabilityRequest request;
+#ifdef ONEFLOW_ENABLE_HIP
+    request.hipBuildEnabled = true;
+#endif
+    request.runtimeInitialized = runtime.IsInitialized();
+    request.hipBackendSelected = request.runtimeInitialized
+        && runtime.Backend().Kind() == AccelBackendKind::HIP;
+    request.supportedSolver = SolverState::solverType == NS_SOLVER;
+    request.localZoneCount = ZoneState::nLocal;
+    request.gridLevel = GridState::gridLevel;
+    request.gridCount = GridState::nGrids;
+    request.nEquations = nscom.nEqu;
+    request.limiterEquations = limf == nullptr ? 0 : limf->nEqu;
+    request.laxFriedrichsScheme =
+        nscom.ischeme == ISCHEME_LAX_FRIEDRICHS;
+
+    const EulerInvFluxCapabilityDecision decision =
+        EvaluateEulerInvFluxCapability( request );
+    if ( ! decision.enabled )
     {
         throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 requires an initialized HIP/DCU runtime." );
-    }
-    if ( nscom.ischeme != ISCHEME_LAX_FRIEDRICHS || nscom.nEqu != 5
-         || limf == nullptr || limf->nEqu != 5 )
-    {
-        throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 currently supports only 5-equation Lax-Friedrichs UNs fluxes." );
+            std::string( "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 rejected: " )
+            + EulerInvFluxCapabilityReasonName( decision.reason ) );
     }
     return true;
-#endif
 }
 
 void UNsInvFlux::CalcInvFluxCpuBatch()
