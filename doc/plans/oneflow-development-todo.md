@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-15（本轮：E6.1a 逐 face trace、E6.2 物理不变量、E6.3 CTest 回归完成）
+> 最后更新：2026-09-15（本轮：HIP CTest 统一注册、硬件标签门控与 Kunshan dcu:1 复验完成）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -135,7 +135,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 | C. accel substrate | AccelRuntime、AccelBackend、FluxBackend、DeviceBuffer | 建立与具体 solver 解耦的运行时、设备内存和批量 kernel 基础设施。 | ✅ Phase 1-3 |
 | D. domain contract | EulerDomain views、StateRegistry；通用 views 的布局/几何/能力元数据已补齐 | 明确 solver 与 accelerator 之间的数据、所有权和生命周期契约。 | ✅ E1、E2 与生命周期 service、主 solver INIT/restart hook 已完成 |
 | E. CPU vertical slice | INIT_FLOWFIELD、CPU adapter、RungeKutta、CPU oracle | 先在 CPU 主 solver 上打通初始化、通量、时间推进和逐面数值对照闭环。 | 🟨 E3、E4、E5 已完成；E6 仍需补齐逐面 trace、物理不变量与最终验收 |
-| F. DCU vertical slice | standalone 1D HIP contract 已在真实 Z100/gfx906 上闭环；主 solver DCU 尚未接入 | 先证明同一 adapter 在真实 DCU 上可编译、可运行且与 CPU oracle 对齐，再接主 solver。 | 🟨 |
+| F. DCU vertical slice | standalone 1D HIP contract 已在真实 Z100/gfx906 上闭环；HIP CTest 已接入共享注册 helper，主 solver DCU 尚未接入 | 先让 standalone 和根工程使用同一套 HIP CTest 架构，再证明 adapter 在真实 DCU 上可编译、可运行且与 CPU oracle 对齐，最后接主 solver。 | 🟨 |
 | G. MPI/性能 | host-staged halo、GPU-aware probe、reduction、性能 | 最后处理跨 rank 数据交换、设备归约和端到端规模化性能。 | ⬜ |
 
 **整合约束：** `FluxBackend` 接收 equation-major conserved face state；`UNsInvFlux` 提供 reconstructed primitive state，adapter 负责转换，backend 负责面面积；face connectivity 仍由主 solver 的 `AddF2CField` 处理。CPU batch 入口必须以旧 CPU 逐面路径为 oracle。
@@ -215,6 +215,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 
 - [x] 昆山 standalone 1D HIP contract：DTK 26.04、`gfx906`、`dcu:1`，GoogleTest/CTest 均 9/9 通过，含 WENO5 与 CPU oracle 对照。
+- [x] HIP CTest 统一架构：standalone 与根工程共用 `cmake/OneFLOWEulerContract.cmake`；根工程默认关闭，`ONEFLOW_ENABLE_HIP_TESTS=ON` 才注册硬件测试；Kunshan runner 用 `hardware` label + `HIP` 前缀门控，避免无 DCU 时阻塞普通 CPU CTest。
 - [ ] 主 solver CPU batch 通过后，把同一 adapter 切换到 HIP/DCU，并在昆山做 correctness；这一步才是主 solver 的 DCU 接入。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
