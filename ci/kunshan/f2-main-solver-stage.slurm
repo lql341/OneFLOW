@@ -17,8 +17,9 @@ set -euo pipefail
 : "${ONEFLOW_F2_STAGE_BINARY:?Set ONEFLOW_F2_STAGE_BINARY}"
 
 module purge
-module load compiler/dtk/26.04
+module load compiler/gcc/9.3.0
 module load mpi/openmpi/gcc-9.3.0/4.1.5
+module load compiler/dtk/26.04
 module load python/3.8.10
 
 source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/test/plateuns2dslau2"
