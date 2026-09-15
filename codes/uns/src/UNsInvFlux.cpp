@@ -128,6 +128,59 @@ void AppendStageTraceRecord(
     }
 }
 
+void AppendStageTraceValueRecord(
+    const char * path,
+    std::uint32_t kind,
+    std::uint32_t sequence,
+    std::uint64_t nItems,
+    const std::vector< std::vector< Real > > & arrays )
+{
+    std::ofstream output( path, std::ios::binary | std::ios::app );
+    if ( ! output )
+    {
+        throw std::runtime_error( "cannot open UNs stage trace file" );
+    }
+
+    const char magic[ 8 ] = "OFSTG01";
+    const std::int32_t outerStep = Iteration::outerSteps;
+    const std::int32_t gridLevel = GridState::gridLevel;
+    const std::uint32_t nEquations = 1;
+    const std::uint32_t nArrays =
+        static_cast< std::uint32_t >( arrays.size() );
+    output.write( magic, sizeof( magic ) );
+    output.write(
+        reinterpret_cast< const char * >( & kind ), sizeof( kind ) );
+    output.write(
+        reinterpret_cast< const char * >( & sequence ), sizeof( sequence ) );
+    output.write(
+        reinterpret_cast< const char * >( & outerStep ), sizeof( outerStep ) );
+    output.write(
+        reinterpret_cast< const char * >( & gridLevel ), sizeof( gridLevel ) );
+    output.write(
+        reinterpret_cast< const char * >( & nEquations ),
+        sizeof( nEquations ) );
+    output.write(
+        reinterpret_cast< const char * >( & nArrays ), sizeof( nArrays ) );
+    output.write(
+        reinterpret_cast< const char * >( & nItems ), sizeof( nItems ) );
+
+    for ( const auto & values : arrays )
+    {
+        if ( values.size() < nItems )
+        {
+            throw std::runtime_error(
+                "UNs stage trace values have an invalid item extent" );
+        }
+        output.write(
+            reinterpret_cast< const char * >( values.data() ),
+            static_cast< std::streamsize >( nItems * sizeof( Real ) ) );
+    }
+    if ( ! output )
+    {
+        throw std::runtime_error( "failed while writing UNs stage trace" );
+    }
+}
+
 }
 
 UNsInvFlux::UNsInvFlux()
@@ -490,6 +543,22 @@ void UNsInvFlux::DumpInvFluxStageTrace()
         traceFile, 1, sequence,
         static_cast< std::uint64_t >( ug.nFaces ), nEquations,
         { limf->qf1, limf->qf2, invflux } );
+    std::vector< std::vector< Real > > faceMetadata(
+        8, std::vector< Real >( ug.nFaces ) );
+    for ( int face = 0; face < ug.nFaces; ++ face )
+    {
+        faceMetadata[ 0 ][ face ] = ( * ug.lcf )[ face ];
+        faceMetadata[ 1 ][ face ] = ( * ug.rcf )[ face ];
+        faceMetadata[ 2 ][ face ] = face < ug.nBFaces ? 1.0 : 0.0;
+        faceMetadata[ 3 ][ face ] = ( * ug.xfn )[ face ];
+        faceMetadata[ 4 ][ face ] = ( * ug.yfn )[ face ];
+        faceMetadata[ 5 ][ face ] = ( * ug.zfn )[ face ];
+        faceMetadata[ 6 ][ face ] = ( * ug.vfn )[ face ];
+        faceMetadata[ 7 ][ face ] = ( * ug.farea )[ face ];
+    }
+    AppendStageTraceValueRecord(
+        traceFile, 4, sequence,
+        static_cast< std::uint64_t >( ug.nFaces ), faceMetadata );
     AppendStageTraceRecord(
         traceFile, 2, sequence,
         static_cast< std::uint64_t >( ug.nCells ), nEquations,
