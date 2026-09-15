@@ -206,9 +206,9 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] E6.3：补 lifecycle、state reuse、invalid request、batch equality CTest；全量 CTest 187/187 通过，另有 1 个既有测试 Disabled。
     - [ ] E6.4：完成融合后 dev 的 contract/adapter 验证，并按确认更新 `origin/dev`。
       - [x] E6.4a：在昆山 CPU 队列完成融合后 dev 的 contract/adapter 与主 solver 回归验证；origin/dev 推送另行处理。
-      - [ ] E6.4b：在确认后更新 `origin/dev`。
+      - [x] E6.4b：已将 merge 后 dev 推送到 `origin/dev`（`6d30b783`）。
 
-    **下一阶段执行顺序：** 先在确认后完成 E6.4b 的 origin/dev 同步；随后进入 F 阶段，把 CPU 已验证的 adapter seam 切换到 HIP/DCU，并重新执行同一组 trace/物理不变量门禁。
+    **下一阶段执行顺序：** E6.4b 已完成；进入 F 阶段，把 CPU 已验证的 adapter seam 切换到 HIP/DCU，并重新执行同一组 trace/物理不变量门禁。
 
 ### P1 — DCU 与回归验证
 
@@ -217,7 +217,18 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 - [x] 昆山 standalone 1D HIP contract：DTK 26.04、`gfx906`、`dcu:1`，GoogleTest/CTest 均 9/9 通过，含 WENO5 与 CPU oracle 对照。
 - [x] HIP CTest 统一架构：standalone 与根工程共用 `cmake/OneFLOWEulerContract.cmake`；根工程默认关闭，`ONEFLOW_ENABLE_HIP_TESTS=ON` 才注册硬件测试；Kunshan runner 用 `hardware` label + `HIP` 前缀门控，避免无 DCU 时阻塞普通 CPU CTest。
-- [ ] 主 solver CPU batch 通过后，把同一 adapter 切换到 HIP/DCU，并在昆山做 correctness；这一步才是主 solver 的 DCU 接入。
+- [ ] **F：主 solver DCU vertical slice**。说明：把已通过 CPU oracle 的主 solver batch seam 切换到 HIP/DCU；standalone HIP 通过不等于主 solver DCU 已完成。
+  - [ ] F1：主 solver HIP backend registration。说明：在不改变 CPU 默认路径的前提下，将 HIP backend、device state 和 capability guard 接入生产 solver。
+    - [ ] F1.1：明确主 solver 的 HIP `CreateState`/`Upload`/`Advance`/`Download` 生命周期与 `SimuContext` owner 的绑定。
+    - [ ] F1.2：把 `UNsInvFlux` 的 HIP path 限定在已定义的 5 方程、Lax-Friedrichs、单 local zone、finest grid capability contract。
+    - [ ] F1.3：保留 CPU legacy fallback；无 DCU、非法 capability 或 runtime error 必须显式失败或回退并可观测。
+  - [ ] F2：主 solver CPU/HIP numerical gate。说明：先用小 case 复现 CPU oracle，再逐步扩大到 3D m6 case。
+    - [ ] F2.1：HIP one-step/one-stage 与 CPU 对比，检查 face flux、residual、state trace。
+    - [ ] F2.2：检查 finite、positive density/pressure、boundary semantics 和 conservation。
+    - [ ] F2.3：主 solver FullTrace/NoTrace CTest 在 Kunshan `dcu:1` 通过。
+  - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
+    - [ ] F3.1：更新 Kunshan runner，使 root HIP opt-in 构建与 standalone contract 使用同一测试门禁。
+    - [ ] F3.2：完成 CPU queue regression + DCU correctness；未完成 MPI/多卡与性能不提前标记。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
