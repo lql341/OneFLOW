@@ -56,6 +56,7 @@ __global__ void AddFaceFluxScalarKernel(
     const Real * flux,
     const int * leftCell,
     const int * rightCell,
+    const unsigned char * boundaryMask,
     int nBoundaryFaces,
     int nFaces,
     int nCells,
@@ -65,14 +66,16 @@ __global__ void AddFaceFluxScalarKernel(
     if ( cell >= nCells ) return;
 
     Real value = 0.0;
-    for ( int face = 0; face < nBoundaryFaces; ++ face )
+    for ( int face = 0; face < nFaces; ++ face )
     {
+        const bool boundary = boundaryMask != nullptr
+            ? boundaryMask[ face ] != 0
+            : face < nBoundaryFaces;
         if ( leftCell[ face ] == cell ) value -= flux[ face ];
-    }
-    for ( int face = nBoundaryFaces; face < nFaces; ++ face )
-    {
-        if ( leftCell[ face ] == cell ) value -= flux[ face ];
-        if ( rightCell[ face ] == cell ) value += flux[ face ];
+        if ( ! boundary && rightCell[ face ] == cell )
+        {
+            value += flux[ face ];
+        }
     }
     residual[ cell ] += value;
 }
@@ -166,7 +169,8 @@ __global__ void CalcInvFluxEulerKernel(
     Real * flux,
     int nFaces,
     int nEq,
-    Real gamma )
+    Real gamma,
+    int scheme )
 {
     const int face = blockIdx.x * blockDim.x + threadIdx.x;
     if ( face >= nFaces ) return;
@@ -181,13 +185,58 @@ __global__ void CalcInvFluxEulerKernel(
     ConservedToPrimitive( qLeft,  face, nFaces, nEq, gamma, pL );
     ConservedToPrimitive( qRight, face, nFaces, nEq, gamma, pR );
 
-    Real fL[ 5 ], fR[ 5 ];
-    PhysicalFlux( pL, nx, ny, nz, vfn, fL, nEq );
-    PhysicalFlux( pR, nx, ny, nz, vfn, fR, nEq );
+    Real fL[ 5 ] = {};
+    Real fR[ 5 ] = {};
+    Real lambdaMax = 0.0;
+    if ( scheme == 1 )
+    {
+        const Real ratio = sqrt( pR.density / pL.density );
+        const Real coef = 1.0 / ( 1.0 + ratio );
+        const Real densityMean = sqrt( pL.density * pR.density );
+        const Real uMean = ( pL.u + pR.u * ratio ) * coef;
+        const Real vMean = ( pL.v + pR.v * ratio ) * coef;
+        const Real wMean = ( pL.w + pR.w * ratio ) * coef;
+        const Real pressureMean =
+            ( pL.pressure + pR.pressure * ratio ) * coef;
+        const Real normalVelocityMean =
+            nx * uMean + ny * vMean + nz * wMean - vfn;
+        const Real soundSpeedMean = sqrt(
+            fabs( gamma * pressureMean / densityMean ) );
+        lambdaMax = fabs( normalVelocityMean ) + soundSpeedMean;
 
-    const Real lambdaL = MaxWaveSpeed( pL, nx, ny, nz, vfn );
-    const Real lambdaR = MaxWaveSpeed( pR, nx, ny, nz, vfn );
-    const Real lambdaMax = lambdaL > lambdaR ? lambdaL : lambdaR;
+        const Real normalVelocityLeft =
+            nx * pL.u + ny * pL.v + nz * pL.w - vfn;
+        const Real normalVelocityRight =
+            nx * pR.u + ny * pR.v + nz * pR.w - vfn;
+        const Real massFluxLeft = pL.density * normalVelocityLeft;
+        const Real massFluxRight = pR.density * normalVelocityRight;
+        fL[ 0 ] = massFluxLeft;
+        fL[ 1 ] = massFluxLeft * pL.u + nx * pL.pressure;
+        fR[ 0 ] = massFluxRight;
+        fR[ 1 ] = massFluxRight * pR.u + nx * pR.pressure;
+        if ( nEq >= 4 )
+        {
+            fL[ 2 ] = massFluxLeft * pL.v + ny * pL.pressure;
+            fL[ 3 ] = massFluxLeft * pL.w + nz * pL.pressure;
+            fL[ 4 ] = massFluxLeft * pL.enthalpy + vfn * pL.pressure;
+            fR[ 2 ] = massFluxRight * pR.v + ny * pR.pressure;
+            fR[ 3 ] = massFluxRight * pR.w + nz * pR.pressure;
+            fR[ 4 ] = massFluxRight * pR.enthalpy + vfn * pR.pressure;
+        }
+        else
+        {
+            fL[ 2 ] = massFluxLeft * pL.enthalpy + vfn * pL.pressure;
+            fR[ 2 ] = massFluxRight * pR.enthalpy + vfn * pR.pressure;
+        }
+    }
+    else
+    {
+        PhysicalFlux( pL, nx, ny, nz, vfn, fL, nEq );
+        PhysicalFlux( pR, nx, ny, nz, vfn, fR, nEq );
+        const Real lambdaL = MaxWaveSpeed( pL, nx, ny, nz, vfn );
+        const Real lambdaR = MaxWaveSpeed( pR, nx, ny, nz, vfn );
+        lambdaMax = lambdaL > lambdaR ? lambdaL : lambdaR;
+    }
 
     for ( int eq = 0; eq < nEq; ++ eq )
     {
@@ -202,6 +251,7 @@ __global__ void AddFaceFluxEulerKernel(
     const Real * flux,
     const int * leftCell,
     const int * rightCell,
+    const unsigned char * boundaryMask,
     int nBoundaryFaces,
     int nFaces,
     int nCells,
@@ -214,16 +264,14 @@ __global__ void AddFaceFluxEulerKernel(
     for ( int eq = 0; eq < nEq; ++ eq )
     {
         Real value = 0.0;
-        for ( int face = 0; face < nBoundaryFaces; ++ face )
+        for ( int face = 0; face < nFaces; ++ face )
         {
+            const bool boundary = boundaryMask != nullptr
+                ? boundaryMask[ face ] != 0
+                : face < nBoundaryFaces;
             if ( leftCell[ face ] == cell )
                 value -= flux[ eq * nFaces + face ];
-        }
-        for ( int face = nBoundaryFaces; face < nFaces; ++ face )
-        {
-            if ( leftCell[ face ] == cell )
-                value -= flux[ eq * nFaces + face ];
-            if ( rightCell[ face ] == cell )
+            if ( ! boundary && rightCell[ face ] == cell )
                 value += flux[ eq * nFaces + face ];
         }
         residual[ eq * nCells + cell ] += value;
@@ -235,7 +283,7 @@ __global__ void AddFaceFluxEulerKernel(
 void HipFluxBackend::CalcInvFlux(
     const FaceStateView & state,
     FaceFluxView & flux,
-    int )
+    int scheme )
 {
     if ( state.nFaces != flux.nFaces || state.nEquations != flux.nEquations )
     {
@@ -316,7 +364,8 @@ void HipFluxBackend::CalcInvFlux(
             deviceFlux.Data(),
             nFaces,
             nEq,
-            state.gamma );
+            state.gamma,
+            scheme );
         CheckHip( hipGetLastError(), "CalcInvFluxEulerKernel launch" );
         CheckHip( hipDeviceSynchronize(), "CalcInvFluxEulerKernel synchronize" );
         deviceFlux.CopyToHost( flux.values, totalValues );
@@ -351,11 +400,14 @@ void HipFluxBackend::AddFaceFlux(
         DeviceBuffer< Real > deviceFlux( nFaces );
         DeviceBuffer< int > leftCell( nFaces );
         DeviceBuffer< int > rightCell( nFaces );
+        DeviceBuffer< unsigned char > boundaryMask( nFaces );
         DeviceBuffer< Real > deviceResidual( nCells );
 
         deviceFlux.CopyFromHost( flux.values, nFaces );
         leftCell.CopyFromHost( connectivity.leftCell, nFaces );
         rightCell.CopyFromHost( connectivity.rightCell, nFaces );
+        if ( connectivity.boundaryMask )
+            boundaryMask.CopyFromHost( connectivity.boundaryMask, nFaces );
         deviceResidual.CopyFromHost( residual.values, nCells );
 
         const int blockSize = 256;
@@ -369,6 +421,7 @@ void HipFluxBackend::AddFaceFlux(
             deviceFlux.Data(),
             leftCell.Data(),
             rightCell.Data(),
+            connectivity.boundaryMask ? boundaryMask.Data() : nullptr,
             connectivity.nBoundaryFaces,
             nFaces,
             nCells,
@@ -382,11 +435,14 @@ void HipFluxBackend::AddFaceFlux(
         DeviceBuffer< Real > deviceFlux( totalFlux );
         DeviceBuffer< int > leftCell( nFaces );
         DeviceBuffer< int > rightCell( nFaces );
+        DeviceBuffer< unsigned char > boundaryMask( nFaces );
         DeviceBuffer< Real > deviceResidual( totalResidual );
 
         deviceFlux.CopyFromHost( flux.values, totalFlux );
         leftCell.CopyFromHost( connectivity.leftCell, nFaces );
         rightCell.CopyFromHost( connectivity.rightCell, nFaces );
+        if ( connectivity.boundaryMask )
+            boundaryMask.CopyFromHost( connectivity.boundaryMask, nFaces );
         deviceResidual.CopyFromHost( residual.values, totalResidual );
 
         const int blockSize = 256;
@@ -400,6 +456,7 @@ void HipFluxBackend::AddFaceFlux(
             deviceFlux.Data(),
             leftCell.Data(),
             rightCell.Data(),
+            connectivity.boundaryMask ? boundaryMask.Data() : nullptr,
             connectivity.nBoundaryFaces,
             nFaces,
             nCells,

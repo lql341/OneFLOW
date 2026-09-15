@@ -172,4 +172,11 @@ if (ONEFLOW_ENABLE_HIP_TESTS)
     PROJECT_INC ${CMAKE_SOURCE_DIR}/codes/project/include
     BASIC_INC ${CMAKE_SOURCE_DIR}/codes/basic/include
     TEST_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/euler_backend_contract_test.cpp)
+
+  add_test(
+    NAME HIP.MainSolverFluxOneCall
+    COMMAND $<TARGET_FILE:OneFLOWHipSmoke>)
+  set_tests_properties(
+    HIP.MainSolverFluxOneCall
+    PROPERTIES LABELS "hardware;hip;dcu")
 endif()

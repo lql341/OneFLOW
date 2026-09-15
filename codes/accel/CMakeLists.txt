@@ -9,6 +9,7 @@ add_executable ( OneFLOWHipSmoke
     src/AccelRuntime.cpp
     src/CpuBackend.cpp
     src/CpuFluxBackend.cpp
+    src/EulerCpuAdapter.cpp
     src/HipBackend.cpp
     src/HipFluxBackend.hip
 )

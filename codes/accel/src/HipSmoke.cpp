@@ -8,6 +8,7 @@ License
 
 #include "AccelRuntime.h"
 #include "CpuFluxBackend.h"
+#include "EulerCpuAdapter.h"
 #include "HipFluxBackend.h"
 #include "HipKernel.h"
 
@@ -215,6 +216,131 @@ bool TestEulerRusanov()
     return true;
 }
 
+bool TestMainSolverFiveEquationLaxFriedrichs()
+{
+    constexpr int nFaces = 257;
+    constexpr int nCells = 300;
+    constexpr int nEq = 5;
+    constexpr double gamma = 1.4;
+    std::vector< ONEFLOW::Real > primitiveLeft( nFaces * nEq );
+    std::vector< ONEFLOW::Real > primitiveRight( nFaces * nEq );
+    std::vector< ONEFLOW::Real > xNormal( nFaces );
+    std::vector< ONEFLOW::Real > yNormal( nFaces );
+    std::vector< ONEFLOW::Real > zNormal( nFaces );
+    std::vector< ONEFLOW::Real > meshVelocityNormal( nFaces );
+    std::vector< ONEFLOW::Real > area( nFaces );
+
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        const double phase = 0.03125 * face;
+        double nx = std::cos( phase );
+        double ny = std::sin( phase );
+        double nz = 0.25 * std::sin( 0.7 * phase );
+        const double normalMagnitude = std::sqrt( nx * nx + ny * ny + nz * nz );
+        xNormal[ face ] = nx / normalMagnitude;
+        yNormal[ face ] = ny / normalMagnitude;
+        zNormal[ face ] = nz / normalMagnitude;
+        meshVelocityNormal[ face ] = 0.02 * std::cos( 0.3 * phase );
+        area[ face ] = 0.5 + 0.01 * ( face % 19 );
+
+        primitiveLeft[ 0 * nFaces + face ] = 1.0 + 0.05 * std::sin( phase );
+        primitiveLeft[ 1 * nFaces + face ] = 0.7 + 0.08 * std::cos( phase );
+        primitiveLeft[ 2 * nFaces + face ] = -0.2 + 0.04 * std::sin( 0.5 * phase );
+        primitiveLeft[ 3 * nFaces + face ] = 0.1 + 0.03 * std::cos( 0.8 * phase );
+        primitiveLeft[ 4 * nFaces + face ] = 1.0 + 0.06 * std::cos( 1.1 * phase );
+        primitiveRight[ 0 * nFaces + face ] = 0.95 + 0.04 * std::cos( 0.9 * phase );
+        primitiveRight[ 1 * nFaces + face ] = 0.6 + 0.07 * std::sin( 1.2 * phase );
+        primitiveRight[ 2 * nFaces + face ] = -0.1 + 0.05 * std::cos( 0.6 * phase );
+        primitiveRight[ 3 * nFaces + face ] = 0.15 + 0.02 * std::sin( 0.4 * phase );
+        primitiveRight[ 4 * nFaces + face ] = 0.9 + 0.05 * std::sin( phase );
+    }
+
+    ONEFLOW::PrimitiveFaceStateView state;
+    state.nFaces = nFaces;
+    state.nEquations = nEq;
+    state.primitiveLeft = primitiveLeft.data();
+    state.primitiveRight = primitiveRight.data();
+    state.xNormal = xNormal.data();
+    state.yNormal = yNormal.data();
+    state.zNormal = zNormal.data();
+    state.meshVelocityNormal = meshVelocityNormal.data();
+    state.faceArea = area.data();
+    state.gamma = gamma;
+
+    std::vector< ONEFLOW::Real > cpuFlux( nFaces * nEq );
+    std::vector< ONEFLOW::Real > hipFlux( nFaces * nEq );
+    ONEFLOW::FaceFluxView cpuFluxView{ nFaces, nEq, cpuFlux.data() };
+    ONEFLOW::FaceFluxView hipFluxView{ nFaces, nEq, hipFlux.data() };
+    ONEFLOW::CpuFluxBackend cpuBackend;
+    ONEFLOW::HipFluxBackend hipBackend;
+    ONEFLOW::EulerCpuAdapter adapter;
+    adapter.CalcInvFlux( state, cpuFluxView, cpuBackend, 1 );
+    adapter.CalcInvFlux( state, hipFluxView, hipBackend, 1 );
+
+    const double fluxError = MaxDiff( cpuFlux, hipFlux );
+    if ( fluxError > 1.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver 5-equation Lax-Friedrichs flux FAIL: %.3e\n",
+            fluxError );
+        return false;
+    }
+    for ( ONEFLOW::Real value : hipFlux )
+    {
+        if ( ! std::isfinite( value ) )
+        {
+            std::fprintf( stderr, "Main solver HIP flux is non-finite\n" );
+            return false;
+        }
+    }
+
+    std::vector< int > leftCell( nFaces );
+    std::vector< int > rightCell( nFaces );
+    std::vector< unsigned char > boundaryMask( nFaces );
+    int nBoundaryFaces = 0;
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        leftCell[ face ] = face % nCells;
+        rightCell[ face ] = ( face * 17 + 3 ) % nCells;
+        if ( rightCell[ face ] == leftCell[ face ] )
+            rightCell[ face ] = ( rightCell[ face ] + 1 ) % nCells;
+        boundaryMask[ face ] = face % 13 == 7 ? 1 : 0;
+        nBoundaryFaces += boundaryMask[ face ] != 0;
+    }
+
+    std::vector< ONEFLOW::Real > cpuResidual( nCells * nEq );
+    std::vector< ONEFLOW::Real > hipResidual( nCells * nEq );
+    for ( int i = 0; i < nCells * nEq; ++ i )
+    {
+        cpuResidual[ i ] = 1.0e-6 * ( i % 7 );
+        hipResidual[ i ] = cpuResidual[ i ];
+    }
+    ONEFLOW::FaceConnectivityView connectivity{
+        nFaces, nBoundaryFaces, leftCell.data(), rightCell.data(),
+        boundaryMask.data() };
+    ONEFLOW::ResidualView cpuResidualView{
+        nCells, nEq, cpuResidual.data() };
+    ONEFLOW::ResidualView hipResidualView{
+        nCells, nEq, hipResidual.data() };
+    cpuBackend.AddFaceFlux( cpuFluxView, connectivity, cpuResidualView );
+    hipBackend.AddFaceFlux( hipFluxView, connectivity, hipResidualView );
+
+    const double residualError = MaxDiff( cpuResidual, hipResidual );
+    if ( residualError > 2.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver explicit-mask residual FAIL: %.3e\n",
+            residualError );
+        return false;
+    }
+
+    std::printf(
+        "OneFLOW HIP main solver one-call: PASS "
+        "(flux %.3e, residual %.3e, %d faces, %d eq)\n",
+        fluxError, residualError, nFaces, nEq );
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -227,6 +353,7 @@ int main()
         bool ok = true;
         ok = TestScalarConvection() && ok;
         ok = TestEulerRusanov() && ok;
+        ok = TestMainSolverFiveEquationLaxFriedrichs() && ok;
 
         ONEFLOW::FinalizeAccelRuntime();
         return ok ? 0 : 1;
