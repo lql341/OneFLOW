@@ -334,10 +334,152 @@ bool TestMainSolverFiveEquationLaxFriedrichs()
         return false;
     }
 
+    std::vector< ONEFLOW::Real > expectedResidual( nCells * nEq );
+    for ( int i = 0; i < nCells * nEq; ++ i )
+    {
+        expectedResidual[ i ] = 1.0e-6 * ( i % 7 );
+    }
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            const ONEFLOW::Real value = hipFlux[ eq * nFaces + face ];
+            expectedResidual[ eq * nCells + leftCell[ face ] ] -= value;
+            if ( boundaryMask[ face ] == 0 )
+            {
+                expectedResidual[ eq * nCells + rightCell[ face ] ] += value;
+            }
+        }
+    }
+    const double boundarySemanticError =
+        MaxDiff( expectedResidual, hipResidual );
+    if ( boundarySemanticError > 2.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver boundary-mask semantics FAIL: %.3e\n",
+            boundarySemanticError );
+        return false;
+    }
+
+    double conservationError = 0.0;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        double residualDelta = 0.0;
+        double boundaryFlux = 0.0;
+        for ( int cell = 0; cell < nCells; ++ cell )
+        {
+            const int index = eq * nCells + cell;
+            residualDelta += hipResidual[ index ]
+                - 1.0e-6 * ( index % 7 );
+        }
+        for ( int face = 0; face < nFaces; ++ face )
+        {
+            if ( boundaryMask[ face ] != 0 )
+            {
+                boundaryFlux -= hipFlux[ eq * nFaces + face ];
+            }
+        }
+        conservationError = std::max(
+            conservationError, std::abs( residualDelta - boundaryFlux ) );
+    }
+    if ( conservationError > 2.0e-11 )
+    {
+        std::fprintf( stderr,
+            "Main solver internal-face conservation FAIL: %.3e\n",
+            conservationError );
+        return false;
+    }
+
     std::printf(
         "OneFLOW HIP main solver one-call: PASS "
-        "(flux %.3e, residual %.3e, %d faces, %d eq)\n",
-        fluxError, residualError, nFaces, nEq );
+        "(flux %.3e, residual %.3e, boundary %.3e, conservation %.3e, "
+        "%d faces, %d eq)\n",
+        fluxError, residualError, boundarySemanticError, conservationError,
+        nFaces, nEq );
+    return true;
+}
+
+bool TestMainSolverAleAreaContract()
+{
+    constexpr int nFaces = 1;
+    constexpr int nEq = 5;
+    constexpr double gamma = 1.4;
+    constexpr double density = 1.2;
+    constexpr double u = 0.4;
+    constexpr double v = -0.2;
+    constexpr double w = 0.1;
+    constexpr double pressure = 0.9;
+    constexpr double nx = 0.6;
+    constexpr double ny = 0.8;
+    constexpr double nz = 0.0;
+    constexpr double meshVelocityNormal = 0.15;
+    constexpr double area = 2.5;
+    const ONEFLOW::Real primitive[] = {
+        density, u, v, w, pressure };
+    const ONEFLOW::Real normalX[] = { nx };
+    const ONEFLOW::Real normalY[] = { ny };
+    const ONEFLOW::Real normalZ[] = { nz };
+    const ONEFLOW::Real meshVelocity[] = { meshVelocityNormal };
+    const ONEFLOW::Real faceArea[] = { area };
+    ONEFLOW::Real fluxValues[ nEq ] = {};
+
+    ONEFLOW::PrimitiveFaceStateView state;
+    state.nFaces = nFaces;
+    state.nEquations = nEq;
+    state.primitiveLeft = primitive;
+    state.primitiveRight = primitive;
+    state.xNormal = normalX;
+    state.yNormal = normalY;
+    state.zNormal = normalZ;
+    state.meshVelocityNormal = meshVelocity;
+    state.faceArea = faceArea;
+    state.gamma = gamma;
+
+    ONEFLOW::FaceFluxView flux{ nFaces, nEq, fluxValues };
+    ONEFLOW::HipFluxBackend hipBackend;
+    ONEFLOW::EulerCpuAdapter adapter;
+    adapter.CalcInvFlux( state, flux, hipBackend, 1 );
+
+    const double relativeNormalVelocity =
+        nx * u + ny * v + nz * w - meshVelocityNormal;
+    const double massFlux = density * relativeNormalVelocity;
+    const double totalEnergy = pressure / ( gamma - 1.0 )
+        + 0.5 * density * ( u * u + v * v + w * w );
+    const double totalEnthalpy = ( totalEnergy + pressure ) / density;
+    const double expected[] = {
+        area * massFlux,
+        area * ( massFlux * u + nx * pressure ),
+        area * ( massFlux * v + ny * pressure ),
+        area * ( massFlux * w + nz * pressure ),
+        area * ( massFlux * totalEnthalpy
+            + meshVelocityNormal * pressure )
+    };
+
+    double maxError = 0.0;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        if ( ! std::isfinite( fluxValues[ eq ] ) )
+        {
+            std::fprintf( stderr,
+                "Main solver ALE/area flux is non-finite at %d\n", eq );
+            return false;
+        }
+        maxError = std::max(
+            maxError,
+            static_cast< double >(
+                std::abs( fluxValues[ eq ] - expected[ eq ] ) ) );
+    }
+    if ( maxError > 1.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver ALE/face-area ownership FAIL: %.3e\n", maxError );
+        return false;
+    }
+
+    std::printf(
+        "OneFLOW HIP main solver ALE/face-area contract: PASS "
+        "(max error %.3e)\n",
+        maxError );
     return true;
 }
 
@@ -354,6 +496,7 @@ int main()
         ok = TestScalarConvection() && ok;
         ok = TestEulerRusanov() && ok;
         ok = TestMainSolverFiveEquationLaxFriedrichs() && ok;
+        ok = TestMainSolverAleAreaContract() && ok;
 
         ONEFLOW::FinalizeAccelRuntime();
         return ok ? 0 : 1;
