@@ -2,10 +2,11 @@
 
 **日期：** 2026-09-15
 **工作分支：** `dev`
-**已推送基线：** `ca14118c`（`origin/dev`）
+**已推送基线：** `8e08c376`（`origin/dev`）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
-**交接状态：** F1 已完成目标节点编译与 HIP contract；F2 主 solver 数值门禁待执行
+**F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
+**交接状态：** F2.1 one-call 已通过；下一步是 F2.2 one-step/one-stage
 
 ## 1. 一句话结论
 
@@ -14,8 +15,10 @@ CPU vertical slice 已闭环，standalone 1D HIP contract 已在昆山真实 DCU
 已经把 `UNsInvFlux` 的五方程 Lax-Friedrichs batch 数据交给可注入的
 `FluxBackend`；`ca14118c` 又补齐 capability/fail-fast policy，并已在昆山用
 DTK 26.04、`gfx906` 完成生产 `OneFLOW` HIP 编译链接、smoke 与 root HIP
-contract 9/9。主 solver one-call、one-step/one-stage 和 3D case 数值门禁仍未
-完成，因此不能宣称主 solver 已具备 DCU 能力。
+contract。`8e08c376` 又修复 HIP Lax-Friedrichs scheme 与显式
+`boundaryMask` 语义，并在真实 DCU 上完成 257 faces × 5 equations 的主 solver
+adapter one-call flux/residual CPU oracle。one-step/one-stage 和 3D case 数值
+门禁仍未完成，因此不能宣称主 solver 已具备 DCU 能力。
 
 ## 2. 全景进度
 
@@ -31,8 +34,8 @@ contract 9/9。主 solver one-call、one-step/one-stage 和 3D case 数值门禁
 - [ ] 阶段 F：DCU vertical slice——把同一主 solver batch contract 切到 HIP，
   在真实 DCU 上完成编译、运行和 CPU/HIP 数值一致性。
   - [x] F1：HIP backend registration——`d5005ad6` + `ca14118c`，目标节点编译与 contract 已通过。
-  - [ ] F2：CPU/HIP numerical gate——**当前阶段，先做主 solver one-call**。
-  - [ ] F3：target-node evidence——构建/contract/CPU regression 已有证据；主 solver case 待运行。
+  - [ ] F2：CPU/HIP numerical gate——F2.1 one-call 已完成，当前进入 F2.2 one-step/one-stage。
+  - [ ] F3：target-node evidence——构建/contract/one-call/CPU regression 已有证据；主 solver case 待运行。
 - [ ] 阶段 G：MPI/性能——在单卡正确性闭环后再做 halo、多卡和性能优化。
 
 ## 3. Git 状态与 F1 checkpoint
@@ -68,8 +71,18 @@ checkpoint `d5005ad6` 只修改以下 5 个文件，共 147 行新增、2 行删
 - 显式请求 HIP 但条件不满足时按稳定 reason fail-fast，不静默回退；
 - capability accept/reject/first-blocking-reason contract test。
 
-接手时应先确认 `dev` 与 `origin/dev` 均包含 `ca14118c`；不要 checkout、reset
-或覆盖 F1 文件。
+F2.1 checkpoint `8e08c376`（`feat: validate main solver HIP flux one-call`）
+继续完成：
+
+- 修复 `HipFluxBackend::CalcInvFlux` 忽略 `scheme` 的 contract 漂移，使
+  `scheme=1` 与 CPU Roe-平均 Lax-Friedrichs oracle 一致；
+- residual kernel 消费显式 `boundaryMask`，不再假定 boundary-first ordering；
+- 新增 257 faces × 5 equations 的 adapter one-call，覆盖 3D normals、ALE
+  mesh-normal velocity、face area 与非 boundary-first mask；
+- 注册 `HIP.MainSolverFluxOneCall`，并标记 `hardware;hip;dcu`。
+
+接手时应先确认 `dev` 与 `origin/dev` 均包含 `8e08c376`；不要 checkout、reset
+或覆盖 F1/F2.1 文件。
 
 ## 4. 已完成验证与能力边界
 
@@ -87,8 +100,11 @@ checkpoint `d5005ad6` 只修改以下 5 个文件，共 147 行新增、2 行删
   `OneFLOW` 与 `OneFLOWHipSmoke` 编译链接通过。
 - [x] root HIP smoke：设备识别、double self-test、scalar flux 与 Euler flux
   全部通过。
-- [x] root HIP contract：GoogleTest `9/9`，CTest `hardware` label + `HIP`
-  筛选 `9/9`，测试集合非空。
+- [x] root HIP contract：GoogleTest `9/9`；CTest `hardware` label + `HIP`
+  筛选 `10/10`，包含 `HIP.MainSolverFluxOneCall`，测试集合非空。
+- [x] 主 solver adapter one-call：257 faces × 5 equations；CPU/HIP 全量 flux
+  最大绝对差 `6.661e-16`，显式 mask residual 最大绝对差 `1.110e-15`；
+  覆盖 3D normals、ALE mesh-normal velocity、face area 与非 boundary-first mask。
 - [x] 同 revision 昆山 CPU 门禁：根 CTest `210/210`；五算例 normal
   `5/5`（最大 residual absolute difference 约 `4.97e-10`）；strict
   `5/5`（最大约 `1.11e-17`）；standalone CPU contract `8/8`。
@@ -97,7 +113,8 @@ checkpoint `d5005ad6` 只修改以下 5 个文件，共 147 行新增、2 行删
 ### 4.2 尚未完成，禁止提前声明
 
 - [ ] `UNsInvFlux` HIP batch 尚未在真实 3D 主 solver case 中执行。
-- [ ] 尚无主 solver CPU/HIP face flux、residual 或 state trace 对比。
+- [ ] 尚无主 solver one-step/one-stage 的 `qf1`、`qf2`、face flux、residual
+  或 state trace 对比；当前证据只到 adapter one-call。
 - [ ] 尚未证明主 solver HIP 路径的 density/pressure positivity、finite、边界语义
   与守恒。
 - [ ] 尚未完成主 solver DCU MPI、多卡或性能测试。
@@ -120,9 +137,8 @@ UNs reconstructed primitive faces
 本身不是 state 生命周期错误。`SimuContext::AccelStates()` 管理的是跨阶段复用的
 `EulerDomainState`，不要为了形式统一把无状态 `HipFluxBackend` 强行塞进 registry。
 
-F1 已解决 backend registration、capability 与 fail-fast policy；下一步关键问题是：
-
-- 用同一 5 方程 face batch 做 CPU/HIP one-call 全量 flux 对比；
+F1 已解决 backend registration、capability 与 fail-fast policy，F2.1 已完成
+同一 5 方程 face batch 的 CPU/HIP one-call 全量 flux/residual 对比。下一步关键问题是：
 - 在主 solver one-step/one-stage 中比较 `qf1`、`qf2`、`invflux`、residual 与 state；
 - 检查 finite、density/pressure positivity、内部面守恒与 boundary semantics；
 - 当前 host pack + H2D + kernel + D2H 只用于正确性纵切线，不代表最终性能架构。
@@ -165,10 +181,10 @@ F1 已解决 backend registration、capability 与 fail-fast policy；下一步�
 
 ### F2：CPU/HIP numerical gate
 
-- [ ] F2.1：先做小型 one-call contract。
-  - [ ] F2.1a：同一 3/5 方程 face batch 分别调用 CPU/HIP backend。
-  - [ ] F2.1b：比较所有 equation/face flux，使用既有 CPU oracle 容差。
-  - [ ] F2.1c：确保 CTest 名称有 `CPU.`/`HIP.` 前缀及 `hardware;hip;dcu` label。
+- [x] F2.1：先做小型 one-call contract。
+  - [x] F2.1a：同一 3/5 方程 face batch 分别调用 CPU/HIP backend。
+  - [x] F2.1b：比较所有 equation/face flux，使用既有 CPU oracle 容差。
+  - [x] F2.1c：确保 CTest 名称有 `CPU.`/`HIP.` 前缀及 `hardware;hip;dcu` label。
 - [ ] F2.2：做主 solver one-step/one-stage gate。
   - [ ] F2.2a：选择可控小 case，分别生成 legacy CPU、CPU batch、HIP batch trace。
   - [ ] F2.2b：逐 face/equation 比较 `qf1`、`qf2`、`invflux`。
@@ -192,7 +208,7 @@ F1 已解决 backend registration、capability 与 fail-fast policy；下一步�
 - [ ] F3.4：目标节点执行顺序：
   - [x] root HIP configure/build；
   - [x] HIP contract；
-  - [ ] 主 solver one-call；
+  - [x] 主 solver one-call；
   - [ ] one-step/one-stage；
   - [ ] 3D case；
   - [x] 同 revision 的 CPU regression。
