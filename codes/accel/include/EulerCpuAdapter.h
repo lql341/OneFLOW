@@ -4,6 +4,8 @@
 
 BeginNameSpace( ONEFLOW )
 
+class FluxBackend;
+
 // For one face, primitive values are [rho, u, p] for 3 equations and
 // [rho, u, v, w, p] for 5 equations. Face batches use equation-major input
 // and output: [rho, rho*u, rho*E] or [rho, rho*u, rho*v, rho*w, rho*E].
@@ -36,6 +38,15 @@ void PackPrimitiveFaceStates(
 class EulerCpuAdapter
 {
 public:
+    // The primitive-to-conserved conversion and equation-major pack are
+    // execution-space independent. Production callers inject CPU or HIP;
+    // keeping this seam here prevents the two paths from drifting.
+    void CalcInvFlux(
+        const PrimitiveFaceStateView & state,
+        FaceFluxView & flux,
+        FluxBackend & backend,
+        int scheme = 0 ) const;
+
     void CalcInvFlux(
         const PrimitiveFaceStateView & state,
         FaceFluxView & flux,

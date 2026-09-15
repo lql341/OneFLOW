@@ -40,7 +40,11 @@ License
 #include "TurbCom.h"
 #include "UTurbCom.h"
 #include "AccelRuntime.h"
+#include "CpuFluxBackend.h"
 #include "EulerCpuAdapter.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
@@ -148,6 +152,11 @@ void UNsInvFlux::CalcFlux()
 
 void UNsInvFlux::CalcInvFlux()
 {
+    if ( this->UseHipBatchAdapter() )
+    {
+        this->CalcInvFluxHipBatch();
+        return;
+    }
     if ( this->UseCpuBatchAdapter() )
     {
         this->CalcInvFluxCpuBatch();
@@ -183,7 +192,49 @@ bool UNsInvFlux::UseCpuBatchAdapter() const
         && nscom.nEqu == 5 && limf != nullptr && limf->nEqu == 5;
 }
 
+bool UNsInvFlux::UseHipBatchAdapter() const
+{
+    const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BATCH" );
+    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+
+#ifndef ONEFLOW_ENABLE_HIP
+    throw std::runtime_error(
+        "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 requires a OneFLOW build with HIP." );
+#else
+    const AccelRuntime & runtime = AccelRuntime::Instance();
+    if ( ! runtime.IsInitialized() || ! runtime.IsAccelerator() )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 requires an initialized HIP/DCU runtime." );
+    }
+    if ( nscom.ischeme != ISCHEME_LAX_FRIEDRICHS || nscom.nEqu != 5
+         || limf == nullptr || limf->nEqu != 5 )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 currently supports only 5-equation Lax-Friedrichs UNs fluxes." );
+    }
+    return true;
+#endif
+}
+
 void UNsInvFlux::CalcInvFluxCpuBatch()
+{
+    CpuFluxBackend backend;
+    this->CalcInvFluxBatch( backend );
+}
+
+void UNsInvFlux::CalcInvFluxHipBatch()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    HipFluxBackend backend;
+    this->CalcInvFluxBatch( backend );
+#else
+    throw std::runtime_error(
+        "UNs HIP batch path was called without HIP support." );
+#endif
+}
+
+void UNsInvFlux::CalcInvFluxBatch( FluxBackend & backend )
 {
     const int nFaces = ug.nFaces;
     const int nEquations = limf->nEqu;
@@ -230,7 +281,7 @@ void UNsInvFlux::CalcInvFluxCpuBatch()
     flux.values = faceFlux.data();
 
     EulerCpuAdapter adapter;
-    adapter.CalcInvFlux( primitiveState, flux, 1 );
+    adapter.CalcInvFlux( primitiveState, flux, backend, 1 );
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         for ( int face = 0; face < nFaces; ++ face )

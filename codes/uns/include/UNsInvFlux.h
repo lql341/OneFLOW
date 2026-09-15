@@ -29,6 +29,7 @@ BeginNameSpace( ONEFLOW )
 class UNsFField;
 class Limiter;
 class LimField;
+class FluxBackend;
 
 class UNsInvFlux : public NsInvFlux
 {
@@ -41,7 +42,10 @@ public:
     void CalcFlux();
     void CalcInvFlux();
     void CalcInvFluxCpuBatch();
+    void CalcInvFluxHipBatch();
+    void CalcInvFluxBatch( FluxBackend & backend );
     bool UseCpuBatchAdapter() const;
+    bool UseHipBatchAdapter() const;
     void CalcInvFace();
     void CalcLimiter();
     void AddInvFlux();
