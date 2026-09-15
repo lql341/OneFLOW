@@ -2,12 +2,13 @@
 
 **日期：** 2026-09-15
 **工作分支：** `dev`
-**已推送基线：** `2f597a04`（`origin/dev`）
+**已推送基线：** `fd8d9eca`（`origin/dev`）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
 **F2.2 checkpoint：** `156f94fc` + `2f597a04`（多帧 stage trace 与已验证模块顺序，已推送）
-**交接状态：** F2.2 小 case 1-step 已通过；下一步是 F2.3/F2.4 物理语义与 3D m6
+**F2.3 checkpoint：** `9fbbe6a7` + `fd8d9eca`（物理语义 contract 与生产 stage 守恒门禁，已推送）
+**交接状态：** F2.3 小 case 物理语义已通过；下一步是 F2.4 3D m6
 
 ## 1. 一句话结论
 
@@ -20,7 +21,9 @@ contract。`8e08c376` 又修复 HIP Lax-Friedrichs scheme 与显式
 `boundaryMask` 语义，并在真实 DCU 上完成 257 faces × 5 equations 的主 solver
 adapter one-call flux/residual CPU oracle。`2f597a04` 又在 5 方程
 `plateuns2dslau2` Lax-Friedrichs 小 case 上完成 legacy CPU、CPU batch、HIP batch
-的 1-step LU-SGS face/residual/state trace。RK multi-stage、完整物理语义和 3D m6
+的 1-step LU-SGS face/residual/state trace。`fd8d9eca` 又把 connectivity/geometry
+写入 opt-in stage metadata，三路都能从生产 face flux 精确重建 residual，并用独立
+HIP contract 验证 boundary mask、内部面守恒、ALE 与 face-area ownership。RK multi-stage 和 3D m6
 门禁仍未完成，因此不能宣称主 solver 已具备 DCU 能力。
 
 ## 2. 全景进度
@@ -37,8 +40,8 @@ adapter one-call flux/residual CPU oracle。`2f597a04` 又在 5 方程
 - [ ] 阶段 F：DCU vertical slice——把同一主 solver batch contract 切到 HIP，
   在真实 DCU 上完成编译、运行和 CPU/HIP 数值一致性。
   - [x] F1：HIP backend registration——`d5005ad6` + `ca14118c`，目标节点编译与 contract 已通过。
-  - [ ] F2：CPU/HIP numerical gate——F2.1/F2.2 已完成，当前进入物理语义与 3D m6。
-  - [ ] F3：target-node evidence——构建/contract/one-call/小 case one-step/CPU regression 已有证据；3D case 待运行。
+  - [ ] F2：CPU/HIP numerical gate——F2.1–F2.3 已完成，当前进入 3D m6。
+  - [ ] F3：target-node evidence——构建/contract/one-call/小 case one-step/物理语义/CPU regression 已有证据；3D case 待运行。
 - [ ] 阶段 G：MPI/性能——在单卡正确性闭环后再做 halo、多卡和性能优化。
 
 ## 3. Git 状态与 F1 checkpoint
@@ -93,8 +96,17 @@ F2.2 checkpoints `156f94fc`（多帧 stage trace）与 `2f597a04`
 - 5 方程小 case 1-step LU-SGS 的 legacy CPU / CPU batch / HIP batch 已在真实
   DCU 上对齐。
 
-接手时应先确认 `dev` 与 `origin/dev` 均包含 `2f597a04`；不要 checkout、reset
-或覆盖 F1/F2.1/F2.2 文件。
+F2.3 checkpoints `9fbbe6a7`（硬件 contract）与 `fd8d9eca`
+（生产 stage semantics）继续完成：
+
+- root HIP smoke 独立检查非 boundary-first 显式 mask、内部面守恒，以及 ALE
+  mesh-normal velocity 与 face-area 只计算一次；
+- stage trace 新增 connectivity/geometry metadata，verifier 从真实生产 face flux
+  重建 `AddF2CField` residual，并检查全域 residual 与边界通量闭合；
+- metadata 仍使用既有 `OFSTG01` record header；既有 E6 trace 格式不变。
+
+接手时应先确认 `dev` 与 `origin/dev` 均包含 `fd8d9eca`；不要 checkout、reset
+或覆盖 F1/F2.1/F2.2/F2.3 文件。
 
 ## 4. 已完成验证与能力边界
 
@@ -118,22 +130,28 @@ F2.2 checkpoints `156f94fc`（多帧 stage trace）与 `2f597a04`
   最大绝对差 `6.661e-16`，显式 mask residual 最大绝对差 `1.110e-15`；
   覆盖 3D normals、ALE mesh-normal velocity、face area 与非 boundary-first mask。
 - [x] 主 solver 小 case 1-step：`plateuns2dslau2` 五方程 Lax-Friedrichs，
-  legacy CPU / CPU batch / HIP batch 各生成 face、inviscid residual、state 三条记录；
+  legacy CPU / CPU batch / HIP batch 各生成 face、metadata、inviscid residual、state 四条记录；
   HIP 对 legacy 的 qf1/qf2 完全一致，invflux/residual 最大绝对差
   `1.4210854715202004e-14`，更新后 state 最大绝对差
   `6.514681130330882e-19`；density/pressure finite 且为正。
-- [x] 同 revision 昆山 CPU 门禁：根 CTest `210/210`；五算例 normal
+- [x] F2.3 小 case 物理语义：三路 production trace 的 residual 重建误差均为
+  `0`，全域 residual 与边界通量闭合误差 `2.804e-13`；非 boundary-first
+  synthetic HIP contract 的 boundary semantics 误差 `4.441e-16`、内部面守恒
+  误差 `2.753e-14`；ALE/face-area 解析 contract 误差 `1.110e-16`。
+- [x] `fd8d9eca` 根 CTest `210/210`；目标节点 root HIP GoogleTest `9/9`、
+  hardware HIP CTest `10/10`，测试集合非空。
+- [x] F2.2 revision `2f597a04` 昆山 CPU 门禁：根 CTest `210/210`；五算例 normal
   `5/5`（最大 residual absolute difference 约 `4.97e-10`）；strict
   `5/5`（最大约 `1.11e-17`）；standalone CPU contract `8/8`。
-- [x] 两个目标节点作业均为 scheduler `COMPLETED` 且 workload exit code `0:0`。
+- [x] 相关目标节点作业均为 scheduler `COMPLETED` 且 workload exit code `0:0`。
 
 ### 4.2 尚未完成，禁止提前声明
 
 - [ ] `UNsInvFlux` HIP batch 尚未在真实 3D 主 solver case 中执行。
 - [ ] 尚无 RK multi-stage 与 3D 主 solver case 的 `qf1`、`qf2`、face flux、
   residual 或 state trace 对比；当前生产 case 证据只到小型 2D 1-step LU-SGS。
-- [ ] 小 case 的 density/pressure positivity 与 finite 已通过；尚未证明 3D 主 solver HIP 路径的边界语义
-  与守恒。
+- [ ] 小 case 的 finite、positivity、boundary semantics 与守恒已通过；尚未证明
+  3D 主 solver HIP 路径的对应物理与离散语义。
 - [ ] 尚未完成主 solver DCU MPI、多卡或性能测试。
 - [ ] 根工程默认仍是 CPU-only；standalone HIP 通过不能替代主 solver DCU 证据。
 
@@ -206,10 +224,10 @@ one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步�
   - [x] F2.2a：选择可控小 case，分别生成 legacy CPU、CPU batch、HIP batch trace。
   - [x] F2.2b：逐 face/equation 比较 `qf1`、`qf2`、`invflux`。
   - [x] F2.2c：比较 residual/state，定位误差来自 pack、kernel 还是回写。
-- [ ] F2.3：物理与离散语义检查。
-  - [ ] F2.3a：finite、positive density、positive pressure（小 case 已通过，3D case 待验证）。
-  - [ ] F2.3b：内部面守恒和 boundary-mask/boundary ordering 语义。
-  - [ ] F2.3c：ALE mesh-normal velocity 与 face-area ownership 不重复计算。
+- [x] F2.3：小 case 物理与离散语义检查。
+  - [x] F2.3a：finite、positive density、positive pressure。
+  - [x] F2.3b：内部面守恒和 boundary-mask/boundary ordering 语义。
+  - [x] F2.3c：ALE mesh-normal velocity 与 face-area ownership 不重复计算。
 - [ ] F2.4：扩大到 E6 使用的 3D m6 Lax-Friedrichs case。
   - [ ] F2.4a：先 1 step，再 50 steps；不要直接跑长作业掩盖早期差异。
   - [ ] F2.4b：对照既有 CPU trace gate 与输出级 oracle。
@@ -299,7 +317,8 @@ F 阶段只有同时满足以下条件才可勾选完成：
 - [x] HIP contract 全部通过且测试集合非空；
 - [x] 主 solver 小 case 1-step LU-SGS 与 CPU oracle 对齐；
 - [ ] 主 solver RK multi-stage 与 CPU oracle 对齐；
-- [ ] finite、positivity、conservation、boundary semantics 全部通过；
+- [x] 小 case finite、positivity、conservation、boundary semantics 全部通过；
+- [ ] 3D case 对应物理与离散语义通过；
 - [ ] 3D case 通过，再更新 living TODO；
 - [x] scheduler 状态和 workload exit code 均成功；
 - [ ] 提交文档中不含敏感或原始运行元数据。
