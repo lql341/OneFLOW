@@ -107,6 +107,8 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
     bench_repeats="${ONEFLOW_F2_STAGE_BENCH_REPEATS:-3}"
     bench_warmup="${ONEFLOW_F2_STAGE_BENCH_WARMUP:-1}"
     bench_timeout="${ONEFLOW_F2_STAGE_BENCH_TIMEOUT_SECONDS:-180}"
+    bench_cpu_ranks="${ONEFLOW_F2_STAGE_BENCH_CPU_RANKS:-1}"
+    bench_hip_ranks="${ONEFLOW_F2_STAGE_BENCH_HIP_RANKS:-1}"
     bench_root="$trace_root/benchmark"
     timing_file="$bench_root/timing.tsv"
 
@@ -118,6 +120,12 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
     esac
     case "$bench_warmup" in
         ''|*[!0-9]*) echo "Invalid ONEFLOW_F2_STAGE_BENCH_WARMUP=$bench_warmup" >&2; exit 2 ;;
+    esac
+    case "$bench_cpu_ranks" in
+        ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_BENCH_CPU_RANKS=$bench_cpu_ranks" >&2; exit 2 ;;
+    esac
+    case "$bench_hip_ranks" in
+        ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_BENCH_HIP_RANKS=$bench_hip_ranks" >&2; exit 2 ;;
     esac
     if [ "$bench_steps" != "$ONEFLOW_F2_STAGE_STEPS" ]; then
         echo "Benchmark steps must equal trace steps: benchmark=$bench_steps trace=$ONEFLOW_F2_STAGE_STEPS" >&2
@@ -152,7 +160,13 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
 
     run_benchmark_case() {
         local mode=$1
-        local repeat start_ns end_ns elapsed_ms log_file
+        local repeat start_ns end_ns elapsed_ms log_file bench_ranks
+
+        if [ "$mode" = hip_batch ]; then
+            bench_ranks="$bench_hip_ranks"
+        else
+            bench_ranks="$bench_cpu_ranks"
+        fi
 
         for repeat in $(seq 1 "$bench_warmup"); do
             reset_benchmark_case "$mode"
@@ -161,7 +175,7 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
                 cd "$bench_root"
                 configure_mode "$mode"
                 timeout --signal=TERM --kill-after=10s "$bench_timeout" \
-                    mpirun -np 1 "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
+                    mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
             ) > "$log_file" 2>&1
         done
 
@@ -173,7 +187,7 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
                 cd "$bench_root"
                 configure_mode "$mode"
                 timeout --signal=TERM --kill-after=10s "$bench_timeout" \
-                    mpirun -np 1 "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
+                    mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
             ) > "$log_file" 2>&1
             end_ns=$(date +%s%N)
             elapsed_ms=$(awk -v start="$start_ns" -v end="$end_ns" \

@@ -2,7 +2,7 @@
 
 **日期：** 2026-09-16
 **工作分支：** `dev`
-**已推送基线：** `9cc92500`（`origin/dev`；本轮变更待提交）
+**已推送基线：** `5ae02205`（本轮公平 benchmark 与 MPI rank-local state sync 修复；待推送）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
@@ -156,6 +156,8 @@ F2.3 checkpoints `9fbbe6a7`（硬件 contract）与 `fd8d9eca`
 - [x] 标准 root HIP runner 已沉淀为 `ci/kunshan/f3-main-solver-benchmark.slurm`；流式 verifier 避免 3D 多步 trace 一次性读入导致 OOM。
 - [x] 3D m6 3-step 三路 trace 与性能门禁：job `122246208` 为 `COMPLETED/0:0`，36 条记录全通过；CPU 对 legacy 最大绝对差 `2.8332891588433995e-13`，HIP 最大绝对差 `2.8399504969911504e-13`。
 - [x] 同一 `steps=3, warmup=1, repeats=3` basis 的端到端 wall-clock：legacy `24775.415 ms`，CPU batch `25520.782 ms`（`0.970794x`），HIP/DCU batch `25224.514 ms`（`0.982196x`）；当前不能宣称主 solver DCU 加速。
+- [x] 公平资源口径的 8 CPU MPI ranks vs 1 DCU：legacy `25904.228096 ms`，CPU batch `26794.339157 ms`（`0.966780x`），HIP/DCU batch `25658.172501 ms`（`1.009590x`）；HIP 仅快约 `0.95%`，尚不足以称为有意义的加速。
+- [x] 为支持公平 MPI benchmark，修复 `SyncAllEulerDomainStates` 遍历全局 zone 导致非 owner rank 解引用空 `globalGrids` 的问题；改为按 `ZoneState::localZid` 同步 rank-local zones。修复后 8-rank CPU warmup、3-step trace 与 HIP contract 均通过。
 - [ ] 尚未完成主 solver DCU MPI、多卡、GPU-resident/设备归约与性能优化。
 - [ ] 根工程默认仍是 CPU-only；standalone HIP 通过不能替代主 solver DCU 证据。
 
@@ -172,6 +174,27 @@ F2.3 checkpoints `9fbbe6a7`（硬件 contract）与 `fd8d9eca`
 | HIP/DCU batch | 25224.513536 | 0.982196x |
 
 结论：当前正确性已成立，但该 host-staged 单 rank 单 DCU 纵切线没有端到端加速；HIP 约慢 1.78%。不能把这组结果宣传为最终 GPU 性能，下一步应优先减少 host/device 往返、复用 device buffer、合并 launch，并在修复 50-step 物理稳定性后重测。
+
+### 4.4 公平资源口径的 8 CPU ranks vs 1 DCU
+
+该组数据来自同一个 3D `m6wingroe_sa` 输入、同一编译 revision、同一
+`steps=3,warmup=1,repeats=3` basis；legacy 与 CPU batch 使用 8 个 MPI ranks，
+HIP batch 使用 1 个 DCU rank。计时仍是端到端 wall-clock，包含 MPI launch、初始化、
+host pack、H2D、kernel、D2H 与输出；因此它是当前 host-staged vertical slice 的
+应用级证据，不是设备 kernel-only speedup。
+
+| 模式 | ranks/device | mean lifecycle (ms) | 相对 legacy |
+|---|---:|---:|---:|
+| legacy CPU | 8 MPI ranks | 25904.228096 | 1.000000x |
+| CPU batch | 8 MPI ranks | 26794.339157 | 0.966780x |
+| HIP/DCU batch | 1 DCU | 25658.172501 | 1.009590x |
+
+3-step trace gate 同时通过：CPU batch 对 legacy 最大绝对差
+`2.8332891588433995e-13`，HIP batch 对 legacy 最大绝对差
+`2.8399504969911504e-13`；36 条记录，state finite，density/pressure 为正。
+结论是当前 DCU 与 8-rank CPU 基本持平，约 `0.95%` 的优势处于运行波动范围内，
+不能作为性能宣传数据。下一轮应先做 profile，拆分 MPI/初始化/pack/H2D/kernel/D2H/输出
+时间，再把 state 和 buffer 尽可能留在设备侧。
 
 ## 5. 架构判断
 

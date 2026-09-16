@@ -4,8 +4,8 @@
 #SBATCH --job-name=oneflow_f3_benchmark
 #SBATCH --partition=kshdnormal
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=27G
 #SBATCH --gres=dcu:1
 #SBATCH --time=02:00:00
@@ -22,6 +22,8 @@ runner="$artifact_dir/stage-runner.slurm"
 trace_steps="${ONEFLOW_F3_TRACE_STEPS:-1}"
 benchmark_repeats="${ONEFLOW_F3_BENCH_REPEATS:-3}"
 benchmark_warmup="${ONEFLOW_F3_BENCH_WARMUP:-1}"
+cpu_ranks="${ONEFLOW_F3_CPU_RANKS:-1}"
+hip_ranks="${ONEFLOW_F3_HIP_RANKS:-1}"
 
 module purge
 module load compiler/cmake/3.25.0
@@ -72,6 +74,8 @@ export TMPDIR="$job_tmp"
     echo "trace_steps=$trace_steps"
     echo "benchmark_repeats=$benchmark_repeats"
     echo "benchmark_warmup=$benchmark_warmup"
+    echo "benchmark_cpu_ranks=$cpu_ranks"
+    echo "benchmark_hip_ranks=$hip_ranks"
 } > "$artifact_dir/environment.txt" 2>&1
 
 if command -v rocminfo >/dev/null 2>&1; then
@@ -124,6 +128,8 @@ if [ "$rc_smoke" -eq 0 ] && [ "$rc_gtest" -eq 0 ] && [ "$rc_ctest" -eq 0 ] && [ 
     export ONEFLOW_F2_STAGE_BENCH_STEPS="$trace_steps"
     export ONEFLOW_F2_STAGE_BENCH_REPEATS="$benchmark_repeats"
     export ONEFLOW_F2_STAGE_BENCH_WARMUP="$benchmark_warmup"
+    export ONEFLOW_F2_STAGE_BENCH_CPU_RANKS="$cpu_ranks"
+    export ONEFLOW_F2_STAGE_BENCH_HIP_RANKS="$hip_ranks"
     bash "$runner" > "$artifact_dir/stage-runner.log" 2>&1
     rc_stage=$?
 fi

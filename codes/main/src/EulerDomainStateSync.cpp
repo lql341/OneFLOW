@@ -120,15 +120,22 @@ void SyncAllEulerDomainStates( SimuContext & context )
 {
     CpuEulerDomainBackend backend;
     const bool restart = ctrl.startStrategy == 1 || ctrl.startStrategy == 3;
-    for ( int solverIndex = 0;
-        solverIndex < SolverState::nSolver; ++ solverIndex )
+    // Grid ownership is rank-local in MPI runs.  Iterating the global zone
+    // state here makes non-owner ranks dereference a null globalGrids entry.
+    for ( int localZoneIndex = 0;
+        localZoneIndex < ZoneState::nLocal; ++ localZoneIndex )
     {
-        SolverState::SetSolverTypeBySolverIndex( solverIndex );
-        for ( int gridLevel = 0;
-            gridLevel < GridState::nGrids; ++ gridLevel )
+        ZoneState::zid = ZoneState::localZid[ localZoneIndex ];
+        for ( int solverIndex = 0;
+            solverIndex < SolverState::nSolver; ++ solverIndex )
         {
-            GridState::SetGridLevel( gridLevel );
-            SyncCurrentEulerDomainState( context, backend, restart );
+            SolverState::SetSolverTypeBySolverIndex( solverIndex );
+            for ( int gridLevel = 0;
+                gridLevel < GridState::nGrids; ++ gridLevel )
+            {
+                GridState::SetGridLevel( gridLevel );
+                SyncCurrentEulerDomainState( context, backend, restart );
+            }
         }
     }
 }
