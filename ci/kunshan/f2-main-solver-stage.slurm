@@ -15,6 +15,9 @@ set -euo pipefail
 
 : "${ONEFLOW_F2_STAGE_SOURCE_DIR:?Set ONEFLOW_F2_STAGE_SOURCE_DIR}"
 : "${ONEFLOW_F2_STAGE_BINARY:?Set ONEFLOW_F2_STAGE_BINARY}"
+: "${ONEFLOW_F2_STAGE_CASE:?Set ONEFLOW_F2_STAGE_CASE (relative to source)}"
+: "${ONEFLOW_F2_STAGE_STEPS:?Set ONEFLOW_F2_STAGE_STEPS}"
+: "${ONEFLOW_F2_STAGE_TIME_INTEGRAL:?Set ONEFLOW_F2_STAGE_TIME_INTEGRAL}"
 
 module purge
 module load compiler/gcc/9.3.0
@@ -22,7 +25,7 @@ module load mpi/openmpi/gcc-9.3.0/4.1.5
 module load compiler/dtk/26.04
 module load python/3.8.10
 
-source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/test/plateuns2dslau2"
+source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/$ONEFLOW_F2_STAGE_CASE"
 trace_root="${ONEFLOW_F2_STAGE_RUN_DIR:-$PWD/f2-main-solver-stage-${SLURM_JOB_ID:-manual}}"
 
 if [ -e "$trace_root" ]; then
@@ -36,10 +39,20 @@ for mode in legacy cpu_batch hip_batch; do
         "$trace_root/$mode/log"
     mkdir -p "$trace_root/$mode/results" "$trace_root/$mode/restart" \
         "$trace_root/$mode/log"
-    sed -i -E 's/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = 1;/' \
+    sed -i -E "s/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = ${ONEFLOW_F2_STAGE_STEPS};/" \
         "$trace_root/$mode/script/cfd.txt"
-    sed -i -E 's/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5; \/\/ Lax-Friedrichs F2 stage gate/' \
+    sed -i -E 's/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5; \/\/ Lax-Friedrichs F stage gate/' \
         "$trace_root/$mode/script/cfd.txt"
+    sed -i -E "s/^int[[:space:]]+time_integral[[:space:]]*=.*/int time_integral = ${ONEFLOW_F2_STAGE_TIME_INTEGRAL};/" \
+        "$trace_root/$mode/script/cfd.txt"
+    if [ "${ONEFLOW_F2_STAGE_DISABLE_VISCOUS:-0}" = 1 ]; then
+        sed -i -E 's/^int[[:space:]]+nTModel[[:space:]]*=.*/int nTModel = 0; \/\/ F stage inviscid gate/' \
+            "$trace_root/$mode/script/cfd.txt"
+    fi
+    if [ "${ONEFLOW_F2_STAGE_DISABLE_LIMITER:-0}" = 1 ]; then
+        sed -i -E 's/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0; \/\/ F stage limiter gate/' \
+            "$trace_root/$mode/script/cfd.txt"
+    fi
 done
 
 binary_dir=$(dirname "$ONEFLOW_F2_STAGE_BINARY")
