@@ -59,6 +59,10 @@ also provide `CMAKE_HIP_COMPILER` and `CMAKE_HIP_ARCHITECTURES` (currently
 `gfx906` on Kunshan Z100). The standalone project and the root project share the
 same CMake registration helper.
 
+## Root main-solver HIP/3D stage benchmark
+
+For the production root solver (which remains CPU-only by default), use [`f3-main-solver-benchmark.slurm`](f3-main-solver-benchmark.slurm) on `kshdnormal` with `dcu:1`. The runner reuses a target-node root HIP build, checks the HIP smoke binary, non-empty root HIP GoogleTest, and hardware HIP CTest before running the 3D `m6wingroe_sa` stage gate. The trace gate compares legacy CPU, CPU batch, and HIP batch records and physical/semantic invariants before any timing is emitted. Set `ONEFLOW_F3_TRACE_STEPS` to choose the gate length; timing uses the same step count, one warmup, and three repeats by default. The measured wall-clock includes MPI launch, initialization, host packing, H2D, kernel, D2H, and output, so a result below `1.0x` is not an acceleration claim. The stream verifier is used for large traces to keep memory bounded.
+
 ## Execution
 
 Run **OneFLOW Kunshan Regression** from the Actions page and select:

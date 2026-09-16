@@ -1,5 +1,6 @@
 #!/bin/bash -l
-# Compare one-step main-solver traces for legacy CPU, CPU batch, and HIP batch.
+# Compare main-solver traces for legacy CPU, CPU batch, and HIP batch.  An
+# explicit benchmark opt-in can then time the same three paths on this node.
 #SBATCH --job-name=oneflow_f2_stage
 #SBATCH --partition=kshdnormal
 #SBATCH --nodes=1
@@ -92,7 +93,132 @@ run_case legacy
 run_case cpu_batch
 run_case hip_batch
 
-python3 "$ONEFLOW_F2_STAGE_SOURCE_DIR/ci/kunshan/f2-main-solver-stage-verify.py" \
+python3 "$ONEFLOW_F2_STAGE_SOURCE_DIR/ci/kunshan/f2-main-solver-stage-verify-stream.py" \
     "$trace_root/legacy.stage" \
     "$trace_root/cpu_batch.stage" \
     "$trace_root/hip_batch.stage" | tee "$trace_root/verify.txt"
+
+# Performance is deliberately opt-in.  The trace gate above always runs first
+# so a timing result cannot be reported without the same-step numerical and
+# physical checks passing.  Timing runs do not enable the trace writer because
+# trace I/O would dominate the measurement on the 3D m6 case.
+if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
+    bench_steps="${ONEFLOW_F2_STAGE_BENCH_STEPS:-$ONEFLOW_F2_STAGE_STEPS}"
+    bench_repeats="${ONEFLOW_F2_STAGE_BENCH_REPEATS:-3}"
+    bench_warmup="${ONEFLOW_F2_STAGE_BENCH_WARMUP:-1}"
+    bench_timeout="${ONEFLOW_F2_STAGE_BENCH_TIMEOUT_SECONDS:-180}"
+    bench_root="$trace_root/benchmark"
+    timing_file="$bench_root/timing.tsv"
+
+    case "$bench_steps" in
+        ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_BENCH_STEPS=$bench_steps" >&2; exit 2 ;;
+    esac
+    case "$bench_repeats" in
+        ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_BENCH_REPEATS=$bench_repeats" >&2; exit 2 ;;
+    esac
+    case "$bench_warmup" in
+        ''|*[!0-9]*) echo "Invalid ONEFLOW_F2_STAGE_BENCH_WARMUP=$bench_warmup" >&2; exit 2 ;;
+    esac
+    if [ "$bench_steps" != "$ONEFLOW_F2_STAGE_STEPS" ]; then
+        echo "Benchmark steps must equal trace steps: benchmark=$bench_steps trace=$ONEFLOW_F2_STAGE_STEPS" >&2
+        exit 2
+    fi
+
+    mkdir -p "$bench_root"
+    printf 'mode\trepeat\telapsed_ms\tsteps\n' > "$timing_file"
+
+    configure_mode() {
+        local mode=$1
+        unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
+            ONEFLOW_UNS_STAGE_TRACE_FILE || true
+        if [ "$mode" = hip_batch ]; then
+            export ONEFLOW_ACCEL_BACKEND=HIP
+            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
+        else
+            export ONEFLOW_ACCEL_BACKEND=CPU
+            if [ "$mode" = cpu_batch ]; then
+                export ONEFLOW_ENABLE_UNS_CPU_BATCH=1
+            fi
+        fi
+    }
+
+    reset_benchmark_case() {
+        local mode=$1
+        rm -rf "$bench_root/$mode/results" "$bench_root/$mode/restart" \
+            "$bench_root/$mode/log"
+        mkdir -p "$bench_root/$mode/results" "$bench_root/$mode/restart" \
+            "$bench_root/$mode/log"
+    }
+
+    run_benchmark_case() {
+        local mode=$1
+        local repeat start_ns end_ns elapsed_ms log_file
+
+        for repeat in $(seq 1 "$bench_warmup"); do
+            reset_benchmark_case "$mode"
+            log_file="$bench_root/$mode/warmup-$repeat.log"
+            (
+                cd "$bench_root"
+                configure_mode "$mode"
+                timeout --signal=TERM --kill-after=10s "$bench_timeout" \
+                    mpirun -np 1 "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
+            ) > "$log_file" 2>&1
+        done
+
+        for repeat in $(seq 1 "$bench_repeats"); do
+            reset_benchmark_case "$mode"
+            log_file="$bench_root/$mode/repeat-$repeat.log"
+            start_ns=$(date +%s%N)
+            (
+                cd "$bench_root"
+                configure_mode "$mode"
+                timeout --signal=TERM --kill-after=10s "$bench_timeout" \
+                    mpirun -np 1 "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
+            ) > "$log_file" 2>&1
+            end_ns=$(date +%s%N)
+            elapsed_ms=$(awk -v start="$start_ns" -v end="$end_ns" \
+                'BEGIN { printf "%.6f", (end - start) / 1000000.0 }')
+            printf '%s\t%s\t%s\t%s\n' "$mode" "$repeat" \
+                "$elapsed_ms" "$bench_steps" >> "$timing_file"
+        done
+    }
+
+    for mode in legacy cpu_batch hip_batch; do
+        rm -rf "$bench_root/$mode"
+        cp -a "$trace_root/$mode" "$bench_root/$mode"
+        sed -i -E "s/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = ${bench_steps};/" \
+            "$bench_root/$mode/script/cfd.txt"
+        run_benchmark_case "$mode"
+    done
+
+    python3 - "$timing_file" <<PY
+import collections
+import pathlib
+import statistics
+import sys
+
+path = pathlib.Path(sys.argv[1])
+rows = []
+for line in path.read_text().splitlines()[1:]:
+    mode, repeat, elapsed_ms, steps = line.split("\t")
+    rows.append((mode, int(repeat), float(elapsed_ms), int(steps)))
+
+by_mode = collections.defaultdict(list)
+for mode, _repeat, elapsed_ms, _steps in rows:
+    by_mode[mode].append(elapsed_ms)
+
+legacy_mean = statistics.mean(by_mode["legacy"])
+print("PERF_BASIS steps={} repeats={} warmup={}".format(
+    rows[0][3], len(by_mode["legacy"]), "$bench_warmup"))
+for mode in ("legacy", "cpu_batch", "hip_batch"):
+    values = by_mode[mode]
+    mean = statistics.mean(values)
+    median = statistics.median(values)
+    speedup = legacy_mean / mean
+    print("PERF_SUMMARY mode={} mean_ms={:.6f} median_ms={:.6f} "
+          "speedup_vs_legacy={:.6f}".format(
+              mode, mean, median, speedup))
+PY
+    cp "$timing_file" "$trace_root/timing.tsv"
+    echo "PERF_PASS timing_file=$trace_root/timing.tsv"
+fi

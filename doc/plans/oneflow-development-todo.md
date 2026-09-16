@@ -1,11 +1,18 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-15（本轮：F1 root HIP 编译/contract 与同 revision CPU normal+strict 门禁完成）
+> 最后更新：2026-09-16（本轮：3D m6 3-step 精度门禁、标准 root runner 与单卡 CPU/HIP timing 完成；50-step 稳定性仍是 blocker）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
 > 配套入口：[`AGENTS.md`](../../../AGENTS.md)（规则与文档地图）、
 > [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)（集群流程与标准套件）。
+
+## 本轮新增证据（2026-09-16）
+
+- 标准 runner：`ci/kunshan/f3-main-solver-benchmark.slurm`；3D stage runner 使用流式 verifier，避免多步 trace 一次性读入造成 OOM。
+- 精度门禁：3-step、3-stage RK、36 条 trace 全通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，最大 scaled error `1.992850329202156e-13`。
+- 性能 basis：同一输入、`steps=3`、warmup `1`、repeats `3`，端到端 wall-clock；legacy `24775.415 ms`，CPU batch `25520.782 ms`（`0.970794x`），HIP/DCU batch `25224.514 ms`（`0.982196x`）。结论是当前 host-staged 单卡路径准确但未加速。
+- 未闭环项保持不变：50-step CPU/HIP 共同物理发散，MPI/多卡、完整 NS/HIP 与 GPU-resident 性能仍未完成。
 
 ## 存储约定（长期）
 
@@ -105,13 +112,13 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `origin/dev` = `93955122`；F2.4 3D m6 三阶段 1-step 已推送，50-step 稳定性仍是 blocker |
+| 分支 | 本地 `dev` = `origin/dev` = `9cc92500`；F2.4 3D m6 1-step/3-step 精度门禁与标准 root runner 已补齐，50-step 稳定性仍是 blocker |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | E1–E6、F1、F2.1–F2.4 的 1-step/RK 门禁已完成；3D m6 50-step 在 CPU/HIP 共用配置下共同发散，标准 root runner 仍待沉淀。 |
-| 最新验证 | `93955122`：昆山 3D m6 896256 faces、Lax-Friedrichs、3-stage RK 1-step，三路 trace 对齐，HIP 对 legacy 最大差 `1.706e-13`，状态 finite 且 density/pressure 为正；50-step 约第 20 步在 CPU/HIP 共用配置下共同出现负压/Inf/NaN，scheduler/workload 正确传播为失败；标准 root HIP runner 尚未沉淀。 |
+| 当前进度 | E1–E6、F1、F2.1–F2.4 的 1-step/RK 与 3-step 门禁已完成；标准 root runner 与单卡 3-step benchmark 已完成，但 50-step 在 CPU/HIP 共用配置下共同发散，当前未观察到端到端 DCU 加速。 |
+| 最新验证 | `122246208`：昆山 3D m6、896256 faces、3-stage RK、3 steps，36 条三路 trace 记录通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，scheduler/workload `COMPLETED/0:0`。同一 `steps=3, warmup=1, repeats=3` basis 下，legacy `24775.415 ms`，CPU batch `25520.782 ms`，HIP/DCU batch `25224.514 ms`，加速比 `0.982196x`；50-step 仍共同出现负压/Inf/NaN。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
@@ -228,10 +235,11 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] F2.3：小 case 检查 finite、positive density/pressure、boundary semantics、conservation、ALE 与 face-area ownership。
     - [ ] F2.4：扩大到 3D m6 case，并完成长步稳定性门禁。
       - [x] F2.4a：3D m6 896256 faces、Lax-Friedrichs、3-stage RK 1-step；HIP 对 legacy 最大差 `1.706e-13`，finite 且 density/pressure 为正。
+      - [x] F2.4a-3：3-step 三路 trace 共 36 条记录通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，最大 scaled error `1.992850329202156e-13`。
       - [ ] F2.4b：50-step 稳定性；CPU/HIP 共用配置约第 20 步共同出现负压/Inf/NaN，需先修复 CFL/边界/初始化/物理稳定性条件。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
-    - [ ] F3.1：把本轮一次性 root HIP runner 沉淀为仓库标准 runner；当前已验证 root HIP opt-in 与共享 contract helper。
-    - [x] F3.2：CPU queue regression 与 DCU 构建/contract/adapter one-call/小 case one-step/3D 1-step 已完成；50-step、标准 runner、MPI/多卡与性能不提前标记。
+    - [x] F3.1：标准 root HIP runner 已沉淀；支持 trace step 参数化、精度门禁后 benchmark、同 basis timing 与非空 HIP test 检查。
+    - [x] F3.2：CPU queue regression 与 DCU 构建/contract/adapter one-call/小 case/3-step trace/标准 runner/单卡 timing 已完成；50-step、MPI/多卡与 GPU-resident 性能不提前标记。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
