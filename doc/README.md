@@ -57,3 +57,7 @@ make html
 
 
 新增或更新工程文档时，统一放在 `doc/` 下；不要重新创建顶层 `docs/` 目录。
+
+新建工程文档还必须遵循 [文档命名规范](DOCUMENT_NAMING.md)；该规范统一约束
+`architecture/`、`plans/`、`handoff/`、`runbooks/`、`evidence/`、
+`reports/` 与 `_drafts/`。现有文件不批量改名，以免破坏链接。

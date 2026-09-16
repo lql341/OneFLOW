@@ -35,6 +35,9 @@ and environment dumps belong in CI artifacts or isolated cluster run directories
 
 ## Naming convention
 
+The authoritative repository-wide rule is [Document naming standard](../DOCUMENT_NAMING.md).
+The following report-specific shorthand is kept here for convenience.
+
 Use `oneflow-<topic>-<document-type>[-YYYYMMDD].<ext>`:
 
 - use a stable name such as `current` for actively maintained reports;
