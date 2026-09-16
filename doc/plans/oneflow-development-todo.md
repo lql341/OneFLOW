@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-16（本轮：3D m6 3-step 精度门禁、标准 root runner 与单卡 CPU/HIP timing 完成；50-step 稳定性仍是 blocker）
+> 最后更新：2026-09-16（本轮收口：3D m6 公平 8 CPU ranks vs 1 DCU timing 与 MPI rank-local state-sync 修复完成；50-step 稳定性和 fresh CPU 五 case 门禁仍是 blocker）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -14,6 +14,7 @@
 - 性能 basis：同一输入、`steps=3`、warmup `1`、repeats `3`，端到端 wall-clock；legacy `24775.415 ms`，CPU batch `25520.782 ms`（`0.970794x`），HIP/DCU batch `25224.514 ms`（`0.982196x`）。结论是当前 host-staged 单卡路径准确但未加速。
 - 公平资源口径：legacy/CPU batch 使用 8 CPU MPI ranks，HIP batch 使用 1 DCU；同一 basis 下分别为 `25904.228096 ms`、`26794.339157 ms`（`0.966780x`）、`25658.172501 ms`（`1.009590x`）。3-step trace 36 条通过；当前仅约 `0.95%` 优势，不作为有意义加速结论。
 - MPI 修复：`SyncAllEulerDomainStates` 改为按 `ZoneState::localZid` 遍历 rank-local zones，避免非 owner rank 解引用空全局 grid；修复后 8-rank CPU warmup、trace 与 HIP contract 通过。
+- 回归边界：标准隔离 CPU runner 的 normal/strict fresh 重跑在 continuation fixture 上因“solver 返回 0 但目标结果文件不存在”停止；当前及上一版 restart fixture 均复现，需单独修复 fixture/runner 后才能把本轮修改标为 fresh CPU regression green。
 - 未闭环项保持不变：50-step CPU/HIP 共同物理发散，MPI/多卡、完整 NS/HIP 与 GPU-resident 性能仍未完成。
 
 ## 存储约定（长期）
@@ -114,7 +115,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `origin/dev` = `9cc92500`；F2.4 3D m6 1-step/3-step 精度门禁与标准 root runner 已补齐，50-step 稳定性仍是 blocker |
+| 分支 | 本地 `dev` 含 `f2b3d43c`，领先 `origin/dev` 的 `9cc92500` 1 个提交；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐，50-step 和 fresh CPU 五 case 门禁仍是 blocker |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
@@ -241,7 +242,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
       - [ ] F2.4b：50-step 稳定性；CPU/HIP 共用配置约第 20 步共同出现负压/Inf/NaN，需先修复 CFL/边界/初始化/物理稳定性条件。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
     - [x] F3.1：标准 root HIP runner 已沉淀；支持 trace step 参数化、精度门禁后 benchmark、同 basis timing 与非空 HIP test 检查。
-    - [x] F3.2：CPU queue regression 与 DCU 构建/contract/adapter one-call/小 case/3-step trace/标准 runner/单卡 timing 已完成；50-step、MPI/多卡与 GPU-resident 性能不提前标记。
+    - [x] F3.2：既有 CPU queue regression evidence 与 DCU 构建/contract/adapter one-call/小 case/3-step trace/标准 runner/单卡 timing 已完成；50-step、MPI/多卡与 GPU-resident 性能不提前标记。
+    - [ ] F3.3：修复 continuation fixture/runner 的 fresh output 生成问题，再重新执行本轮修改的 CPU normal `1e-8` + strict `1e-15` 五 case 门禁。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作

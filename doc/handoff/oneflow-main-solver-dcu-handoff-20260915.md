@@ -2,7 +2,8 @@
 
 **日期：** 2026-09-16
 **工作分支：** `dev`
-**已推送基线：** `5ae02205`（本轮公平 benchmark 与 MPI rank-local state sync 修复；待推送）
+**已推送基线：** `9cc92500`（`origin/dev`）
+**本地待推送提交：** `f2b3d43c`（MPI rank-local state sync 修复、公平 benchmark runner 与测量记录）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
@@ -158,6 +159,7 @@ F2.3 checkpoints `9fbbe6a7`（硬件 contract）与 `fd8d9eca`
 - [x] 同一 `steps=3, warmup=1, repeats=3` basis 的端到端 wall-clock：legacy `24775.415 ms`，CPU batch `25520.782 ms`（`0.970794x`），HIP/DCU batch `25224.514 ms`（`0.982196x`）；当前不能宣称主 solver DCU 加速。
 - [x] 公平资源口径的 8 CPU MPI ranks vs 1 DCU：legacy `25904.228096 ms`，CPU batch `26794.339157 ms`（`0.966780x`），HIP/DCU batch `25658.172501 ms`（`1.009590x`）；HIP 仅快约 `0.95%`，尚不足以称为有意义的加速。
 - [x] 为支持公平 MPI benchmark，修复 `SyncAllEulerDomainStates` 遍历全局 zone 导致非 owner rank 解引用空 `globalGrids` 的问题；改为按 `ZoneState::localZid` 同步 rank-local zones。修复后 8-rank CPU warmup、3-step trace 与 HIP contract 均通过。
+- [ ] 本轮修复的 fresh CPU 五算例 normal/strict 门禁仍待收口：标准隔离 runner 在 continuation fixture 上遇到 solver 正常退出但未生成目标结果文件；当前及上一版 restart fixture 均可复现，暂归类为既有 fixture/runner 问题，不作为数值通过证据。
 - [ ] 尚未完成主 solver DCU MPI、多卡、GPU-resident/设备归约与性能优化。
 - [ ] 根工程默认仍是 CPU-only；standalone HIP 通过不能替代主 solver DCU 证据。
 
@@ -279,7 +281,7 @@ one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步�
 
 - [x] F3.1：使用 `kshdnormal`、`dcu:1`、`gfx906`、DTK 26.04；资源 tuple
   必须来自 `ci/kunshan/README.md`，不得自行猜测。
-- [x] F3.2：标准 runner 已支持 root HIP opt-in、standalone contract 非空检查、3D trace 门禁和同 basis timing；仍不覆盖 MPI/多卡。
+- [x] F3.2：标准 runner 已支持 root HIP opt-in、standalone contract 非空检查、3D trace 门禁、同 basis timing 和 8 CPU ranks vs 1 DCU 资源口径；仍不覆盖 MPI/多卡/GPU-resident。
 - [x] F3.3：记录工具链、可见设备、目标架构、scheduler completion 与 workload
   exit code；raw log 和具体账号/主机/job metadata 只留在集群 run artifacts。
 - [x] F3.4：目标节点执行顺序：
@@ -289,8 +291,9 @@ one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步�
   - [x] 小 case 1-step LU-SGS；
   - [x] 3D case：m6 3-step 三路 trace 与单卡 CPU/HIP benchmark 已在真实 DCU 节点完成。
   - [x] 同 revision 的 CPU regression。
-- [x] F3.5：CPU 五算例 normal `1e-8`、strict `1e-15` 与相关根 CTest 全通过后，
-  才能把 F 标记完成。
+- [x] F3.5：既有同 revision CPU 五算例 normal `1e-8`、strict `1e-15` 与相关根
+  CTest 证据已通过；本轮 MPI state-sync 修复的 fresh 五算例门禁仍需先解决
+  continuation fixture/runner 问题，不能据此把 F 标记完成。
 
 ### G：F 完成后的后续工作
 
