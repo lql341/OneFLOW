@@ -19,6 +19,7 @@ set -euo pipefail
 : "${ONEFLOW_F2_STAGE_STEPS:?Set ONEFLOW_F2_STAGE_STEPS}"
 : "${ONEFLOW_F2_STAGE_TIME_INTEGRAL:?Set ONEFLOW_F2_STAGE_TIME_INTEGRAL}"
 : "${ONEFLOW_F2_STAGE_RK_STAGES:?Set ONEFLOW_F2_STAGE_RK_STAGES}"
+: "${ONEFLOW_F2_STAGE_CFL:-}"
 
 module purge
 module load compiler/gcc/9.3.0
@@ -51,6 +52,9 @@ for mode in legacy cpu_batch hip_batch; do
     if [ "${ONEFLOW_F2_STAGE_DISABLE_VISCOUS:-0}" = 1 ]; then
         sed -i -E 's/^int[[:space:]]+nTModel[[:space:]]*=.*/int nTModel = 0; \/\/ F stage inviscid gate/' \
             "$trace_root/$mode/script/cfd.txt"
+    fi
+    if [ -n "${ONEFLOW_F2_STAGE_CFL:-}" ]; then
+        sed -i -E "s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${ONEFLOW_F2_STAGE_CFL};/" "$trace_root/$mode/script/cfd.txt"
     fi
     if [ "${ONEFLOW_F2_STAGE_DISABLE_LIMITER:-0}" = 1 ]; then
         sed -i -E 's/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0; \/\/ F stage limiter gate/' \
