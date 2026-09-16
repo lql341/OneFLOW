@@ -1,14 +1,15 @@
 # OneFLOW 主 solver DCU vertical slice 交接
 
-**日期：** 2026-09-15
+**日期：** 2026-09-16
 **工作分支：** `dev`
-**已推送基线：** `fd8d9eca`（`origin/dev`）
+**已推送基线：** `93955122`（`origin/dev`）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）
 **F2.2 checkpoint：** `156f94fc` + `2f597a04`（多帧 stage trace 与已验证模块顺序，已推送）
 **F2.3 checkpoint：** `9fbbe6a7` + `fd8d9eca`（物理语义 contract 与生产 stage 守恒门禁，已推送）
-**交接状态：** F2.3 小 case 物理语义已通过；下一步是 F2.4 3D m6
+**F2.4 checkpoint：** `a6ceae06`/`93955122`（3D m6 三阶段 1-step 已通过；50-step 稳定性仍失败）
+**交接状态：** F2.4 3D m6 1-step/RK 已通过；50-step 共同物理发散与标准 root runner 仍待收口
 
 ## 1. 一句话结论
 
@@ -23,8 +24,7 @@ adapter one-call flux/residual CPU oracle。`2f597a04` 又在 5 方程
 `plateuns2dslau2` Lax-Friedrichs 小 case 上完成 legacy CPU、CPU batch、HIP batch
 的 1-step LU-SGS face/residual/state trace。`fd8d9eca` 又把 connectivity/geometry
 写入 opt-in stage metadata，三路都能从生产 face flux 精确重建 residual，并用独立
-HIP contract 验证 boundary mask、内部面守恒、ALE 与 face-area ownership。RK multi-stage 和 3D m6
-门禁仍未完成，因此不能宣称主 solver 已具备 DCU 能力。
+HIP contract 验证 boundary mask、内部面守恒、ALE 与 face-area ownership。3D m6 三阶段 1-step 已通过；50-step 在 CPU legacy 与 HIP 共用配置下均于约第 20 步出现负压/Inf/NaN，不能作为 HIP 分歧；标准 root HIP runner 仍未沉淀，因此不能宣称主 solver DCU vertical slice 已全部完成。
 
 ## 2. 全景进度
 
@@ -40,8 +40,8 @@ HIP contract 验证 boundary mask、内部面守恒、ALE 与 face-area ownershi
 - [ ] 阶段 F：DCU vertical slice——把同一主 solver batch contract 切到 HIP，
   在真实 DCU 上完成编译、运行和 CPU/HIP 数值一致性。
   - [x] F1：HIP backend registration——`d5005ad6` + `ca14118c`，目标节点编译与 contract 已通过。
-  - [ ] F2：CPU/HIP numerical gate——F2.1–F2.3 已完成，当前进入 3D m6。
-  - [ ] F3：target-node evidence——构建/contract/one-call/小 case one-step/物理语义/CPU regression 已有证据；3D case 待运行。
+  - [ ] F2：CPU/HIP numerical gate——F2.1–F2.4 的 1-step/RK 门禁已完成，50-step 稳定性待解决。
+  - [ ] F3：target-node evidence——构建/contract/one-call/小 case one-step/物理语义/3D 1-step/CPU regression 已有证据；50-step 与标准 runner 待收口。
 - [ ] 阶段 G：MPI/性能——在单卡正确性闭环后再做 halo、多卡和性能优化。
 
 ## 3. Git 状态与 F1 checkpoint
@@ -147,11 +147,11 @@ F2.3 checkpoints `9fbbe6a7`（硬件 contract）与 `fd8d9eca`
 
 ### 4.2 尚未完成，禁止提前声明
 
-- [ ] `UNsInvFlux` HIP batch 尚未在真实 3D 主 solver case 中执行。
-- [ ] 尚无 RK multi-stage 与 3D 主 solver case 的 `qf1`、`qf2`、face flux、
-  residual 或 state trace 对比；当前生产 case 证据只到小型 2D 1-step LU-SGS。
-- [ ] 小 case 的 finite、positivity、boundary semantics 与守恒已通过；尚未证明
-  3D 主 solver HIP 路径的对应物理与离散语义。
+- [x] `UNsInvFlux` HIP batch 已在真实 3D m6 case 的 3-stage 1-step 中执行。
+- [x] 3D m6 三阶段 1-step 已逐 stage 对比 `qf1`、`qf2`、face flux、residual、state；HIP 对 legacy 最大差 `1.7064127888488656e-13`，finite 且 density/pressure 为正。
+- [ ] 小 case 的 finite、positivity、boundary semantics 与守恒已通过；3D m6 1-step
+  的 finite/positivity 与 trace 对齐已通过，但 50-step 在 CPU/HIP 共用配置下于约第 20 步
+  出现负压/Inf/NaN，3D 长步稳定性仍未通过。
 - [ ] 尚未完成主 solver DCU MPI、多卡或性能测试。
 - [ ] 根工程默认仍是 CPU-only；standalone HIP 通过不能替代主 solver DCU 证据。
 
@@ -174,8 +174,9 @@ UNs reconstructed primitive faces
 
 F1 已解决 backend registration、capability 与 fail-fast policy，F2.1/F2.2 已完成
 one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步关键问题是：
-- 扩大到 RK multi-stage 与 3D m6，逐 stage 比较 `qf1`、`qf2`、`invflux`、residual 与 state；
-- 检查 finite、density/pressure positivity、内部面守恒与 boundary semantics；
+- 3D m6 三阶段 1-step 已逐 stage 比较 `qf1`、`qf2`、`invflux`、residual 与 state；
+- 3D 50-step 在 CPU/HIP 共用配置下共同发散，需先定位 CFL/边界/初始化/物理稳定性条件；
+- 标准 root HIP runner、完整粘性 NS/HIP 路径、MPI/性能仍未完成；
 - 当前 host pack + H2D + kernel + D2H 只用于正确性纵切线，不代表最终性能架构。
 
 ## 6. 详细 TODO（严格按顺序）
@@ -229,8 +230,9 @@ one-call 与小 case 1-step 的 CPU/HIP flux/residual/state 对比。下一步�
   - [x] F2.3b：内部面守恒和 boundary-mask/boundary ordering 语义。
   - [x] F2.3c：ALE mesh-normal velocity 与 face-area ownership 不重复计算。
 - [ ] F2.4：扩大到 E6 使用的 3D m6 Lax-Friedrichs case。
-  - [ ] F2.4a：先 1 step，再 50 steps；不要直接跑长作业掩盖早期差异。
-  - [ ] F2.4b：对照既有 CPU trace gate 与输出级 oracle。
+  - [x] F2.4a-1：3-stage RK 1-step；896256 faces、三路 trace、HIP 最大差 `1.706e-13`。
+  - [ ] F2.4a-2：50 steps；CPU/HIP 共用配置约第 20 步出现负压/Inf/NaN，需先修复稳定性条件。
+  - [x] F2.4b：1-step 对照既有 CPU trace gate 与输出级 oracle。
 
 ### F3：昆山 target-node evidence
 
@@ -316,12 +318,14 @@ F 阶段只有同时满足以下条件才可勾选完成：
 - [x] 根工程 HIP opt-in 在昆山真实 DCU 节点编译、链接并发现预期测试；
 - [x] HIP contract 全部通过且测试集合非空；
 - [x] 主 solver 小 case 1-step LU-SGS 与 CPU oracle 对齐；
-- [ ] 主 solver RK multi-stage 与 CPU oracle 对齐；
+- [x] 主 solver 3D m6 三阶段 1-step 与 CPU oracle 对齐；
+- [ ] 主 solver 50-step 稳定性与 CPU oracle 对齐；
 - [x] 小 case finite、positivity、conservation、boundary semantics 全部通过；
-- [ ] 3D case 对应物理与离散语义通过；
-- [ ] 3D case 通过，再更新 living TODO；
-- [x] scheduler 状态和 workload exit code 均成功；
-- [ ] 提交文档中不含敏感或原始运行元数据。
+- [x] 3D m6 1-step finite/positive 与 trace 对齐；
+- [ ] 3D m6 长步稳定性与完整物理语义通过；
+- [ ] 3D case 全部门禁通过，再更新 living TODO；
+- [x] 成功门禁的 scheduler/workload 均为 `COMPLETED`/`0:0`；50-step 失败正确传播为非零退出；
+- [x] 提交文档中不含敏感或原始运行元数据。
 
 ## 10. 首要阅读文件
 
