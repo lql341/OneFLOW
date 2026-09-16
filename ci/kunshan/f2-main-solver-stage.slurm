@@ -18,6 +18,7 @@ set -euo pipefail
 : "${ONEFLOW_F2_STAGE_CASE:?Set ONEFLOW_F2_STAGE_CASE (relative to source)}"
 : "${ONEFLOW_F2_STAGE_STEPS:?Set ONEFLOW_F2_STAGE_STEPS}"
 : "${ONEFLOW_F2_STAGE_TIME_INTEGRAL:?Set ONEFLOW_F2_STAGE_TIME_INTEGRAL}"
+: "${ONEFLOW_F2_STAGE_RK_STAGES:?Set ONEFLOW_F2_STAGE_RK_STAGES}"
 
 module purge
 module load compiler/gcc/9.3.0
@@ -44,6 +45,8 @@ for mode in legacy cpu_batch hip_batch; do
     sed -i -E 's/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5; \/\/ Lax-Friedrichs F stage gate/' \
         "$trace_root/$mode/script/cfd.txt"
     sed -i -E "s/^int[[:space:]]+time_integral[[:space:]]*=.*/int time_integral = ${ONEFLOW_F2_STAGE_TIME_INTEGRAL};/" \
+        "$trace_root/$mode/script/cfd.txt"
+    sed -i -E "s/^int[[:space:]]+rk_stage[[:space:]]*=.*/int rk_stage = ${ONEFLOW_F2_STAGE_RK_STAGES};/" \
         "$trace_root/$mode/script/cfd.txt"
     if [ "${ONEFLOW_F2_STAGE_DISABLE_VISCOUS:-0}" = 1 ]; then
         sed -i -E 's/^int[[:space:]]+nTModel[[:space:]]*=.*/int nTModel = 0; \/\/ F stage inviscid gate/' \
