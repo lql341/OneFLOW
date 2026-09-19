@@ -48,14 +48,8 @@ public:
     {
         RequireSolveFieldContext( ctx );
 
-        // Same six stages as FieldSimu(); order must stay identical.
-        FieldSimuSetupGlobals();
-        FieldSimuLoadGrid();
-        FieldSimuPrepareWallDist();
-        FieldSimuCreateSolvers();
-        FieldSimuInitFlowField();
-        SyncAllEulerDomainStates( ctx );
-        FieldSimuRun( ctx );
+        // Single pipeline: stage order lives in FieldPipeline::Run( ctx ).
+        FieldSimuRunPipeline( ctx );
     }
 };
 

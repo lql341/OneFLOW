@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "SolverNamePolicy.h"
+#include "SolverNameList.h"
+#include "SolverMap.h"
 #include <string>
 #include <vector>
 
@@ -61,3 +63,4 @@ TEST( SolverNamePolicy, ReadSolverNamesPath_EmptyInputYieldsEmptyLists )
     EXPECT_TRUE( uns.empty() );
     EXPECT_TRUE( str.empty() );
 }
+

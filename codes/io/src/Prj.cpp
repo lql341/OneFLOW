@@ -25,10 +25,9 @@ License
 #include "OStream.h"
 #include "FileUtils.h"
 #include <iostream>
+#include <filesystem>
 
 BeginNameSpace( ONEFLOW )
-
-
 
 bool Prj::hx_debug = false;
 bool Prj::run_from_ide = false;
@@ -47,41 +46,82 @@ Prj::~Prj()
     ;
 }
 
-//CmdLineOptions Prj::ParseCmdLineArgs( const std::vector<std::string> & args )
-//{
-//    if ( args.size() < 3 )
-//    {
-//        Fatal( "Prj::ParseCmdLineArgs: expected at least 3 arguments (exe, mode, prjName)" );
-//    }
-//    CmdLineOptions opt;
-//    opt.debug   = ( args[1] == "d" );
-//    opt.prjName = args[2];
-//    return opt;
-//}
-
-//void Prj::ProcessCmdLineArgs( std::vector<std::string> &args )
-//{
-//    std::string choise = args[ 1 ];
-//    std::string prjName = args[ 2 ];
-//    if ( choise == "d" )
-//    {
-//        Prj::hx_debug = true;
-//        Prj::run_from_ide = true;
-//    }
-//    Prj::Init();
-//    Prj::SetPrjBaseDir( prjName );
-//}
-
-void Prj::ProcessCmdLineArgs( std::vector<std::string> &args )
+void Prj::ProcessCmdLineArgs( std::vector<std::string> & args )
 {
     CmdLineOptions opt = Prj::ParseCmdLineArgs( args );
+
     if ( opt.debug )
     {
         Prj::hx_debug = true;
         Prj::run_from_ide = true;
     }
+
     Prj::Init();
-    Prj::SetPrjBaseDir( opt.prjName );
+    Prj::SetPrjBaseDir( opt.caseDir );
+}
+
+bool Prj::IsSystemRoot( const std::filesystem::path & path )
+{
+    std::error_code ec;
+
+    if ( ! std::filesystem::is_directory( path, ec ) || ec )
+    {
+        return false;
+    }
+
+    const std::filesystem::path actionFile =
+        path / "action" / "actionFileList.txt";
+
+    ec.clear();
+
+    return std::filesystem::is_regular_file( actionFile, ec ) && ! ec;
+}
+
+std::string Prj::FindSystemRoot()
+{
+    std::error_code ec;
+
+    std::filesystem::path path( Prj::execute_dir );
+
+    if ( path.empty() )
+    {
+        return "";
+    }
+
+    path = std::filesystem::absolute( path, ec );
+
+    if ( ec )
+    {
+        return "";
+    }
+
+    while ( true )
+    {
+        std::filesystem::path candidate = path / "system";
+
+        if ( Prj::IsSystemRoot( candidate ) )
+        {
+            std::string systemRoot = candidate.lexically_normal().string();
+
+            if ( ! EndWithSlash( systemRoot ) )
+            {
+                systemRoot += "/";
+            }
+
+            return systemRoot;
+        }
+
+        std::filesystem::path parent = path.parent_path();
+
+        if ( parent == path )
+        {
+            break;
+        }
+
+        path = parent;
+    }
+
+    return "";
 }
 
 void Prj::Init()
@@ -92,50 +132,69 @@ void Prj::Init()
     std::cout << " Prj::execute_dir = " << Prj::execute_dir << "\n";
     std::cout << " Prj::current_dir = " << Prj::current_dir << "\n";
 
-    std::string local_root = "/system/";
-    if ( Prj::run_from_ide )
+    Prj::system_root = Prj::FindSystemRoot();
+
+    if ( Prj::system_root.empty() )
     {
-        std::string current_dir_now = RemoveEndSlash( Prj::current_dir );
-        Prj::system_root = current_dir_now + local_root;
+        Fatal( "Could not locate OneFLOW system directory from executable directory: "
+            + Prj::execute_dir );
     }
-    else
-    {
-        std::string execute_dir = RemoveEndSlash( Prj::execute_dir );
-        Prj::system_root = Prj::execute_dir + local_root;
-    }
+
     std::cout << " Prj::system_root = " << Prj::system_root << "\n";
 }
 
 void Prj::SetPrjBaseDir( const std::string & prjName )
 {
-    std::string current_dir_now = RemoveEndSlash( Prj::current_dir );
-    std::string prj_name_now = RemoveFirstSlash( prjName );
-    OStream &logger = OStream::Instance();
-    logger << current_dir_now << "/" << prj_name_now;
-    if ( ! EndWithSlash( prj_name_now ) )
+    std::filesystem::path projectPath( prjName );
+
+    if ( projectPath.empty() )
     {
-        logger << "/";
+        Fatal( "Project path cannot be empty." );
     }
-    Prj::prjBaseDir = logger.str();
-    std::cout << " Prj::prjBaseDir = " << Prj::prjBaseDir << "\n";
+
+    if ( projectPath.is_relative() )
+    {
+        projectPath =
+            std::filesystem::path( Prj::current_dir ) / projectPath;
+    }
+
+    projectPath = projectPath.lexically_normal();
+
+    Prj::prjBaseDir = projectPath.string();
+
+    // Keep the trailing slash because existing IO code relies on it.
+    if ( ! EndWithSlash( Prj::prjBaseDir ) )
+    {
+        Prj::prjBaseDir += "/";
+    }
+
+    std::cout << " Prj::prjBaseDir = "
+        << Prj::prjBaseDir << "\n";
 }
 
-void Prj::OpenPrjFile( std::fstream & file, const std::string & fileName, const std::ios_base::openmode & openMode )
+void Prj::OpenPrjFile(
+    std::fstream & file,
+    const std::string & fileName,
+    const std::ios_base::openmode & openMode )
 {
-    OStream &logger = OStream::Instance();
-    logger.ClearAll();
-    logger << Prj::prjBaseDir << fileName;
+    std::string prjFileName = Prj::GetPrjFileName( fileName );
 
-    std::string prjFileName = logger.str();
-
-    CreateDirIfNeeded( prjFileName );
+    // Create parent directories only for write operations.
+    if ( ( openMode & std::ios_base::out ) != 0 )
+    {
+        CreateDirIfNeeded( prjFileName );
+    }
 
     Prj::OpenFile( file, prjFileName, openMode );
 }
 
-void Prj::OpenFile( std::fstream & file, const std::string & fileName, const std::ios_base::openmode & openMode )
+void Prj::OpenFile(
+    std::fstream & file,
+    const std::string & fileName,
+    const std::ios_base::openmode & openMode )
 {
     file.open( fileName.c_str(), openMode );
+
     if ( ! file )
     {
         Fatal( "could not open " + fileName );
@@ -150,52 +209,51 @@ void Prj::CloseFile( std::fstream & file )
 
 void Prj::MakePrjDir( const std::string & dirName )
 {
-    OStream &logger = OStream::Instance();
-    logger.ClearAll();
-    logger << Prj::prjBaseDir << dirName;
-
-    std::string prjDirName = logger.str();
-    //std::cout << " prjDirName = " << prjDirName << "\n";
+    std::string prjDirName = Prj::GetPrjFileName( dirName );
 
     HX_CreateDirectory( prjDirName );
 }
 
-std::string Prj::GetPrjDirName( const std::string & fileName )
+// Same pattern as GetPrjFileName, but rooted at the OneFLOW installation's
+// system directory (Prj::system_root) instead of the current case directory.
+// Centralizing this here removes the scattered "Prj::system_root + ..."
+// string concatenation that used to live in individual business-logic files.
+std::string Prj::GetSystemFileName( const std::string & fileName )
 {
-    size_t pos = fileName.find_last_of("\\/");
+    std::string fileNameNew = RemoveFirstSlash( fileName );
+
+    return Prj::system_root + fileNameNew;
+}
+
+std::string Prj::GetDirName( const std::string & fileName )
+{
+    size_t pos = fileName.find_last_of( "\\/" );
+
     if ( std::string::npos == pos )
     {
         return "";
     }
     else
     {
-        return fileName.substr(0, pos);
+        return fileName.substr( 0, pos );
     }
 }
 
-
-void Prj::CreateDirIfNeeded( std::string & prjFileName )
+void Prj::CreateDirIfNeeded( const std::string & prjFileName )
 {
-    std::string prj_dir = Prj::GetPrjDirName( prjFileName );
+    std::string dirName = Prj::GetDirName( prjFileName );
 
-    if ( ! HX_IsDirectory( prj_dir ) )
+    if ( ! HX_IsDirectory( dirName ) )
     {
-        HX_CreateDirectory( prj_dir );
+        HX_CreateDirectory( dirName );
     }
 }
 
 std::string Prj::GetPrjFileName( const std::string & fileName )
 {
-    OStream &logger = OStream::Instance();
-    logger.ClearAll();
-
     std::string fileNameNew = RemoveFirstSlash( fileName );
 
-    logger << Prj::prjBaseDir << fileNameNew;
-
-    std::string prjFileName = logger.str();
-
-    return prjFileName;
+    return Prj::prjBaseDir + fileNameNew;
 }
 
 EndNameSpace

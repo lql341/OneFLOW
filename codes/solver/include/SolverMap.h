@@ -23,8 +23,9 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "TextFileParser.h"
+//#include "TextFileParser.h"
 #include <map>
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -38,13 +39,29 @@ public:
     static IntField solverTypes;
     static std::map< int, int > solverTypeToIndex;
     static std::map< int, int > solverIndexToType;
-    static HXVector< Solver * > strSolver;
-    static HXVector< Solver * > unsSolver;
+    // Owning storage; GetSolver() returns non-owning Solver*.
+    static HXVector< std::unique_ptr< Solver > > strSolver;
+    static HXVector< std::unique_ptr< Solver > > unsSolver;
 public:
     static void CreateSolvers();
     static void CreateSolvers( int gridType );
+    // Injectable names (already U*/S* expanded). If null, uses SolverNameClass::GetSolverNames.
+    // No numerical change: same BuildSolversInBucket path as the default overload.
+    static void CreateSolvers( int gridType, const StringField * solverNameList );
+
+    // S2 pure seam: injected non-null list wins; otherwise SolverNameClass for gridType.
+    // No I/O, no SafeClone - unit-testable without full solver registry.
+    static const StringField & SelectSolverNames(
+        int gridType,
+        const StringField * injected );
+
     static void FreeSolverMap();
     static void FreeSolverMap( int gridType );
+
+    // Clear type↔index maps (and solverTypes). Called by FreeSolverMap;
+    // also available for unit tests that exercise AddSolverInfo in isolation.
+    static void ClearIndexMaps();
+
     static int GetSolverIndexBySolverType( int solverType );
     static int GetSolverTypeBySolverIndex( int solverIndex );
     static void AddSolverInfo( int solverType, int solverIndex );
@@ -52,22 +69,14 @@ public:
 protected:
     static void AddSolverTypeToIndex( int solverType, int solverIndex );
     static void AddSolverIndexToType( int solverIndex, int solverType );
-};
+    static HXVector< std::unique_ptr< Solver > > * SolverBucket( int gridType );
 
-class SolverNameClass
-{
-public:
-    SolverNameClass();
-    ~SolverNameClass();
-public:
-    static StringField unsSolverNameList;
-    static StringField strSolverNameList;
-    static bool flag;
-public:
-    static void Init();
-    static void ReadSolverNames();
-    static void ReadSolverNames( StringField & solverNameList );
-    static StringField & GetSolverNames( int gridType );
+    // S3: clone + StaticInit + index maps into the chosen bucket.
+    // Does not touch SolverState / LusgsState (those stay in CreateSolvers).
+    static void BuildSolversInBucket(
+        int gridType,
+        const StringField & solverNameList,
+        HXVector< std::unique_ptr< Solver > > * solvers );
 };
 
 EndNameSpace

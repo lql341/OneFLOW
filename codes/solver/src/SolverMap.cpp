@@ -22,21 +22,21 @@ License
 
 #include "SolverMap.h"
 #include "Solver.h"
+#include "TextFileParser.h"
 #include "SolverNamePolicy.h"
+#include "SolverNameList.h"
 #include "GridState.h"
 #include "SolverState.h"
-#include "OStream.h"
 #include <map>
 #include <iostream>
-
+#include <memory>
+#include <utility>
 
 BeginNameSpace( ONEFLOW )
 
-IntField SolverMap::solverTypes;
-std::map< int, int > SolverMap::solverTypeToIndex;
-std::map< int, int > SolverMap::solverIndexToType;
-HXVector< Solver * > SolverMap::strSolver;
-HXVector< Solver * > SolverMap::unsSolver;
+// Index maps live in SolverMapIndex.cpp (testable without SafeClone).
+HXVector< std::unique_ptr< Solver > > SolverMap::strSolver;
+HXVector< std::unique_ptr< Solver > > SolverMap::unsSolver;
 
 SolverMap::SolverMap()
 {
@@ -44,6 +44,45 @@ SolverMap::SolverMap()
 
 SolverMap::~SolverMap()
 {
+}
+
+HXVector< std::unique_ptr< Solver > > * SolverMap::SolverBucket( int gridType )
+{
+    if ( gridType == ONEFLOW::UMESH )
+    {
+        return & SolverMap::unsSolver;
+    }
+    return & SolverMap::strSolver;
+}
+
+void SolverMap::BuildSolversInBucket(
+    int gridType,
+    const StringField & solverNameList,
+    HXVector< std::unique_ptr< Solver > > * solvers )
+{
+    const int nSolver = static_cast< int >( solverNameList.size() );
+    for ( int solverIndex = 0; solverIndex < nSolver; ++ solverIndex )
+    {
+        // SafeClone returns a raw owning pointer; take ownership immediately.
+        std::unique_ptr< Solver > solver( Solver::SafeClone( solverNameList[ solverIndex ] ) );
+        solver->solverIndex = solverIndex;
+        solver->gridType = gridType;
+        solver->StaticInit();
+
+        SolverMap::AddSolverInfo( solver->solverType, solver->solverIndex );
+        solvers->push_back( std::move( solver ) );
+    }
+}
+
+void SolverMap::FreeSolverMap( int gridType )
+{
+    // unique_ptr elements destroy solvers on clear; no manual delete loop.
+    SolverMap::SolverBucket( gridType )->clear();
+}
+
+Solver * SolverMap::GetSolver( int solverIndex, int gridType )
+{
+    return ( * SolverMap::SolverBucket( gridType ) )[ solverIndex ].get();
 }
 
 void SolverMap::CreateSolvers()
@@ -59,178 +98,50 @@ void SolverMap::CreateSolvers()
 
 void SolverMap::CreateSolvers( int gridType )
 {
-    HXVector< Solver * > * solvers = 0;
-    if ( gridType == ONEFLOW::UMESH )
-    {
-        solvers = & SolverMap::unsSolver;
-    }
-    else
-    {
-        solvers = & SolverMap::strSolver;
-    }
+    SolverMap::CreateSolvers( gridType, nullptr );
+    //// S1: select side (uns vs str)
+    //HXVector< Solver * > * solvers = SolverMap::SolverBucket( gridType );
 
-    StringField & solverNameList = SolverNameClass::GetSolverNames( gridType );
-    int nSolver = solverNameList.size();
+    //// S2: names from script/solver.txt + U/S prefix (SolverNamePolicy)
+    //StringField & solverNameList = SolverNameClass::GetSolverNames( gridType );
+    //const int nSolver = static_cast< int >( solverNameList.size() );
 
-    LusgsState::Init( nSolver );
-    for ( int solverIndex = 0; solverIndex < nSolver; ++ solverIndex )
-    {
-        Solver * solver = Solver::SafeClone( solverNameList[ solverIndex ] );
-        solver->solverIndex = solverIndex;
-        solver->gridType = gridType;
-        solver->StaticInit();
-        
-        SolverMap::AddSolverInfo( solver->solverType, solver->solverIndex );
-        solvers->push_back( solver );
-    }
+    //LusgsState::Init( nSolver );
 
-    SolverState::Init( nSolver );
+    //// S3: SafeClone + StaticInit + index maps
+    //SolverMap::BuildSolversInBucket( gridType, solverNameList, solvers );
+
+    //// S4: solver-state side table
+    //SolverState::Init( nSolver );
 }
 
-void SolverMap::FreeSolverMap( int gridType )
+void SolverMap::CreateSolvers( int gridType, const StringField * solverNameList )
 {
-    HXVector< Solver * > * solvers = 0;
-    if ( gridType == ONEFLOW::UMESH )
-    {
-        solvers = & SolverMap::unsSolver;
-    }
-    else
-    {
-        solvers = & SolverMap::strSolver;
-    }
+    // S1: select side (uns vs str)
+    HXVector< std::unique_ptr< Solver > > * solvers = SolverMap::SolverBucket( gridType );
 
-    for ( int solverIndex = 0; solverIndex < solvers->size(); ++ solverIndex )
-    {
-        Solver * solver = ( * solvers )[ solverIndex ];
-        delete solver;
-    }
-    solvers->resize( 0 );
+    // S2: injected list, or script/solver.txt + policy (SelectSolverNames seam)
+    const StringField & names =
+        SolverMap::SelectSolverNames( gridType, solverNameList );
+
+    const int nSolver = static_cast< int >( names.size() );
+
+    LusgsState::Init( nSolver );
+
+    // S3: SafeClone + StaticInit + index maps
+    SolverMap::BuildSolversInBucket( gridType, names, solvers );
+
+    // S4: solver-state side table
+    SolverState::Init( nSolver );
 }
 
 void SolverMap::FreeSolverMap()
 {
     SolverMap::FreeSolverMap( ONEFLOW::UMESH );
     SolverMap::FreeSolverMap( ONEFLOW::SMESH );
+    SolverMap::ClearIndexMaps();
 }
 
-int SolverMap::GetSolverIndexBySolverType( int solverType )
-{
-    std::map< int, int >::iterator iter;
-    iter = SolverMap::solverTypeToIndex.find( solverType );
-    return iter->second;
-}
-
-int SolverMap::GetSolverTypeBySolverIndex( int solverIndex )
-{
-    std::map< int, int >::iterator iter;
-    iter = SolverMap::solverIndexToType.find( solverIndex );
-    return iter->second;
-}
-
-void SolverMap::AddSolverInfo( int solverType, int solverIndex )
-{
-    SolverMap::AddSolverTypeToIndex( solverType, solverIndex );
-    SolverMap::AddSolverIndexToType( solverIndex, solverType );
-}
-
-void SolverMap::AddSolverTypeToIndex( int solverType, int solverIndex )
-{
-    std::map< int, int >::iterator iter;
-    iter = SolverMap::solverTypeToIndex.find( solverType );
-    if ( iter == SolverMap::solverTypeToIndex.end() )
-    {
-        SolverMap::solverTypeToIndex[ solverType ] = solverIndex;
-        SolverMap::solverTypes.push_back( solverType );
-    }
-}
-
-void SolverMap::AddSolverIndexToType( int solverIndex, int solverType )
-{
-    std::map< int, int >::iterator iter = SolverMap::solverIndexToType.find( solverIndex );
-    if ( iter == SolverMap::solverIndexToType.end() )
-    {
-        SolverMap::solverIndexToType[ solverIndex ] = solverType;
-    }
-}
-
-Solver * SolverMap::GetSolver( int solverIndex, int gridType )
-{
-    if ( gridType == ONEFLOW::UMESH )
-    {
-        return unsSolver[ solverIndex ];
-    }
-    else
-    {
-        return strSolver[ solverIndex ];
-    }
-}
-
-StringField SolverNameClass::unsSolverNameList;
-StringField SolverNameClass::strSolverNameList;
-bool SolverNameClass::flag = false;
-
-SolverNameClass::SolverNameClass()
-{
-    ;
-}
-
-SolverNameClass::~SolverNameClass()
-{
-    ;
-}
-
-void SolverNameClass::Init()
-{
-    if ( flag ) return;
-    flag = true;
-    SolverNameClass::ReadSolverNames();
-}
-
-void SolverNameClass::ReadSolverNames()
-{
-    StringField solverNameList;
-    SolverNameClass::ReadSolverNames( solverNameList );
-
-    FillExpandedSolverNames(
-        solverNameList,
-        SolverNameClass::unsSolverNameList,
-        SolverNameClass::strSolverNameList );
-}
-
-void SolverNameClass::ReadSolverNames( StringField & solverNameList )
-{
-    TextFileParser textFileParser;
-
-    textFileParser.OpenPrjFile( "script/solver.txt", std::ios_base::in );
-
-    //\t is the tab key
-    std::string keyWordSeparator = " ()\r\n\t#$,;\"";
-    textFileParser.SetDefaultSeparator( keyWordSeparator );
-
-    while ( ! textFileParser.ReachTheEndOfFile()  )
-    {
-        bool flag = textFileParser.ReadNextNonEmptyLine();
-        if ( ! flag ) break;
-        std::string solverName = textFileParser.ReadNextWord();
-        solverNameList.push_back( solverName );
-    }
-
-    textFileParser.CloseFile();
-}
-
-StringField & SolverNameClass::GetSolverNames( int gridType )
-{
-    SolverNameClass::Init();
-
-    if ( gridType == ONEFLOW::UMESH )
-    {
-        return SolverNameClass::unsSolverNameList;
-    }
-    else
-    {
-        return SolverNameClass::strSolverNameList;
-    }
-}
-
+// Index-map / SelectSolverNames implementations: SolverMapIndex.cpp
 
 EndNameSpace

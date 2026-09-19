@@ -19,45 +19,40 @@ License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
 \*---------------------------------------------------------------------------*/
-
-#include "UsdField.h"
-#include "UsdPara.h"
-#include "FieldImp.h"
-#include "FieldWrap.h"
-#include "DataBase.h"
-#include "Zone.h"
-#include "UnsGrid.h"
+#pragma once
+#include "SolverMap.h"
 
 BeginNameSpace( ONEFLOW )
 
-
-UsdField::UsdField()
+// Semantic facade over the process-default solver directory.
+//
+// Today ownership still lives in SolverMap (unique_ptr buckets + index maps).
+// Call sites that mean "the simulation's solver catalog" should prefer this
+// name so a later move to Session/SimuContext-owned storage is a type rename
+// rather than a hunt for SolverMap:: statics.
+//
+// GetSolver returns a non-owning view (same as SolverMap::GetSolver).
+struct SolverCatalog
 {
-}
+    static void CreateDefault()
+    {
+        SolverMap::CreateSolvers();
+    }
 
-UsdField::~UsdField()
-{
-}
-
-void UsdField::Init()
-{
-    ;
-}
-
-void UsdField::InitBasic( int solverType )
-{
-    UnsGrid * grid = Zone::GetUnsGrid();
-
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
-    UsdPara * usdPara = fieldManager->usdPara.get();
-    q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
-
-    res  = GetFieldPointer< MRField > ( grid, usdPara->residual[ 0 ] );
-    res1 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 1 ] );
-    res2 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 2 ] );
-}
-
+    static void CreateDefault( int gridType, const StringField * names )
+    {
+            SolverMap::CreateSolvers( gridType, names );
+    }
+    
+    static void FreeDefault()
+    {
+        SolverMap::FreeSolverMap();
+    }
+    
+    static Solver * GetSolver( int solverIndex, int gridType )
+    {
+        return SolverMap::GetSolver( solverIndex, gridType );
+    }
+};
 
 EndNameSpace

@@ -22,34 +22,22 @@ License
 #include "FieldSimu.h"
 #include "SimuContext.h"
 #include "EulerDomainStateSync.h"
+#include "CmxTaskNames.h"
 #include "Iteration.h"
 #include "Ctrl.h"
 #include "NsCom.h"
 #include "UsdData.h"
 #include "MultiBlock.h"
 #include "SolverMap.h"
+#include "SolverCatalog.h"
 #include "CmxTask.h"
 #include "Multigrid.h"
 #include "BcData.h"
-#include "DataBase.h"
-#include "FieldImp.h"
-#include "Grid.h"
 #include "GridState.h"
-#include "SolverState.h"
-#include "Zone.h"
-#include "ZoneState.h"
-#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
-
-namespace {
-
-    // CmxTask / MessageMap operation name; must match registration tables
-    constexpr const char* kInitFlowFieldTaskName = "INIT_FLOWFIELD";
-
-} // namespace
 
 void FieldSimuSetupGlobals()
 {
@@ -66,9 +54,25 @@ void FieldSimuPrepareWallDist()
     MultiBlock::ProcessFlowWallDist();
 }
 
+
 void FieldSimuCreateSolvers()
 {
-    SolverMap::CreateSolvers();
+    // Prefer SolverCatalog name at the pipeline boundary (owns via SolverMap today).
+    SolverCatalog::CreateDefault();
+}
+
+void FieldSimuCreateSolvers( const SimuContext & ctx )
+{
+    if ( ctx.HasExpandedSolverNames() )
+    {
+        SolverCatalog::CreateDefault(
+            ONEFLOW::UMESH,
+            &ctx.ExpandedSolverNames() );
+    }
+    else
+    {
+        SolverCatalog::CreateDefault();
+    }
 }
 
 void FieldSimuInitFlowField()
@@ -87,25 +91,45 @@ void FieldSimuRun( SimuContext & context )
     MultigridSolve( context );
 }
 
-void FieldSimu()
+void FieldPipeline::Run()
 {
     FieldSimuSetupGlobals();
     FieldSimuLoadGrid();
     FieldSimuPrepareWallDist();
     FieldSimuCreateSolvers();
-    FieldSimuInitFlowField();
+    FieldSimuInitFlowField();  // -> MultiSolverMultiGridTask(kInitFlowFieldTaskName)
     FieldSimuRun();
+}
+
+void FieldPipeline::Run( SimuContext & ctx )
+{
+    FieldSimuSetupGlobals();
+    FieldSimuLoadGrid();
+    FieldSimuPrepareWallDist();
+    FieldSimuCreateSolvers( ctx );
+    FieldSimuInitFlowField();
+    SyncAllEulerDomainStates( ctx );
+    FieldSimuRun( ctx );
+}
+
+void FieldSimuRunPipeline()
+{
+    FieldPipeline::Run();
+}
+
+void FieldSimuRunPipeline( SimuContext & ctx )
+{
+    FieldPipeline::Run( ctx );
+}
+
+void FieldSimu()
+{
+    FieldPipeline::Run();
 }
 
 void FieldSimu( SimuContext & context )
 {
-    FieldSimuSetupGlobals();
-    FieldSimuLoadGrid();
-    FieldSimuPrepareWallDist();
-    FieldSimuCreateSolvers();
-    FieldSimuInitFlowField();
-    SyncAllEulerDomainStates( context );
-    FieldSimuRun( context );
+    FieldSimuRunPipeline( context );
 }
 
 void InitFlowSimuGlobal()

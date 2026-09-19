@@ -20,44 +20,33 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-#include "UsdField.h"
-#include "UsdPara.h"
-#include "FieldImp.h"
-#include "FieldWrap.h"
-#include "DataBase.h"
-#include "Zone.h"
-#include "UnsGrid.h"
+
+#pragma once
+#include "HXDefine.h"
+
 
 BeginNameSpace( ONEFLOW )
 
-
-UsdField::UsdField()
+// Holds expanded solver registration names (U*/S*) for UMESH / SMESH.
+// File I/O + SolverNamePolicy expansion; no Solver* / SafeClone.
+class SolverNameClass
 {
-}
+public:
+    SolverNameClass();
+    ~SolverNameClass();
 
-UsdField::~UsdField()
-{
-}
+    static StringField unsSolverNameList;
+    static StringField strSolverNameList;
+    static bool flag;
 
-void UsdField::Init()
-{
-    ;
-}
+    static void Init();
+    static void ReadSolverNames();
+    static void ReadSolverNames( StringField & solverNameList );
+    static StringField & GetSolverNames( int gridType );
 
-void UsdField::InitBasic( int solverType )
-{
-    UnsGrid * grid = Zone::GetUnsGrid();
-
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
-    UsdPara * usdPara = fieldManager->usdPara.get();
-    q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
-
-    res  = GetFieldPointer< MRField > ( grid, usdPara->residual[ 0 ] );
-    res1 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 1 ] );
-    res2 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 2 ] );
-}
-
+    // Test / injection: expand base names, no script/solver.txt
+    static void LoadFromBaseNames( const StringField & baseNames );
+    static void Reset();
+};
 
 EndNameSpace

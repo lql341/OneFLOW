@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Multigrid.h"
+#include "CmxTaskNames.h"
 #include "INsInvterm.h"
 #include "Mesh.h"
 #include "Ctrl.h"
@@ -178,7 +179,7 @@ void MG::Run()
 
 void MG::InnerProcess()
 {
-    ONEFLOW::MultiSolverMultiGridTask( "POST_PROCESS" );
+    ONEFLOW::MultiSolverMultiGridTask( kPostProcessTaskName );
 }
 
 void MG::OuterProcess( TimeSpan * timeSpan )
@@ -198,7 +199,7 @@ void MG::PreprocessMultigridFlowField( int gl )
 {
     GridState::SetGridLevel( gl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "STORE_RHS" );
+    ONEFLOW::SingleSolverSingleGridTask( kStoreRhsTaskName );
 }
 
 void MG::InitializeCoarseGridFlowFieldByRestrictFineGridFlowField( int fgl )
@@ -208,7 +209,7 @@ void MG::InitializeCoarseGridFlowFieldByRestrictFineGridFlowField( int fgl )
     //Call the following statement to update the Q value (CQ) on the thin grid
     GridState::SetGridLevel( fgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "RESTRICT_ALL_Q" );
+    ONEFLOW::SingleSolverSingleGridTask( kRestrictAllQTaskName );
 }
 
 void MG::StoreCoarseGridFlowFieldToTemporaryStorage( int fgl )
@@ -218,7 +219,7 @@ void MG::StoreCoarseGridFlowFieldToTemporaryStorage( int fgl )
     //Loadq takes the Q value (CQ) from the sparse grid and assigns it to cqsav
     GridState::SetGridLevel( cgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "LOAD_Q" );
+    ONEFLOW::SingleSolverSingleGridTask( kLoadQTaskName );
 }
 
 void MG::PrepareFineGridResiduals( int fgl )
@@ -233,24 +234,24 @@ void MG::PrepareFineGridResiduals( int fgl )
     //Residual = ( - f ) == ( - rhs );
     GridState::SetGridLevel( fgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "LOAD_RESIDUALS" );
+    ONEFLOW::SingleSolverSingleGridTask( kLoadResidualsTaskName );
 
     //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     //+After updateresiduals, generalresidualfield = Rl (W) - F
     //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-    ONEFLOW::SingleSolverSingleGridTask( "UPDATE_RESIDUALS" );
+    ONEFLOW::SingleSolverSingleGridTask( kUpdateResidualsTaskName );
 }
 
 void MG::PrepareCoarseGridResiduals( int fgl )
 {
     //+Residual incoarsegrid = - restr (RL (W) - F) after restrict defect
     GridState::SetGridLevel( fgl );
-    ONEFLOW::SingleSolverSingleGridTask( "RESTRICT_DEFECT" );
+    ONEFLOW::SingleSolverSingleGridTask( kRestrictDefectTaskName );
 
     //After updateresiduals, residualincoarsegrid = RL-1 (wsav) - restr (RL (W) - F)
     int cgl = GridState::GetCGridLevel( fgl );
     GridState::SetGridLevel( cgl );
-    ONEFLOW::SingleSolverSingleGridTask( "UPDATE_RESIDUALS" );
+    ONEFLOW::SingleSolverSingleGridTask( kUpdateResidualsTaskName );
 }
 
 void MG::SolveCoarseGridFlowField( int fgl )
@@ -274,17 +275,17 @@ void MG::CorrectFineGridFlowFieldByInterplateCoarseGridFlowField( int fgl )
     //w0 - wsav
     GridState::SetGridLevel( cgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "MODIFY_COARSEGRID" );
+    ONEFLOW::SingleSolverSingleGridTask( kModifyCoarseGridTaskName );
 
     //w = w + prol( w0 - wsav )
     GridState::SetGridLevel( fgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "MODIFY_FINEGRID" );
+    ONEFLOW::SingleSolverSingleGridTask( kModifyFineGridTaskName );
 
     //The following is actually to restore the Q value on the sparse grid.
     GridState::SetGridLevel( cgl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "RECOVER_COARSEGRID" );
+    ONEFLOW::SingleSolverSingleGridTask( kRecoverCoarseGridTaskName );
 }
 
 void MG::PreRelaxationCycle( int gl )
@@ -320,7 +321,7 @@ void MG::PostprocessMultigridFlowField( int gl )
     // This is only to restore the initial value of the general residual field. As for the usefulness of this, let's say something else.
     GridState::SetGridLevel( gl );
 
-    ONEFLOW::SingleSolverSingleGridTask( "RECOVER_RESIDUALS" );
+    ONEFLOW::SingleSolverSingleGridTask( kRecoverResidualsTaskName );
 }
 
 void MG::FastSolveFlowFieldByMultigridMethod( int gl )
@@ -377,7 +378,7 @@ void MG::ZeroResidualsForAllSolvers()
     for ( int sId = 0; sId < SolverState::nSolver; ++ sId )
     {
         SolverState::SetSolverTypeBySolverIndex( sId );
-        ONEFLOW::SingleSolverSingleGridTask( "ZERO_RESIDUALS" );
+        ONEFLOW::SingleSolverSingleGridTask( kZeroResidualsTaskName );
     }
 }
 

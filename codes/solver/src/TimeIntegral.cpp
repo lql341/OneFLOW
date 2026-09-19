@@ -23,6 +23,8 @@ License
 #include "TimeIntegral.h"
 #include "Multigrid.h"
 #include "CmxTask.h"
+#include "CmxTaskNames.h"
+#include "Message.h"
 #include "GridState.h"
 #include "Ctrl.h"
 #include "CpuEulerDomainBackend.h"
@@ -162,33 +164,43 @@ void TimeIntegral::Relaxation( int nCycles, SimuContext & context )
 
 void TimeIntegral::RungeKutta()
 {
+    // Resolve source names once per entry; stage/sweep loops use ids only.
+    using ONEFLOW::MessageMap;
+    const int idLoadQ           = MessageMap::GetMsgId( kLoadQTaskName );
+    const int idCalcTimeStep    = MessageMap::GetMsgId( kCalcTimeStepTaskName );
+    const int idLoadResiduals   = MessageMap::GetMsgId( kLoadResidualsTaskName );
+    const int idUpdateResiduals = MessageMap::GetMsgId( kUpdateResidualsTaskName );
+    const int idCalcLhs         = MessageMap::GetMsgId( kCalcLhsTaskName );
+    const int idUpdateFlow      = MessageMap::GetMsgId( kUpdateFlowFieldTaskName );
+    const int idCalcBoundary    = MessageMap::GetMsgId( kCalcBoundaryTaskName );
+
     if ( GridState::gridLevel == 0 )
     {
-        ONEFLOW::SingleSolverSingleGridTask( "LOAD_Q"        );
-        ONEFLOW::SingleSolverSingleGridTask( "CALC_TIME_STEP" );
+        ONEFLOW::SingleSolverSingleGridTask( idLoadQ );
+        ONEFLOW::SingleSolverSingleGridTask( idCalcTimeStep );
 
         int nStages = ctrl.rk_coef.size();
         for ( int iStage = 0; iStage < nStages; ++ iStage )
         {
             ctrl.lhscoef = ctrl.rk_coef[ iStage ];
 
-            ONEFLOW::SingleSolverSingleGridTask( "LOAD_RESIDUALS"   );
-            ONEFLOW::SingleSolverSingleGridTask( "UPDATE_RESIDUALS" );
-            ONEFLOW::SingleSolverSingleGridTask( "CALC_LHS"          );
-            ONEFLOW::SingleSolverSingleGridTask( "UPDATE_FLOWFIELD" );
-            ONEFLOW::SingleSolverSingleGridTask( "CALC_BOUNDARY"     );
+            ONEFLOW::SingleSolverSingleGridTask( idLoadResiduals );
+            ONEFLOW::SingleSolverSingleGridTask( idUpdateResiduals );
+            ONEFLOW::SingleSolverSingleGridTask( idCalcLhs );
+            ONEFLOW::SingleSolverSingleGridTask( idUpdateFlow );
+            ONEFLOW::SingleSolverSingleGridTask( idCalcBoundary );
         }
     }
     else
     {
         ctrl.lhscoef = 1.0;
-        ONEFLOW::SingleSolverSingleGridTask( "LOAD_Q"           );
-        ONEFLOW::SingleSolverSingleGridTask( "CALC_TIME_STEP"    );
-        ONEFLOW::SingleSolverSingleGridTask( "LOAD_RESIDUALS"   );
-        ONEFLOW::SingleSolverSingleGridTask( "UPDATE_RESIDUALS" );
-        ONEFLOW::SingleSolverSingleGridTask( "CALC_LHS"          );
-        ONEFLOW::SingleSolverSingleGridTask( "UPDATE_FLOWFIELD" );
-        ONEFLOW::SingleSolverSingleGridTask( "CALC_BOUNDARY"     );
+        ONEFLOW::SingleSolverSingleGridTask( idLoadQ );
+        ONEFLOW::SingleSolverSingleGridTask( idCalcTimeStep );
+        ONEFLOW::SingleSolverSingleGridTask( idLoadResiduals );
+        ONEFLOW::SingleSolverSingleGridTask( idUpdateResiduals );
+        ONEFLOW::SingleSolverSingleGridTask( idCalcLhs );
+        ONEFLOW::SingleSolverSingleGridTask( idUpdateFlow );
+        ONEFLOW::SingleSolverSingleGridTask( idCalcBoundary );
     }
 }
 
@@ -244,29 +256,45 @@ void TimeIntegral::RungeKutta( SimuContext & context )
 
 void TimeIntegral::Lusgs()
 {
-    ONEFLOW::SingleSolverSingleGridTask( "ZERO_DQ_FIELD"    );
-    ONEFLOW::SingleSolverSingleGridTask( "CALC_TIME_STEP"    );
-    ONEFLOW::SingleSolverSingleGridTask( "LOAD_RESIDUALS"   );
-    ONEFLOW::SingleSolverSingleGridTask( "UPDATE_RESIDUALS" );
-    ONEFLOW::SingleSolverSingleGridTask( "INIT_LUSGS"       );
+    using ONEFLOW::MessageMap;
+    const int idZeroDq          = MessageMap::GetMsgId( kZeroDqFieldTaskName );
+    const int idCalcTimeStep    = MessageMap::GetMsgId( kCalcTimeStepTaskName );
+    const int idLoadResiduals   = MessageMap::GetMsgId( kLoadResidualsTaskName );
+    const int idUpdateResiduals = MessageMap::GetMsgId( kUpdateResidualsTaskName );
+    const int idInitLusgs       = MessageMap::GetMsgId( kInitLusgsTaskName );
+    const int idLowerSweep      = MessageMap::GetMsgId( kLusgsLowerSweepTaskName );
+    const int idExchangeDq      = MessageMap::GetMsgId( kExchangeInterfaceDqTaskName );
+    const int idUpperSweep      = MessageMap::GetMsgId( kLusgsUpperSweepTaskName );
+    const int idUpdateLusgs     = MessageMap::GetMsgId( kUpdateFlowFieldLusgsTaskName );
+    const int idCalcBoundary    = MessageMap::GetMsgId( kCalcBoundaryTaskName );
+
+    ONEFLOW::SingleSolverSingleGridTask( idZeroDq );
+    ONEFLOW::SingleSolverSingleGridTask( idCalcTimeStep );
+    ONEFLOW::SingleSolverSingleGridTask( idLoadResiduals );
+    ONEFLOW::SingleSolverSingleGridTask( idUpdateResiduals );
+    ONEFLOW::SingleSolverSingleGridTask( idInitLusgs );
 
     for ( int iSweep = 0; iSweep < SweepState::nSweeps; ++ iSweep )
     {
-        ONEFLOW::SingleSolverSingleGridTask( "LUSGS_LOWER_SWEEP"     );
-        ONEFLOW::SingleSolverSingleGridTask( "EXCHANGE_INTERFACE_DQ" );
-        ONEFLOW::SingleSolverSingleGridTask( "LUSGS_UPPER_SWEEP"     );
+        ONEFLOW::SingleSolverSingleGridTask( idLowerSweep );
+        ONEFLOW::SingleSolverSingleGridTask( idExchangeDq );
+        ONEFLOW::SingleSolverSingleGridTask( idUpperSweep );
     }
 
-    ONEFLOW::SingleSolverSingleGridTask( "UPDATE_FLOWFIELD_LUSGS" );
-    ONEFLOW::SingleSolverSingleGridTask( "CALC_BOUNDARY"           );
+    ONEFLOW::SingleSolverSingleGridTask( idUpdateLusgs );
+    ONEFLOW::SingleSolverSingleGridTask( idCalcBoundary );
 }
 
 void TimeIntegral::Simple()
 {
-	ONEFLOW::SingleSolverSingleGridTask("UPDATE_RESIDUALS");
+    using ONEFLOW::MessageMap;
+    const int idUpdateResiduals = MessageMap::GetMsgId( kUpdateResidualsTaskName );
+    const int idSolTurb         = MessageMap::GetMsgId( kSolTurbTaskName );
+    const int idSolHeat         = MessageMap::GetMsgId( kSolHeatTaskName );
 
-	ONEFLOW::SingleSolverSingleGridTask("SOL_TURB");
-	ONEFLOW::SingleSolverSingleGridTask("SOL_HEAT");
+    ONEFLOW::SingleSolverSingleGridTask( idUpdateResiduals );
+    ONEFLOW::SingleSolverSingleGridTask( idSolTurb );
+    ONEFLOW::SingleSolverSingleGridTask( idSolHeat );
 }
 
 EndNameSpace

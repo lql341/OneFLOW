@@ -23,6 +23,7 @@ License
 #include "NamespaceMacros.h"
 #include "SimuDef.h"
 #include "EulerDomainStateRegistry.h"
+#include "HXDefine.h"
 #include <string>
 #include <vector>
 
@@ -92,6 +93,19 @@ public:
     void SetTaskByName( const std::string& taskName );
     void MarkEnvironmentReady( bool ready = true );
 
+    // Expanded solver registration names (e.g. "UNsSolver").
+    // Production Solve path fills these via EnsureExpandedSolverNames before
+    // FieldSimuCreateSolvers(ctx); tests may SetExpandedSolverNames directly.
+    // Empty means "not yet set" (CreateSolvers falls back to SolverNameClass).
+    bool HasExpandedSolverNames() const { return !expandedSolverNames_.empty(); }
+    const StringField& ExpandedSolverNames() const { return expandedSolverNames_; }
+
+    // Set expanded names (overwrites). Used by tests and explicit injection.
+    void SetExpandedSolverNames( const StringField& names );
+    void ClearExpandedSolverNames();
+
+    // Fill only if empty - production preload; does not clobber test injection.
+    void EnsureExpandedSolverNames( const StringField& names );
 private:
     std::vector<std::string> args_;
     int rank_ = 0;
@@ -101,6 +115,7 @@ private:
     bool envReady_ = false;
     bool taskResolved_ = false;
     EulerDomainStateRegistry accelStates_;
+    StringField expandedSolverNames_;
 };
 
 EndNameSpace

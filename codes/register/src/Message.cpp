@@ -20,99 +20,6 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-//#include "Message.h"
-//#include "TextFileParser.h"
-//
-//BeginNameSpace( ONEFLOW )
-//std::map< std::string, int > * MessageMap::nameMap = 0;
-//std::map< int, std::string > * MessageMap::idMap = 0;
-//
-//MessageMap::MessageMap()
-//{
-//}
-//
-//MessageMap::~MessageMap()
-//{
-//}
-//
-//void MessageMap::Init()
-//{
-//    if ( MessageMap::nameMap ) return;
-//    MessageMap::nameMap = new std::map< std::string, int >();
-//    MessageMap::idMap = new std::map< int, std::string >();
-//}
-//
-//void MessageMap::Free()
-//{
-//    delete MessageMap::nameMap;
-//    delete MessageMap::idMap;
-//    MessageMap::nameMap = 0;
-//    MessageMap::idMap = 0;
-//}
-//
-//void MessageMap::Register( const std::string & msgName )
-//{
-//    std::map< std::string, int >::iterator iter = MessageMap::nameMap->find( msgName );
-//    if ( iter == MessageMap::nameMap->end() )
-//    {
-//        int msgId = MessageMap::nameMap->size();
-//        ( * MessageMap::nameMap )[ msgName ] = msgId;
-//        ( * MessageMap::idMap   )[ msgId   ] = msgName;
-//    }
-//}
-//
-//void MessageMap::Unregister( const std::string & msgName )
-//{
-//    MessageMap::nameMap->erase( msgName );
-//}
-//
-//int MessageMap::GetMsgId( const std::string & msgName )
-//{
-//    std::map< std::string, int >::iterator iter = MessageMap::nameMap->find( msgName );
-//    if ( iter == MessageMap::nameMap->end() )
-//    {
-//        return -1;
-//    }
-//
-//    int actionIndex = iter->second;
-//    return actionIndex;
-//}
-//
-//std::string MessageMap::GetMsgName( int msgId )
-//{
-//    std::map< int, std::string >::iterator iter = MessageMap::idMap->find( msgId );
-//    if ( iter == MessageMap::idMap->end() )
-//    {
-//        return "";
-//    }
-//
-//    return iter->second;
-//}
-//
-//void MessageMap::ReadFile( const std::string & fileName )
-//{
-//    std::string word;
-//
-//    //\t is the tab key
-//    std::string separator = " =\r\n\t#$,;\"";
-//
-//    TextFileParser textFileParser;
-//    textFileParser.OpenFile( fileName, std::ios_base::in );
-//    textFileParser.SetDefaultSeparator( separator );
-//
-//    while ( ! textFileParser.ReachTheEndOfFile() )
-//    {
-//        textFileParser.ReadNextNonEmptyLine();
-//        std::string msgName = textFileParser.ReadNextWord();
-//        MessageMap::Register( msgName );
-//    }
-//
-//    textFileParser.CloseFile();
-//}
-//
-//EndNameSpace
-
-
 #include "Message.h"
 #include "TextFileParser.h"
 
@@ -157,11 +64,12 @@ int MessageMapImp::GetMsgId( const std::string & msgName ) const
     return iter->second;
 }
 
-std::string MessageMapImp::GetMsgName( int msgId ) const
+const std::string & MessageMapImp::GetMsgName( int msgId ) const
 {
+    static const std::string empty;
     if ( msgId < 0 || msgId >= static_cast< int >( this->idToName.size() ) )
     {
-        return "";
+        return empty;
     }
     return this->idToName[ msgId ];
 }
@@ -198,6 +106,7 @@ void MessageMapImp::Clear()
 {
     this->nameToId.clear();
     this->idToName.clear();
+    ++ this->epoch_;
 }
 
 MessageMapImp & MessageMap::GetImp()
@@ -224,14 +133,24 @@ int MessageMap::GetMsgId( const std::string & msgName )
     return MessageMap::GetImp().GetMsgId( msgName );
 }
 
-std::string MessageMap::GetMsgName( int msgId )
+const std::string & MessageMap::GetMsgName( int msgId )
 {
     return MessageMap::GetImp().GetMsgName( msgId );
+}
+
+int MessageMap::Epoch()
+{
+    return MessageMap::GetImp().Epoch();
 }
 
 void MessageMap::Register( const std::string & msgName )
 {
     MessageMap::GetImp().Register( msgName );
+}
+
+bool MessageMap::Contains( const std::string & msgName )
+{
+    return MessageMap::GetMsgId( msgName ) >= 0;
 }
 
 void MessageMap::ReadFile( const std::string & fileName )

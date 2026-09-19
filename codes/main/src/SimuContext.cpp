@@ -94,4 +94,23 @@ EulerDomainState& SimuContext::RestartAccelState(
         accelStates_, backend, problem, key, field );
 }
 
+void SimuContext::SetExpandedSolverNames( const StringField& names )
+{
+    expandedSolverNames_ = names;
+}
+
+void SimuContext::ClearExpandedSolverNames()
+{
+    expandedSolverNames_.clear();
+}
+
+void SimuContext::EnsureExpandedSolverNames( const StringField& names )
+{
+    if ( !expandedSolverNames_.empty() )
+    {
+        return;
+    }
+    expandedSolverNames_ = names;
+}
+
 EndNameSpace
