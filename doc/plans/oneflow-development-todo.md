@@ -13,11 +13,11 @@
 
 | 项 | 状态 |
 |---|---|
-| `origin/dev` / 本地 `dev` | `901430ce`，0/0；含 `upstream/master` 全部内容（相对 upstream ahead 100 / behind 0） |
-| PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型 |
+| `origin/dev` / 本地 `dev` | 已推送对齐（0/0）；含 `upstream/master` 全部内容（相对 upstream ahead 102 / behind 0）。**注意**：本文档自身的提交会让 dev 再 +1，精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
+| PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端，规则 1 的五算例与 HIP contract 均不适用 |
 | PR #160 `pr/euler-weno5-unified` | OPEN / MERGEABLE；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 
-两个 PR 都**已通过规则 1 的两个门禁**（昆山实跑，见 §1），都在 `upstream/master` 基础上从 topic 分支开出，未包含 fork-only 文档。
+两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
 **唯一阻塞项**：3D m6 50-step 在 CPU/HIP 共用配置下约第 20 步共同发散（负压/Inf/NaN）。这与 HIP 无关，是 CPU legacy 也复现的物理稳定性问题；未解决前不能宣称 F 阶段完成，也不能发布任何 DCU 加速结论。
 
@@ -28,6 +28,29 @@
 3. 50-step 绿了之后，才把被排除的 F 阶段（`d5005ad6`…`f2b3d43c`）按同样方式整理成后续 PR。
 
 **注意**：dev 上仍留有大量未上游内容（F 阶段 DCU 主 solver 那批），它们**未收口、不要提前提 PR**；提 PR 的三个坑见 §协作约定。
+
+**如何复现本轮门禁**（`$W` = 集群工作区根，具体绝对路径在集群侧 `README.md`）
+
+```bash
+# 0) 把要验证的 revision 打包上传（必须是 git archive，不是 clone）
+R=<短sha>; git archive --format=tar.gz --prefix="OneFLOW-$R/" <ref> -o /tmp/OneFLOW-$R.tar.gz
+scp /tmp/OneFLOW-$R.tar.gz kseshell:/tmp/
+ssh kseshell "rm -rf \$W/src/OneFLOW-$R; tar -xzf /tmp/OneFLOW-$R.tar.gz -C \$W/src"
+
+# 1) T1 cpu-regression（kshcnormal，16 CPU）——脚本按 $W/scripts/ 下的参数化版本
+ssh kseshell "sbatch --export=ALL,REV=$R \$W/scripts/oneflow-cpu-regression-param.slurm"
+
+# 2) T2 dcu-single（kshdnormal，dcu:1）——必须用**带 amd_comgr_DIR 修复**的脚本
+ssh kseshell "sbatch --time=01:00:00 \
+  --export=ALL,ONEFLOW_EULER_SOURCE_DIR=\$W/src/OneFLOW-$R/ports/kunshan/oneflow_1d_hip,\
+ONEFLOW_BUILD_DIR=\$W/builds/port-dcu-$R,\
+ONEFLOW_ARTIFACT_DIR=\$W/runs/<date>/dcu-single-$R/artifacts \
+  \$W/src/OneFLOW-<含修复的分支>/ci/kunshan/euler-dcu-gtest.slurm"
+```
+
+- 产物落在 `runs/<date>/<suite>-<rev>/artifacts/`：`result.txt`、`exitcodes.txt`、`normal.log`、`strict.log`、`gtest.log`、`ctest.log`。
+- 判据：T1 为 `CPU_REGRESSION_STANDARD_PASS` 且两档各 5/5；T2 为 `config=0 build=0 test=0` 且 GoogleTest/CTest 各 9/9。
+- **坑**：upstream 旧版 `euler-dcu-gtest.slurm` 在 `module purge` 之前解析 cmake 且不传 `-Damd_comgr_DIR`，在集群上必失败；本轮用的是 dev 上已修好的副本，PR #160 已把同一修复带入。此外 cmake 模块在部分节点加载不稳定，必要时显式指定 cmake 3.25 路径。
 
 ## 本轮新增证据（2026-09-19）
 
@@ -170,7 +193,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `upstream/master` = `fa3f3b06`（三端 0/0；已合入 dev） |
 | 进行中的 PR | **#159**（`pr/agents-branch-model`）：`AGENTS.md` 的 fork 无关分支模型，1 文件 +23/−0。**#160**（`pr/euler-weno5-unified`）：accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract，64 文件 +4771/−272。两者均 OPEN / MERGEABLE、CI 4/4 绿，都基于 `upstream/master` 分叉且不含 fork-only 文档 |
-| 分支 | 本地 `dev` = `origin/dev` = `901430ce`（0/0）；含 `upstream/master` `fa3f3b06` 全部内容（ahead 100 / behind 0）。两个 topic 分支 `pr/agents-branch-model`（`b4c041c6`）与 `pr/euler-weno5-unified`（`ef36b928`）已推送到 origin。**仅 50-step 稳定性仍是 blocker** |
+| 分支 | 本地 `dev` = `origin/dev`（0/0，精确 commit 见 §交接摘要的说明）；含 `upstream/master` `fa3f3b06` 全部内容（ahead 102 / behind 0）。两个 topic 分支 `pr/agents-branch-model`（`b4c041c6`）与 `pr/euler-weno5-unified`（`ef36b928`）已推送到 origin。**仅 50-step 稳定性仍是 blocker** |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
