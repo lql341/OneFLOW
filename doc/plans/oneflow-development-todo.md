@@ -1,13 +1,46 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-16（本轮收口：3D m6 公平 8 CPU ranks vs 1 DCU timing 与 MPI rank-local state-sync 修复完成；50-step 稳定性和 fresh CPU 五 case 门禁仍是 blocker）
+> 最后更新：2026-09-19（本轮收口：`upstream/master` 合入 `dev`、fresh CPU 五算例解除阻塞并转绿、两个 upstream PR 开出并全部通过昆山门禁与 CI；50-step 稳定性仍是唯一 blocker）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
 > 配套入口：[`AGENTS.md`](../../../AGENTS.md)（规则与文档地图）、
 > [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)（集群流程与标准套件）。
 
-## 本轮新增证据（2026-09-16）
+## 交接摘要（先读这一段）
+
+**现在在飞什么**
+
+| 项 | 状态 |
+|---|---|
+| `origin/dev` / 本地 `dev` | `901430ce`，0/0；含 `upstream/master` 全部内容（相对 upstream ahead 100 / behind 0） |
+| PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型 |
+| PR #160 `pr/euler-weno5-unified` | OPEN / MERGEABLE；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
+
+两个 PR 都**已通过规则 1 的两个门禁**（昆山实跑，见 §1），都在 `upstream/master` 基础上从 topic 分支开出，未包含 fork-only 文档。
+
+**唯一阻塞项**：3D m6 50-step 在 CPU/HIP 共用配置下约第 20 步共同发散（负压/Inf/NaN）。这与 HIP 无关，是 CPU legacy 也复现的物理稳定性问题；未解决前不能宣称 F 阶段完成，也不能发布任何 DCU 加速结论。
+
+**下一步（按优先级）**
+
+1. 跟进 #159 / #160 的 review 反馈；若上游要求改动，在对应 topic 分支上改并重跑门禁。
+2. 收口 50-step 稳定性（§2 的 F2.4b）：先让 CPU legacy 稳定，再要求 CPU batch / HIP batch 逐步对齐。
+3. 50-step 绿了之后，才把被排除的 F 阶段（`d5005ad6`…`f2b3d43c`）按同样方式整理成后续 PR。
+
+**注意**：dev 上仍留有大量未上游内容（F 阶段 DCU 主 solver 那批），它们**未收口、不要提前提 PR**；提 PR 的三个坑见 §协作约定。
+
+## 本轮新增证据（2026-09-19）
+
+- **上游同步**：把 `upstream/master` `fa3f3b06`（PR #151–#158）merge 进 `dev`，解决 upstream `FieldPipeline` 重构与 dev `SimuContext` 透传的冲突；`master` = `origin/master` = `upstream/master` = `fa3f3b06`。
+- **fresh CPU 五算例解除阻塞**：2026-09-19 在 `kshcnormal` 上按标准 `cpu-regression` 跑 `bc6d395b`，normal `1e-8` 5/5（最大绝对残差 `4.870783081880291e-11`）、strict `1e-15` 5/5（残差 `0.0`）；合并前基线 `730e9ae4` 复跑数值完全相同。recap 记录的 P0「被 continuation fixture/runner 阻塞」由此解除——它是 `f2b3d43c` 的 MPI rank-local state-sync 修复带来的，不是本次合并的功劳。
+- **PR #160 的门禁是在 PR 分支自身上跑的**（不是拿 dev 的结果顶替）：T1 `cpu-regression` normal 5/5 + strict 5/5；T2 `dcu-single`（`kshdnormal` + `dcu:1`）GoogleTest 9/9 + CTest 9/9，revision `ef36b928`。
+- **cherry-pick 的代价被实测**：拆 PR 时发现 WENO5 单独 cherry-pick 到 upstream 后 **HIP 编译失败**（`hip/hip_runtime.h` 被包在 `namespace oneflow_1d` 内），且依赖 Phase 3 的 `DeviceBuffer` 重构；`hardware;hip;dcu` 标签由 dev 独有的 `cmake/OneFLOWEulerContract.cmake` 提供，缺它则标准 runner 筛不到测试。结论：**必须对 PR 分支本身跑门禁**，不能假设 dev 绿就等于 PR 绿。
+- **文档一致性**：`AGENTS.md` 补 fork 无关的分支模型；`CLAUDE.md` 删除；两份 DCU 交接文档的「尚未推送」表述已按事实校正。
+
+## 上一轮证据（2026-09-16，保留）
+
+> 以下是 2026-09-16 的快照。其中「fresh CPU 五 case 被 continuation fixture 阻塞」
+> 已于 2026-09-19 解除（见上节）；其余结论（50-step 共同发散、无有意义加速）仍然成立。
 
 - 标准 runner：`ci/kunshan/f3-main-solver-benchmark.slurm`；3D stage runner 使用流式 verifier，避免多步 trace 一次性读入造成 OOM。
 - 精度门禁：3-step、3-stage RK、36 条 trace 全通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，最大 scaled error `1.992850329202156e-13`。
@@ -52,7 +85,7 @@ rebase。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
 - **临时分支**：仅在需要向上游提 PR 时创建，从 `upstream/master` 分叉，
   cherry-pick `dev` 上的功能 commit（**排除文档 commit**），提完后删除。
 
-### 提 PR 时的两个坑
+### 提 PR 时的三个坑
 
 1. **`AGENTS.md` 不能整体覆盖。** dev 上的文档地图指向
    `doc/handoff/oneflow-project-handoff-20260903.md`，upstream 上指向
@@ -64,6 +97,12 @@ rebase。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
    dev 自身，一份随 `origin/master` 合入），例如 Phase 3、FluxBackend 多方程
    Rusanov、FluxBackend↔EulerBackend 桥接测试、WENO5/EulerMethod 都有重名提交。
    按标题挑会挑到错的那个。
+3. **PR 分支必须独立跑门禁。** dev 绿 **不等于** PR 分支绿。2026-09-19 实测：
+   单独 cherry-pick WENO5 到 `upstream/master` 后 HIP 编译失败（`hip/hip_runtime.h`
+   被包在 `namespace oneflow_1d` 内），必须连同 Phase 3 与 `eee02bd6` 一起带；
+   而 dev 的 `tests/euler/CMakeLists.txt` 还会引用未导入阶段的
+   `EulerInvFluxCapability`。所以每个 topic 分支都要在昆山重跑 T1 `cpu-regression`
+   +（涉及 DCU/HIP 时）T2 `dcu-single`，并把结果写进 PR 描述。
 
 ### 不主动提 PR
 
@@ -115,7 +154,7 @@ cat doc/plans/oneflow-development-todo.md
 git show dev:doc/plans/oneflow-development-todo.md
 ```
 
-读完 §1（现状）+ §2（待办）后选任务开工；**收工前更新本文档**。本文档只存在
+读完 **开头的「交接摘要」** + §1（现状）+ §2（待办）后选任务开工；**收工前更新本文档**。本文档只存在
 于 `dev` 分支（本地 + fork），master/upstream 上都没有。
 
 ## 0. 怎么用这份文档
@@ -130,14 +169,14 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 项目 | 状态 |
 |---|---|
 | 主分支 | `master` = `origin/master` = `upstream/master` = `fa3f3b06`（三端 0/0；已合入 dev） |
-| 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `origin/dev` = `e584bcbb`；`f2b3d43c` 已推送，且已把 `upstream/master` `fa3f3b06` 合入 `dev`（dev 相对 upstream ahead 96 / behind 0）；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐；fresh CPU 五 case 已于 2026-09-19 在 `bc6d395b` 上跑通（normal 5/5、strict 5/5，与合并前基线一致），**仅 50-step 稳定性仍是 blocker** |
+| 进行中的 PR | **#159**（`pr/agents-branch-model`）：`AGENTS.md` 的 fork 无关分支模型，1 文件 +23/−0。**#160**（`pr/euler-weno5-unified`）：accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract，64 文件 +4771/−272。两者均 OPEN / MERGEABLE、CI 4/4 绿，都基于 `upstream/master` 分叉且不含 fork-only 文档 |
+| 分支 | 本地 `dev` = `origin/dev` = `901430ce`（0/0）；含 `upstream/master` `fa3f3b06` 全部内容（ahead 100 / behind 0）。两个 topic 分支 `pr/agents-branch-model`（`b4c041c6`）与 `pr/euler-weno5-unified`（`ef36b928`）已推送到 origin。**仅 50-step 稳定性仍是 blocker** |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | E1–E6、F1、F2.1–F2.4 的 1-step/RK 与 3-step 门禁已完成；标准 root runner 与单卡 3-step benchmark 已完成，但 50-step 在 CPU/HIP 共用配置下共同发散，当前未观察到端到端 DCU 加速。 |
-| 最新验证 | `122246208`：昆山 3D m6、896256 faces、3-stage RK、3 steps，36 条三路 trace 记录通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，scheduler/workload `COMPLETED/0:0`。同一 `steps=3, warmup=1, repeats=3` basis 下，legacy `24775.415 ms`，CPU batch `25520.782 ms`，HIP/DCU batch `25224.514 ms`，加速比 `0.982196x`；50-step 仍共同出现负压/Inf/NaN。 |
+| 当前进度 | E1–E6（CPU vertical slice）、Phase 1–3（accel substrate）已完成并**已进入 PR #160**；F1、F2.1–F2.4a 的 1-step/RK 与 3-step 门禁已完成，但 F 阶段整体未收口：50-step 在 CPU/HIP 共用配置下共同发散，当前未观察到端到端 DCU 加速，因此 F 阶段代码**未包含在 #160 中**。 |
+| 最新验证 | 2026-09-19，昆山三组：① `cpu-regression`（`kshcnormal`）on `bc6d395b`：normal `1e-8` 5/5（最大绝对残差 `4.870783081880291e-11`）、strict `1e-15` 5/5（`0.0`），且与合并前基线 `730e9ae4` 数值完全相同；② 同一套件 on PR #160 分支 `ef36b928`：normal 5/5 + strict 5/5；③ `dcu-single`（`kshdnormal` + `dcu:1`，DTK 26.04 / `gfx906`）on `ef36b928`：GoogleTest 9/9、CTest 9/9。50-step 仍共同出现负压/Inf/NaN。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；
 CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
@@ -180,6 +219,12 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 - 行业信号：AI+CFD 交叉领域在加速，GPU 求解器基础设施具有战略价值
 
 ## 2. 待办事项
+
+### P0 — upstream PR 跟进（2026-09-19 起）
+
+- [ ] **PR #159**（`pr/agents-branch-model`）：跟进 review；如需改动，在该 topic 分支上改并重跑 CI。
+- [ ] **PR #160**（`pr/euler-weno5-unified`）：跟进 review；**任何改动都必须在该 PR 分支上重跑 T1 `cpu-regression` + T2 `dcu-single`**——本轮实测过「dev 绿 ≠ PR 分支绿」（单独 cherry-pick WENO5 会导致 HIP 编译失败），不要拿 dev 的结果顶替。
+- [ ] 两个 PR 合并或关闭后删除对应的 topic 分支（本地 + origin）。
 
 ### P0 — dev 融合基线
 
@@ -259,7 +304,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
     - [x] F3.1：标准 root HIP runner 已沉淀；支持 trace step 参数化、精度门禁后 benchmark、同 basis timing 与非空 HIP test 检查。
     - [x] F3.2：既有 CPU queue regression evidence 与 DCU 构建/contract/adapter one-call/小 case/3-step trace/标准 runner/单卡 timing 已完成；50-step、MPI/多卡与 GPU-resident 性能不提前标记。
-    - [ ] F3.3：修复 continuation fixture/runner 的 fresh output 生成问题，再重新执行本轮修改的 CPU normal `1e-8` + strict `1e-15` 五 case 门禁。
+    - [x] F3.3：fresh CPU 五 case 门禁已于 2026-09-19 在昆山转绿（`bc6d395b`：normal `1e-8` 5/5、strict `1e-15` 5/5，与合并前基线 `730e9ae4` 数值完全一致）。原先的 continuation fixture/runner 阻塞由 `f2b3d43c` 的 MPI rank-local state-sync 修复解决，不是本轮合并带来的。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
@@ -281,8 +326,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 说明：清理临时分支和工作区，并把验证后的协作流程沉淀回技能与文档。
 
 
-- [ ] 本地分支清理：`docs/kunshan-20260913-measurements`（内容已并入 #149）；
-      `feat/weno5-backend-unification`（内容已合入 dev，可删除）。
+- [ ] 本地分支清理：`pr/agents-branch-model`、`pr/euler-weno5-unified` 在对应 PR 合并/关闭后删除（本地 + origin）；`fix/contract-test-cmake-path` 已于 2026-09-19 删除（内容早经 PR #149 合入 master）。dev 上已无其他遗留分支。
 - [ ] 昆山 `<workspace>/work/`、`tmp/` 定期清理（均可重建）。
 - [ ] `oneflow-dev` 技能更新流程：改技能仓库 → `git push` → 各环境 `git pull`。
 
@@ -306,6 +350,11 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 5. **已知陷阱**：工具链（GCC 版本下限、`OMPI_SKIP_MPICXX`、CMake 依赖传递）、
    测试框架（空测试假通过、后端前缀）、节点故障——细节见 `ci/kunshan/README.md`
    和 `oneflow-dev` 技能的 `references/pitfalls.md`。
+6. **提 PR 的边界**：dev 上同时存在**共享文件**（`AGENTS.md`、`ci/`、`cmake/`、
+   `ports/`、`tests/`、`codes/`——上游也有）与 **fork-only 文档**
+   （`doc/plans/oneflow-development-todo.md`、`doc/handoff/` 的工作记录——永不进上游）。
+   两者必须**分开 commit**，否则将来无法单独 cherry-pick 共享文件。动手前用
+   `git cat-file -e upstream/master:<path>` 判断归属。详见 §协作约定。
 
 ## 4. 每轮任务的收尾流程（Definition of Done）
 
@@ -319,6 +368,11 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-19 | 开出 upstream **PR #160**（`pr/euler-weno5-unified`）：accelerator substrate（Phase 1–3 + E1–E6 CPU vertical slice，含主 solver gated CPU batch 路径、mutable `SimuContext` 透传、MRField 生命周期绑定、RungeKutta capability guard）与 1D Euler port 的 WENO5 / AccelBackend 设备管理 / HIP contract 注册；**门禁在 PR 分支自身上跑**：T1 `cpu-regression` normal 5/5 + strict 5/5，T2 `dcu-single` GoogleTest 9/9 + CTest 9/9，CI 4/4 绿 | revision `ef36b928`；64 文件 +4771/−272；F 阶段（50-step 未收口、无端到端加速）刻意排除在外，并在 PR 描述中写明边界 |
+| 2026-09-19 | 开出 upstream **PR #159**（`pr/agents-branch-model`）：`AGENTS.md` 增加 fork 无关的分支模型（baseline / working / topic 三类分支，`dev` 引用带存在性条件，不引用 fork-only 文件）；CI 4/4 绿 | revision `b4c041c6`；1 文件 +23/−0；共享文件单独成 PR，不与 dev 的 fork-only 文档混在一起 |
+| 2026-09-19 | 拆 PR 时实测出三个必须记住的坑：① 单独 cherry-pick WENO5 到 upstream 后 **HIP 编译失败**（`hip/hip_runtime.h` 被包在 `namespace oneflow_1d` 内），必须同时带上 Phase 3 与 `eee02bd6`；② `hardware;hip;dcu` CTest 标签只存在于 dev 独有的 `cmake/OneFLOWEulerContract.cmake`，缺它标准 runner（`ctest -L hardware -R HIP`）筛不到测试；③ dev 的 `tests/euler/CMakeLists.txt` 引用了未导入阶段的 `EulerInvFluxCapability`。结论：**PR 分支必须独立跑门禁，不能用 dev 的结果顶替** | 已同步记入本文档 §协作约定；两次失败与修复过程见 PR #160 的提交 `67dc7fae`、`ef36b928` |
+| 2026-09-19 | 文档一致性收口：`AGENTS.md` 补分支模型（并改为 fork 无关措辞）、删除 `CLAUDE.md`、校正两份 DCU 交接文档的「尚未推送」表述；共享文件与 fork-only 文档**分开提交**，便于将来增量 cherry-pick | commits `ac650a54`（AGENTS.md）、`c608de63`（删 CLAUDE.md）、`0e48c8e3`（fork-only 状态文档） |
+| 2026-09-19 | 删除本地与 origin 的 `fix/contract-test-cmake-path`（内容早经 PR #149 合入 master）；`origin/gh-pages` 与 `upstream/gh-pages` 强制对齐 | 分支删除与 force-push 均已核对为 0/0 |
 | 2026-09-19 | 昆山 `cpu-regression` 复验（标准 T1，`kshcnormal` 16 CPU）：`bc6d395b` 五算例 normal `1e-8` 5/5（最大绝对残差 `4.870783081880291e-11`）、strict `1e-15` 5/5（最大绝对残差 `0.0`）；合并前基线 `730e9ae4` 复跑数值完全相同，确认该合并无数值影响；recap 记录的 P0（fresh CPU 五 case 被 fixture 阻塞）由此解除 | `cpu-regression`；50-step 稳定性（P1）与真实加速（P2）仍未收口 |
 | 2026-09-19 | 把 `upstream/master` `fa3f3b06`（PR #151–#158）merge 进 `dev`：解决 upstream `FieldPipeline`/`FieldSimuRunPipeline` 重构与 dev `SimuContext` 透传的冲突——accel 状态同步并入 pipeline（INIT_FLOWFIELD 之后、Run 之前），`SolveFieldTask` 回到单一 pipeline 入口，`kInitFlowFieldTaskName` 改用集中定义的 `CmxTaskNames.h`；同步把分支模型写进 `AGENTS.md` 并校正状态文档 | commit `e584bcbb`；`master`=`origin/master`=`upstream/master`=`fa3f3b06`，`dev` 相对 upstream ahead 96 / behind 0；**本机仅完成 `g++ -fsyntax-only` 语法检查，完整构建与 fresh CPU 五算例仍待昆山验证** |
 | 2026-09-16 | F2.4 3D m6 三阶段 1-step：泛化 stage runner，验证 legacy CPU、CPU batch、HIP batch 逐 stage trace；并尝试 50-step 稳定性门禁 | commits `a6ceae06`, `93955122`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：896256 faces，3-stage 1-step `STAGE_TRACE_PASS`，HIP 最大差 `1.706e-13`，finite 且正状态；50-step 在 CPU/HIP 共用配置下约第 20 步共同发散，scheduler/workload 正确传播失败；不归因于 HIP 分歧 |
