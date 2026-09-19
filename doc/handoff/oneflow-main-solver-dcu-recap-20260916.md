@@ -110,3 +110,19 @@
 - [ ] 完整粘性 NS/HIP。
 - [ ] MPI、多卡、GPU-resident 性能优化。
 - [ ] 有意义且可复现的端到端加速。
+
+## 补充：2026-09-19 复验（P0 已解除）
+
+上文的 P0（fresh CPU 五 case 被 continuation fixture/runner 阻塞）在
+`f2b3d43c` 的 MPI rank-local state sync 修复后已经解除，2026-09-19 在
+`kshcnormal` 上按标准 `cpu-regression` 套件复验：
+
+| 档位 | 容差 | 结果 | 最大绝对残差 |
+|---|---|---|---|
+| normal | `1e-8` | 5/5 通过 | `4.870783081880291e-11` |
+| strict | `1e-15` | 5/5 通过 | `0.0` |
+
+被验版本 `bc6d395b`（含 `upstream/master` `fa3f3b06` 的合并）；合并前基线
+`730e9ae4` 复跑得到**完全相同**的数值，证明该合并未引入数值变化。
+
+仍未收口的只有 P1（3D m6 50-step 稳定性）与 P2（真实加速）。

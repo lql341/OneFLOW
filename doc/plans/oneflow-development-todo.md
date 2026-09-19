@@ -131,7 +131,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 |---|---|
 | 主分支 | `master` = `origin/master` = `upstream/master` = `fa3f3b06`（三端 0/0；已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` = `origin/dev` = `e584bcbb`；`f2b3d43c` 已推送，且已把 `upstream/master` `fa3f3b06` 合入 `dev`（dev 相对 upstream ahead 96 / behind 0）；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐，50-step 和 fresh CPU 五 case 门禁仍是 blocker |
+| 分支 | 本地 `dev` = `origin/dev` = `e584bcbb`；`f2b3d43c` 已推送，且已把 `upstream/master` `fa3f3b06` 合入 `dev`（dev 相对 upstream ahead 96 / behind 0）；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐；fresh CPU 五 case 已于 2026-09-19 在 `bc6d395b` 上跑通（normal 5/5、strict 5/5，与合并前基线一致），**仅 50-step 稳定性仍是 blocker** |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
@@ -319,6 +319,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-19 | 昆山 `cpu-regression` 复验（标准 T1，`kshcnormal` 16 CPU）：`bc6d395b` 五算例 normal `1e-8` 5/5（最大绝对残差 `4.870783081880291e-11`）、strict `1e-15` 5/5（最大绝对残差 `0.0`）；合并前基线 `730e9ae4` 复跑数值完全相同，确认该合并无数值影响；recap 记录的 P0（fresh CPU 五 case 被 fixture 阻塞）由此解除 | `cpu-regression`；50-step 稳定性（P1）与真实加速（P2）仍未收口 |
 | 2026-09-19 | 把 `upstream/master` `fa3f3b06`（PR #151–#158）merge 进 `dev`：解决 upstream `FieldPipeline`/`FieldSimuRunPipeline` 重构与 dev `SimuContext` 透传的冲突——accel 状态同步并入 pipeline（INIT_FLOWFIELD 之后、Run 之前），`SolveFieldTask` 回到单一 pipeline 入口，`kInitFlowFieldTaskName` 改用集中定义的 `CmxTaskNames.h`；同步把分支模型写进 `AGENTS.md` 并校正状态文档 | commit `e584bcbb`；`master`=`origin/master`=`upstream/master`=`fa3f3b06`，`dev` 相对 upstream ahead 96 / behind 0；**本机仅完成 `g++ -fsyntax-only` 语法检查，完整构建与 fresh CPU 五算例仍待昆山验证** |
 | 2026-09-16 | F2.4 3D m6 三阶段 1-step：泛化 stage runner，验证 legacy CPU、CPU batch、HIP batch 逐 stage trace；并尝试 50-step 稳定性门禁 | commits `a6ceae06`, `93955122`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：896256 faces，3-stage 1-step `STAGE_TRACE_PASS`，HIP 最大差 `1.706e-13`，finite 且正状态；50-step 在 CPU/HIP 共用配置下约第 20 步共同发散，scheduler/workload 正确传播失败；不归因于 HIP 分歧 |
 | 2026-09-15 | F2.3 小 case 物理/离散语义：HIP smoke 增加非 boundary-first mask、内部面守恒和 ALE/face-area 解析门禁；stage trace 增加 connectivity/geometry metadata，并从生产 face flux 重建 residual | commits `9fbbe6a7`, `fd8d9eca`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：三路 residual 重建误差 `0`、守恒闭合误差 `2.804e-13`；HIP boundary `4.441e-16`、contract conservation `2.753e-14`、ALE/area `1.110e-16`；root HIP 9/9、CTest 10/10，本地根 CTest 210/210；scheduler/workload 均成功 |
