@@ -52,6 +52,19 @@ rebase。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
 - **临时分支**：仅在需要向上游提 PR 时创建，从 `upstream/master` 分叉，
   cherry-pick `dev` 上的功能 commit（**排除文档 commit**），提完后删除。
 
+### 提 PR 时的两个坑
+
+1. **`AGENTS.md` 不能整体覆盖。** dev 上的文档地图指向
+   `doc/handoff/oneflow-project-handoff-20260903.md`，upstream 上指向
+   `doc/reports/architecture/oneflow-project-handoff-20260903.md`——两边各自正确
+   （dev 已删除 `doc/reports/architecture/`，upstream 仍保留）。所以 `AGENTS.md`
+   只能**增量 cherry-pick**；整体覆盖会把上游那条链接改坏，且 cherry-pick 时
+   会因上下文含该行而冲突。
+2. **cherry-pick 按 SHA，不要按标题。** dev 历史里同一改动存在两份（一份来自
+   dev 自身，一份随 `origin/master` 合入），例如 Phase 3、FluxBackend 多方程
+   Rusanov、FluxBackend↔EulerBackend 桥接测试、WENO5/EulerMethod 都有重名提交。
+   按标题挑会挑到错的那个。
+
 ### 不主动提 PR
 
 - 只有收到“可以提 PR”的指示后才向 upstream 提交；在此之前所有成果留在
