@@ -2,8 +2,8 @@
 
 **日期：** 2026-09-16
 **工作分支：** `dev`
-**已推送基线：** `9cc92500`（`origin/dev`）
-**本地待推送提交：** `f2b3d43c`（MPI rank-local state sync 修复、公平 benchmark runner 与测量记录）
+**已推送基线：** `9cc92500`（`origin/dev`；本文写就后已推进到 `e584bcbb`）
+**本地待推送提交：** `f2b3d43c`（MPI rank-local state sync 修复、公平 benchmark runner 与测量记录；已随 `e584bcbb` 推送）
 **F1 checkpoint：** `d5005ad6`（5 个源码/测试文件，已推送）
 **F1 guard：** `ca14118c`（capability/fail-fast/CMake 联动，已推送）
 **F2.1 checkpoint：** `8e08c376`（主 solver adapter one-call CPU/HIP oracle，已推送）

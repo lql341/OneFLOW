@@ -32,9 +32,12 @@ git commit -am "Update development todo: <一句话摘要>"
 git push origin dev
 ```
 
-基线维护：当 upstream `master` 前进（例如相关 PR 合并）后，把 `dev`
-rebase 到新的 `upstream/master`，让它只包含本文档 + 开发中的功能，
-不携带已合并的历史。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
+基线维护：当 upstream `master` 前进（例如相关 PR 合并）后，把
+`upstream/master` **merge** 进 `dev`（`git merge upstream/master`）。
+`dev` 已推送到 `origin/dev` 且是日常分支，**不要用 rebase**：那会改写已公开的
+提交历史，与「推送到 `origin/dev` 即完成云端备份」矛盾。既有的 `6d30b783`、
+`e584bcbb` 都是 merge commit。只有确认改动尚未推送到 `origin/dev` 时才考虑
+rebase。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
 功能 commit（排除文档 commit）。
 
 智能体配合：`oneflow-dev` 技能的 `references/workflow.md` 记录了该约定。
@@ -113,12 +116,12 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 项目 | 状态 |
 |---|---|
-| 主分支 | `master` = `origin/master` = `90749492`；`upstream/master` = `a6c81105`（已合入 dev） |
+| 主分支 | `master` = `origin/master` = `upstream/master` = `fa3f3b06`（三端 0/0；已合入 dev） |
 | 进行中的 PR | 无；功能继续留在 fork `dev`，未授权不主动提 PR |
-| 分支 | 本地 `dev` 含 `f2b3d43c`，领先 `origin/dev` 的 `9cc92500` 1 个提交；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐，50-step 和 fresh CPU 五 case 门禁仍是 blocker |
+| 分支 | 本地 `dev` = `origin/dev` = `e584bcbb`；`f2b3d43c` 已推送，且已把 `upstream/master` `fa3f3b06` 合入 `dev`（dev 相对 upstream ahead 96 / behind 0）；F2.4 3D m6 1-step/3-step 精度门禁与公平 timing 已补齐，50-step 和 fresh CPU 五 case 门禁仍是 blocker |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
-| 智能体入口 | 仓库 `AGENTS.md` + `CLAUDE.md`；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
+| 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
 | 当前进度 | E1–E6、F1、F2.1–F2.4 的 1-step/RK 与 3-step 门禁已完成；标准 root runner 与单卡 3-step benchmark 已完成，但 50-step 在 CPU/HIP 共用配置下共同发散，当前未观察到端到端 DCU 加速。 |
 | 最新验证 | `122246208`：昆山 3D m6、896256 faces、3-stage RK、3 steps，36 条三路 trace 记录通过；HIP 对 legacy 最大绝对差 `2.8399504969911504e-13`，scheduler/workload `COMPLETED/0:0`。同一 `steps=3, warmup=1, repeats=3` basis 下，legacy `24775.415 ms`，CPU batch `25520.782 ms`，HIP/DCU batch `25224.514 ms`，加速比 `0.982196x`；50-step 仍共同出现负压/Inf/NaN。 |
@@ -303,6 +306,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-19 | 把 `upstream/master` `fa3f3b06`（PR #151–#158）merge 进 `dev`：解决 upstream `FieldPipeline`/`FieldSimuRunPipeline` 重构与 dev `SimuContext` 透传的冲突——accel 状态同步并入 pipeline（INIT_FLOWFIELD 之后、Run 之前），`SolveFieldTask` 回到单一 pipeline 入口，`kInitFlowFieldTaskName` 改用集中定义的 `CmxTaskNames.h`；同步把分支模型写进 `AGENTS.md` 并校正状态文档 | commit `e584bcbb`；`master`=`origin/master`=`upstream/master`=`fa3f3b06`，`dev` 相对 upstream ahead 96 / behind 0；**本机仅完成 `g++ -fsyntax-only` 语法检查，完整构建与 fresh CPU 五算例仍待昆山验证** |
 | 2026-09-16 | F2.4 3D m6 三阶段 1-step：泛化 stage runner，验证 legacy CPU、CPU batch、HIP batch 逐 stage trace；并尝试 50-step 稳定性门禁 | commits `a6ceae06`, `93955122`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：896256 faces，3-stage 1-step `STAGE_TRACE_PASS`，HIP 最大差 `1.706e-13`，finite 且正状态；50-step 在 CPU/HIP 共用配置下约第 20 步共同发散，scheduler/workload 正确传播失败；不归因于 HIP 分歧 |
 | 2026-09-15 | F2.3 小 case 物理/离散语义：HIP smoke 增加非 boundary-first mask、内部面守恒和 ALE/face-area 解析门禁；stage trace 增加 connectivity/geometry metadata，并从生产 face flux 重建 residual | commits `9fbbe6a7`, `fd8d9eca`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：三路 residual 重建误差 `0`、守恒闭合误差 `2.804e-13`；HIP boundary `4.441e-16`、contract conservation `2.753e-14`、ALE/area `1.110e-16`；root HIP 9/9、CTest 10/10，本地根 CTest 210/210；scheduler/workload 均成功 |
 | 2026-09-15 | F2.2 主 solver 小 case 1-step：新增 opt-in 多帧 face/inviscid-residual/state trace 与昆山三路 verifier；保持既有 E6 trace 兼容 | commits `156f94fc`, `2f597a04`；昆山 DTK 26.04 / `gfx906` / `dcu:1`：`plateuns2dslau2` 五方程 Lax-Friedrichs 1-step LU-SGS，HIP qf1/qf2 与 legacy 一致，invflux/residual 最大差 `1.4210854715202004e-14`，state 最大差 `6.514681130330882e-19`，finite 且正状态；root HIP 9/9、CTest 10/10；同 revision CPU 210/210、normal/strict 5/5、port 8/8；scheduler/workload 均成功 |

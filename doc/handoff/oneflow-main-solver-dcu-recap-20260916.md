@@ -2,8 +2,8 @@
 
 **日期：** 2026-09-16
 **分支：** `dev`
-**远端基线：** `origin/dev` 为 `9cc92500`
-**本地功能提交：** `f2b3d43c`，尚未推送
+**远端基线：** `origin/dev` 为 `e584bcbb`（本文写就时为 `9cc92500`）
+**本地功能提交：** `f2b3d43c`，已随 `e584bcbb` 推送（本文写就时尚未推送）
 
 ## 结论
 
@@ -73,7 +73,7 @@
 - F2 stage runner 增加 CPU/HIP 独立 MPI rank 参数。
 - F3 benchmark runner 改为申请 8 tasks × 1 CPU，并支持显式记录 CPU/HIP rank 数，
   从而可以真正执行 8 CPU ranks vs 1 DCU。
-- 代码和文档已在本地提交 `f2b3d43c`；当前 `origin/dev` 尚未包含该提交。
+- 代码和文档已在本地提交 `f2b3d43c`；当前 `origin/dev`（`e584bcbb`）已包含该提交，并已把 `upstream/master` `fa3f3b06` 合入 `dev`。
 
 ## 下一步 TODO
 
