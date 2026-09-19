@@ -9,6 +9,7 @@ License
 #pragma once
 
 #include "FluxBackend.h"
+#include "DeviceBuffer.h"
 
 namespace ONEFLOW
 {
@@ -25,6 +26,16 @@ public:
         const FaceFluxView & flux,
         const FaceConnectivityView & connectivity,
         ResidualView & residual ) override;
+
+private:
+    DeviceBuffer< Real > qLeft_;
+    DeviceBuffer< Real > qRight_;
+    DeviceBuffer< Real > xNormal_;
+    DeviceBuffer< Real > yNormal_;
+    DeviceBuffer< Real > zNormal_;
+    DeviceBuffer< Real > meshVelocityNormal_;
+    DeviceBuffer< Real > area_;
+    DeviceBuffer< Real > deviceFlux_;
 };
 
 }

@@ -278,6 +278,37 @@ __global__ void AddFaceFluxEulerKernel(
     }
 }
 
+// Scatter each face contribution to its owner cells.  The previous kernel
+// assigned one thread per cell and scanned every face, which made the
+// residual update O(nCells*nFaces) for an unstructured 3D grid.
+__global__ void ScatterFaceFluxEulerKernel(
+    const Real * flux,
+    const int * leftCell,
+    const int * rightCell,
+    const unsigned char * boundaryMask,
+    int nBoundaryFaces,
+    int nFaces,
+    int nCells,
+    int nEq,
+    Real * residual )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nFaces ) return;
+
+    const int left = leftCell[ face ];
+    const int right = rightCell[ face ];
+    const bool boundary = boundaryMask != nullptr
+        ? boundaryMask[ face ] != 0
+        : face < nBoundaryFaces;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const Real faceFlux = flux[ eq * nFaces + face ];
+        atomicAdd( &residual[ eq * nCells + left ], -faceFlux );
+        if ( ! boundary && right >= 0 && right < nCells )
+            atomicAdd( &residual[ eq * nCells + right ], faceFlux );
+    }
+}
+
 } // namespace
 
 void HipFluxBackend::CalcInvFlux(
@@ -297,16 +328,11 @@ void HipFluxBackend::CalcInvFlux(
 
     if ( nEq == 1 )
     {
-        DeviceBuffer< Real > qLeft( nFaces );
-        DeviceBuffer< Real > qRight( nFaces );
-        DeviceBuffer< Real > xNormal( nFaces );
-        DeviceBuffer< Real > area( nFaces );
-        DeviceBuffer< Real > deviceFlux( nFaces );
-
-        qLeft.CopyFromHost( state.qLeft, nFaces );
-        qRight.CopyFromHost( state.qRight, nFaces );
-        if ( state.xNormal ) xNormal.CopyFromHost( state.xNormal, nFaces );
-        if ( state.faceArea ) area.CopyFromHost( state.faceArea, nFaces );
+        qLeft_.CopyFromHost( state.qLeft, nFaces );
+        qRight_.CopyFromHost( state.qRight, nFaces );
+        if ( state.xNormal ) xNormal_.CopyFromHost( state.xNormal, nFaces );
+        if ( state.faceArea ) area_.CopyFromHost( state.faceArea, nFaces );
+        deviceFlux_.Resize( nFaces );
 
         const int blockSize = 256;
         const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
@@ -316,35 +342,27 @@ void HipFluxBackend::CalcInvFlux(
             dim3( blockSize ),
             0,
             0,
-            qLeft.Data(),
-            qRight.Data(),
-            state.xNormal ? xNormal.Data() : nullptr,
-            state.faceArea ? area.Data() : nullptr,
-            deviceFlux.Data(),
+            qLeft_.Data(),
+            qRight_.Data(),
+            state.xNormal ? xNormal_.Data() : nullptr,
+            state.faceArea ? area_.Data() : nullptr,
+            deviceFlux_.Data(),
             nFaces );
         CheckHip( hipGetLastError(), "CalcInvFluxScalarKernel launch" );
         CheckHip( hipDeviceSynchronize(), "CalcInvFluxScalarKernel synchronize" );
-        deviceFlux.CopyToHost( flux.values, nFaces );
+        deviceFlux_.CopyToHost( flux.values, nFaces );
     }
     else if ( nEq >= 3 )
     {
-        DeviceBuffer< Real > qLeft( totalValues );
-        DeviceBuffer< Real > qRight( totalValues );
-        DeviceBuffer< Real > xNormal( nFaces );
-        DeviceBuffer< Real > yNormal( nFaces );
-        DeviceBuffer< Real > zNormal( nFaces );
-        DeviceBuffer< Real > meshVelocityNormal( nFaces );
-        DeviceBuffer< Real > area( nFaces );
-        DeviceBuffer< Real > deviceFlux( totalValues );
-
-        qLeft.CopyFromHost( state.qLeft, totalValues );
-        qRight.CopyFromHost( state.qRight, totalValues );
-        if ( state.xNormal ) xNormal.CopyFromHost( state.xNormal, nFaces );
-        if ( state.yNormal ) yNormal.CopyFromHost( state.yNormal, nFaces );
-        if ( state.zNormal ) zNormal.CopyFromHost( state.zNormal, nFaces );
+        qLeft_.CopyFromHost( state.qLeft, totalValues );
+        qRight_.CopyFromHost( state.qRight, totalValues );
+        if ( state.xNormal ) xNormal_.CopyFromHost( state.xNormal, nFaces );
+        if ( state.yNormal ) yNormal_.CopyFromHost( state.yNormal, nFaces );
+        if ( state.zNormal ) zNormal_.CopyFromHost( state.zNormal, nFaces );
         if ( state.meshVelocityNormal )
-            meshVelocityNormal.CopyFromHost( state.meshVelocityNormal, nFaces );
-        if ( state.faceArea ) area.CopyFromHost( state.faceArea, nFaces );
+            meshVelocityNormal_.CopyFromHost( state.meshVelocityNormal, nFaces );
+        if ( state.faceArea ) area_.CopyFromHost( state.faceArea, nFaces );
+        deviceFlux_.Resize( totalValues );
 
         const int blockSize = 256;
         const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
@@ -354,21 +372,21 @@ void HipFluxBackend::CalcInvFlux(
             dim3( blockSize ),
             0,
             0,
-            qLeft.Data(),
-            qRight.Data(),
-            state.xNormal ? xNormal.Data() : nullptr,
-            state.yNormal ? yNormal.Data() : nullptr,
-            state.zNormal ? zNormal.Data() : nullptr,
-            state.meshVelocityNormal ? meshVelocityNormal.Data() : nullptr,
-            state.faceArea ? area.Data() : nullptr,
-            deviceFlux.Data(),
+            qLeft_.Data(),
+            qRight_.Data(),
+            state.xNormal ? xNormal_.Data() : nullptr,
+            state.yNormal ? yNormal_.Data() : nullptr,
+            state.zNormal ? zNormal_.Data() : nullptr,
+            state.meshVelocityNormal ? meshVelocityNormal_.Data() : nullptr,
+            state.faceArea ? area_.Data() : nullptr,
+            deviceFlux_.Data(),
             nFaces,
             nEq,
             state.gamma,
             scheme );
         CheckHip( hipGetLastError(), "CalcInvFluxEulerKernel launch" );
         CheckHip( hipDeviceSynchronize(), "CalcInvFluxEulerKernel synchronize" );
-        deviceFlux.CopyToHost( flux.values, totalValues );
+        deviceFlux_.CopyToHost( flux.values, totalValues );
     }
     else
     {
@@ -446,9 +464,9 @@ void HipFluxBackend::AddFaceFlux(
         deviceResidual.CopyFromHost( residual.values, totalResidual );
 
         const int blockSize = 256;
-        const int gridSize = ( nCells + blockSize - 1 ) / blockSize;
+        const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
         hipLaunchKernelGGL(
-            AddFaceFluxEulerKernel,
+            ScatterFaceFluxEulerKernel,
             dim3( gridSize ),
             dim3( blockSize ),
             0,
