@@ -24,6 +24,7 @@ License
 #include "SimuDef.h"
 #include "EulerDomainStateRegistry.h"
 #include "HXDefine.h"
+#include "EulerDomainStateRegistry.h"
 #include <string>
 #include <vector>
 
@@ -116,6 +117,7 @@ private:
     bool taskResolved_ = false;
     EulerDomainStateRegistry accelStates_;
     StringField expandedSolverNames_;
+    EulerDomainStateRegistry accelStates_;
 };
 
 EndNameSpace
