@@ -346,6 +346,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
       - [x] F2.4a：3D m6 896256 faces、Lax-Friedrichs、3-stage RK 1-step；HIP 对 legacy 最大差 `1.706e-13`，finite 且 density/pressure 为正。
       - [x] F2.4a-3：3-step 三路 trace 完整 verifier 通过；本轮优化工作树上 HIP 对 CPU batch 的 invflux 最大绝对差约 `1.8e-15`、residual 约 `2.7e-15`、state 约 `1.6e-15`，metadata 完全一致，finite/positive/conservation 全通过。
       - [ ] F2.4b：50-step 稳定性；CPU/HIP 共用配置约第 20 步共同出现负压/Inf/NaN，需先修复 CFL/边界/初始化/物理稳定性条件。
+      - [ ] F2.4c：当前 F3 m6 benchmark 仍使用 `vismodel=3` / `nTModel=1`，root runner 没有设置 `ONEFLOW_F2_STAGE_DISABLE_VISCOUS=1`；因此 HIP 只覆盖 inviscid face flux/residual，viscous/turbulence、gradient、face reconstruction、RK update 仍在 host。需分别测 inviscid-only 与完整 NS，不能把当前 3D timing 直接与 1D Euler stateful 报告比较。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
     - [x] F3.1：标准 root HIP runner 已沉淀；支持 trace step 参数化、精度门禁后 benchmark、同 basis timing 与非空 HIP test 检查。
     - [x] F3.2：CPU queue regression、DCU 构建/contract/adapter one-call、小 case、3-step trace、标准 runner、单卡 timing 均已有证据；`13275297` 在 Kunshan DTK 26.04 / `gfx906` 上完成 root HIP build、smoke、GoogleTest、硬件 CTest 和 3-step trace gate。固定 `steps=3,warmup=1,repeats=3` 下，本轮 raw mean 为 legacy CPU `26206.840 ms`、CPU batch `24588.456 ms`、HIP batch `22715.925 ms`，raw ratio 为 `1.153677x`；但与前一轮 `1272c278` 的 HIP mean `23169.089 ms` 对比，HIP 本身只快约 `1.995%`，而 legacy CPU mean 从 `23965.213 ms` 漂到 `26206.840 ms`，因此不能把 `1.153677x` 宣称为稳定的 15% 加速。该改动仍属于 host-staged 路径，不代表 GPU-resident 主 solver 已完成。50-step、MPI/多卡与 GPU-resident 性能仍未完成。
