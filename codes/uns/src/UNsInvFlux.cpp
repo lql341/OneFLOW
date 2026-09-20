@@ -473,14 +473,6 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
         }
     }
 
-    for ( int equation = 0; equation < nEquations; ++ equation )
-    {
-        for ( int cell = 0; cell < nCells; ++ cell )
-        {
-            ( * res )[ equation ][ cell ] =
-                residualValues[ equation * nCells + cell ];
-        }
-    }
 #else
     throw std::runtime_error(
         "UNs HIP batch path was called without HIP support." );
