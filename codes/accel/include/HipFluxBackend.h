@@ -27,6 +27,13 @@ public:
         const FaceConnectivityView & connectivity,
         ResidualView & residual ) override;
 
+    // Add the flux produced by the immediately preceding CalcInvFlux call
+    // without uploading the host flux array again. This is the production
+    // seam used by the 3D main solver HIP batch path.
+    void AddCurrentFaceFlux(
+        const FaceConnectivityView & connectivity,
+        ResidualView & residual );
+
 private:
     DeviceBuffer< Real > qLeft_;
     DeviceBuffer< Real > qRight_;
@@ -36,6 +43,8 @@ private:
     DeviceBuffer< Real > meshVelocityNormal_;
     DeviceBuffer< Real > area_;
     DeviceBuffer< Real > deviceFlux_;
+    int deviceFluxFaces_ = 0;
+    int deviceFluxEquations_ = 0;
 };
 
 }

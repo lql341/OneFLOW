@@ -323,7 +323,7 @@ bool TestMainSolverFiveEquationLaxFriedrichs()
     ONEFLOW::ResidualView hipResidualView{
         nCells, nEq, hipResidual.data() };
     cpuBackend.AddFaceFlux( cpuFluxView, connectivity, cpuResidualView );
-    hipBackend.AddFaceFlux( hipFluxView, connectivity, hipResidualView );
+    hipBackend.AddCurrentFaceFlux( connectivity, hipResidualView );
 
     const double residualError = MaxDiff( cpuResidual, hipResidual );
     if ( residualError > 2.0e-12 )

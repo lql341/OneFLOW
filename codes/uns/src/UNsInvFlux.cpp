@@ -271,9 +271,17 @@ void UNsInvFlux::CalcFlux()
 
     //ReadTmp();
     this->CalcInvFace();
-    this->CalcInvFlux();
-    this->DumpInvFluxTrace();
-    this->AddInvFlux();
+    if ( this->UseHipBatchAdapter() )
+    {
+        this->CalcAndAddInvFluxHipBatch();
+        this->DumpInvFluxTrace();
+    }
+    else
+    {
+        this->CalcInvFlux();
+        this->DumpInvFluxTrace();
+        this->AddInvFlux();
+    }
     this->DumpInvFluxStageTrace();
 
     DeAlloc();
@@ -365,6 +373,65 @@ void UNsInvFlux::CalcInvFluxHipBatch()
 #ifdef ONEFLOW_ENABLE_HIP
     HipFluxBackend backend;
     this->CalcInvFluxBatch( backend );
+#else
+    throw std::runtime_error(
+        "UNs HIP batch path was called without HIP support." );
+#endif
+}
+
+void UNsInvFlux::CalcAndAddInvFluxHipBatch()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    HipFluxBackend backend;
+    this->CalcInvFluxBatch( backend );
+
+    UnsGrid * grid = Zone::GetUnsGrid();
+    MRField * res = GetFieldPointer< MRField >( grid, "res" );
+    if ( res == nullptr
+         || res->GetNEqu() < static_cast< HXSize_t >( nscom.nEqu ) )
+    {
+        throw std::runtime_error(
+            "UNs HIP batch residual field is unavailable." );
+    }
+
+    const int nCells = ug.nCells;
+    const int nEquations = nscom.nEqu;
+    std::vector< Real > residualValues( nEquations * nCells );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( ( * res )[ equation ].size()
+             < static_cast< std::size_t >( nCells ) )
+        {
+            throw std::runtime_error(
+                "UNs HIP batch residual extent is invalid." );
+        }
+        for ( int cell = 0; cell < nCells; ++ cell )
+        {
+            residualValues[ equation * nCells + cell ] =
+                ( * res )[ equation ][ cell ];
+        }
+    }
+
+    FaceConnectivityView connectivity;
+    connectivity.nFaces = ug.nFaces;
+    connectivity.nBoundaryFaces = ug.nBFaces;
+    connectivity.leftCell = ug.lcf->data();
+    connectivity.rightCell = ug.rcf->data();
+
+    ResidualView residual;
+    residual.nCells = nCells;
+    residual.nEquations = nEquations;
+    residual.values = residualValues.data();
+    backend.AddCurrentFaceFlux( connectivity, residual );
+
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        for ( int cell = 0; cell < nCells; ++ cell )
+        {
+            ( * res )[ equation ][ cell ] =
+                residualValues[ equation * nCells + cell ];
+        }
+    }
 #else
     throw std::runtime_error(
         "UNs HIP batch path was called without HIP support." );

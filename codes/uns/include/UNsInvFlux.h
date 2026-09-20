@@ -43,6 +43,7 @@ public:
     void CalcInvFlux();
     void CalcInvFluxCpuBatch();
     void CalcInvFluxHipBatch();
+    void CalcAndAddInvFluxHipBatch();
     void CalcInvFluxBatch( FluxBackend & backend );
     bool UseCpuBatchAdapter() const;
     bool UseHipBatchAdapter() const;

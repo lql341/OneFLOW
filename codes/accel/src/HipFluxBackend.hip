@@ -351,6 +351,8 @@ void HipFluxBackend::CalcInvFlux(
         CheckHip( hipGetLastError(), "CalcInvFluxScalarKernel launch" );
         CheckHip( hipDeviceSynchronize(), "CalcInvFluxScalarKernel synchronize" );
         deviceFlux_.CopyToHost( flux.values, nFaces );
+        deviceFluxFaces_ = nFaces;
+        deviceFluxEquations_ = nEq;
     }
     else if ( nEq >= 3 )
     {
@@ -387,6 +389,8 @@ void HipFluxBackend::CalcInvFlux(
         CheckHip( hipGetLastError(), "CalcInvFluxEulerKernel launch" );
         CheckHip( hipDeviceSynchronize(), "CalcInvFluxEulerKernel synchronize" );
         deviceFlux_.CopyToHost( flux.values, totalValues );
+        deviceFluxFaces_ = nFaces;
+        deviceFluxEquations_ = nEq;
     }
     else
     {
@@ -484,6 +488,61 @@ void HipFluxBackend::AddFaceFlux(
         CheckHip( hipDeviceSynchronize(), "AddFaceFluxEulerKernel synchronize" );
         deviceResidual.CopyToHost( residual.values, totalResidual );
     }
+}
+
+void HipFluxBackend::AddCurrentFaceFlux(
+    const FaceConnectivityView & connectivity,
+    ResidualView & residual )
+{
+    ValidateFaceConnectivityView( connectivity );
+    if ( deviceFluxFaces_ != connectivity.nFaces
+         || deviceFluxEquations_ != residual.nEquations
+         || deviceFluxEquations_ < 3
+         || residual.nCells <= 0
+         || residual.values == nullptr )
+    {
+        throw std::invalid_argument(
+            "HIP cached residual request does not match the current flux." );
+    }
+
+    const int nFaces = connectivity.nFaces;
+    const int nCells = residual.nCells;
+    const int nEq = residual.nEquations;
+    const int totalResidual = nCells * nEq;
+
+    DeviceBuffer< int > leftCell( nFaces );
+    DeviceBuffer< int > rightCell( nFaces );
+    DeviceBuffer< unsigned char > boundaryMask( nFaces );
+    DeviceBuffer< Real > deviceResidual( totalResidual );
+
+    leftCell.CopyFromHost( connectivity.leftCell, nFaces );
+    rightCell.CopyFromHost( connectivity.rightCell, nFaces );
+    if ( connectivity.boundaryMask )
+        boundaryMask.CopyFromHost( connectivity.boundaryMask, nFaces );
+    deviceResidual.CopyFromHost( residual.values, totalResidual );
+
+    const int blockSize = 256;
+    const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
+    hipLaunchKernelGGL(
+        ScatterFaceFluxEulerKernel,
+        dim3( gridSize ),
+        dim3( blockSize ),
+        0,
+        0,
+        deviceFlux_.Data(),
+        leftCell.Data(),
+        rightCell.Data(),
+        connectivity.boundaryMask ? boundaryMask.Data() : nullptr,
+        connectivity.nBoundaryFaces,
+        nFaces,
+        nCells,
+        nEq,
+        deviceResidual.Data() );
+    CheckHip( hipGetLastError(), "ScatterFaceFluxEulerKernel launch" );
+    CheckHip(
+        hipDeviceSynchronize(),
+        "ScatterFaceFluxEulerKernel synchronize" );
+    deviceResidual.CopyToHost( residual.values, totalResidual );
 }
 
 }
