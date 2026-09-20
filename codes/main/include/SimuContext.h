@@ -117,7 +117,6 @@ private:
     bool taskResolved_ = false;
     EulerDomainStateRegistry accelStates_;
     StringField expandedSolverNames_;
-    EulerDomainStateRegistry accelStates_;
 };
 
 EndNameSpace
