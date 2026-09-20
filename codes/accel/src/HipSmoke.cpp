@@ -325,6 +325,51 @@ bool TestMainSolverFiveEquationLaxFriedrichs()
     cpuBackend.AddFaceFlux( cpuFluxView, connectivity, cpuResidualView );
     hipBackend.AddCurrentFaceFlux( connectivity, hipResidualView );
 
+    std::vector< ONEFLOW::Real > fusedFlux( nFaces * nEq );
+    std::vector< ONEFLOW::Real > fusedResidual =
+        std::vector< ONEFLOW::Real >( nCells * nEq );
+    for ( int i = 0; i < nCells * nEq; ++ i )
+    {
+        fusedResidual[ i ] = 1.0e-6 * ( i % 7 );
+    }
+    ONEFLOW::FaceFluxView fusedFluxView{
+        nFaces, nEq, fusedFlux.data() };
+    ONEFLOW::ResidualView fusedResidualView{
+        nCells, nEq, fusedResidual.data() };
+    ONEFLOW::HipFluxBackend fusedBackend;
+    fusedBackend.CalcAndAddPrimitiveFaceFlux(
+        state, connectivity, fusedResidualView, 1, & fusedFluxView );
+    const double fusedFluxError = MaxDiff( cpuFlux, fusedFlux );
+    const double fusedResidualError = MaxDiff( cpuResidual, fusedResidual );
+    if ( fusedFluxError > 2.0e-12 || fusedResidualError > 2.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver fused primitive path FAIL: flux %.3e residual %.3e\n",
+            fusedFluxError, fusedResidualError );
+        return false;
+    }
+
+    std::vector< ONEFLOW::Real > noTraceResidual =
+        std::vector< ONEFLOW::Real >( nCells * nEq );
+    for ( int i = 0; i < nCells * nEq; ++ i )
+    {
+        noTraceResidual[ i ] = 1.0e-6 * ( i % 7 );
+    }
+    ONEFLOW::ResidualView noTraceResidualView{
+        nCells, nEq, noTraceResidual.data() };
+    ONEFLOW::HipFluxBackend noTraceBackend;
+    noTraceBackend.CalcAndAddPrimitiveFaceFlux(
+        state, connectivity, noTraceResidualView, 1 );
+    const double noTraceResidualError =
+        MaxDiff( cpuResidual, noTraceResidual );
+    if ( noTraceResidualError > 2.0e-12 )
+    {
+        std::fprintf( stderr,
+            "Main solver fused NoTrace path FAIL: %.3e\n",
+            noTraceResidualError );
+        return false;
+    }
+
     const double residualError = MaxDiff( cpuResidual, hipResidual );
     if ( residualError > 2.0e-12 )
     {
@@ -392,9 +437,10 @@ bool TestMainSolverFiveEquationLaxFriedrichs()
 
     std::printf(
         "OneFLOW HIP main solver one-call: PASS "
-        "(flux %.3e, residual %.3e, boundary %.3e, conservation %.3e, "
-        "%d faces, %d eq)\n",
-        fluxError, residualError, boundarySemanticError, conservationError,
+        "(flux %.3e, residual %.3e, fused %.3e/%.3e, "
+        "boundary %.3e, conservation %.3e, %d faces, %d eq)\n",
+        fluxError, residualError, fusedFluxError, fusedResidualError,
+        boundarySemanticError, conservationError,
         nFaces, nEq );
     return true;
 }

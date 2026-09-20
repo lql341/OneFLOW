@@ -9,10 +9,12 @@ License
 #include "HipFluxBackend.h"
 
 #include "AccelRuntime.h"
+#include "EulerCpuAdapter.h"
 #include "DeviceBuffer.h"
 
 #include <hip/hip_runtime.h>
 
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -28,6 +30,8 @@ void CheckHip( hipError_t status, const char * operation )
     throw std::runtime_error(
         std::string( operation ) + ": " + hipGetErrorString( status ) );
 }
+
+std::unique_ptr< HipFluxBackend > sharedHipFluxBackend;
 
 // ---------------------------------------------------------------------------
 // Scalar convection kernel (nEquations == 1)
@@ -247,6 +251,166 @@ __global__ void CalcInvFluxEulerKernel(
     }
 }
 
+__device__ void PrimitiveToConservedFace(
+    const Real * primitive, int face, int nFaces, int nEq,
+    Real gamma, Real * q )
+{
+    const Real density = primitive[ 0 * nFaces + face ];
+    const Real u = primitive[ 1 * nFaces + face ];
+    const Real v = nEq >= 4 ? primitive[ 2 * nFaces + face ] : 0.0;
+    const Real w = nEq >= 4 ? primitive[ 3 * nFaces + face ] : 0.0;
+    const Real pressure = primitive[ ( nEq == 3 ? 2 : 4 ) * nFaces + face ];
+    const Real kineticEnergy = 0.5 * density *
+        ( u * u + v * v + w * w );
+
+    q[ 0 ] = density;
+    q[ 1 ] = density * u;
+    if ( nEq == 3 )
+    {
+        q[ 2 ] = pressure / ( gamma - 1.0 ) + kineticEnergy;
+    }
+    else
+    {
+        q[ 2 ] = density * v;
+        q[ 3 ] = density * w;
+        q[ 4 ] = pressure / ( gamma - 1.0 ) + kineticEnergy;
+    }
+}
+
+__device__ void ConservedValuesToPrimitive(
+    const Real * q, int nEq, Real gamma, Primitive & p )
+{
+    const Real gamm1 = gamma - 1.0;
+    p.density = q[ 0 ];
+    p.u = q[ 1 ] / p.density;
+    p.v = 0.0;
+    p.w = 0.0;
+    Real kinetic = 0.5 * p.u * p.u;
+    if ( nEq >= 4 )
+    {
+        p.v = q[ 2 ] / p.density;
+        p.w = q[ 3 ] / p.density;
+        kinetic = 0.5 * ( p.u * p.u + p.v * p.v + p.w * p.w );
+    }
+    const Real rhoE = q[ nEq - 1 ];
+    p.pressure = gamm1 * ( rhoE - kinetic * p.density );
+    p.enthalpy = ( rhoE + p.pressure ) / p.density;
+    p.soundSpeed = sqrt( fabs( gamma * p.pressure / p.density ) );
+}
+
+__global__ void CalcAndScatterPrimitiveEulerKernel(
+    const Real * primitiveLeft,
+    const Real * primitiveRight,
+    const Real * xNormal,
+    const Real * yNormal,
+    const Real * zNormal,
+    const Real * meshVelocityNormal,
+    const Real * area,
+    const int * leftCell,
+    const int * rightCell,
+    const unsigned char * boundaryMask,
+    int nBoundaryFaces,
+    int nFaces,
+    int nCells,
+    int nEq,
+    Real gamma,
+    int scheme,
+    Real * flux,
+    Real * residual )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nFaces ) return;
+
+    const Real nx = xNormal ? xNormal[ face ] : 1.0;
+    const Real ny = yNormal ? yNormal[ face ] : 0.0;
+    const Real nz = zNormal ? zNormal[ face ] : 0.0;
+    const Real vfn = meshVelocityNormal ? meshVelocityNormal[ face ] : 0.0;
+    const Real faceArea = area ? area[ face ] : 1.0;
+
+    Real qL[ 5 ] = {};
+    Real qR[ 5 ] = {};
+    PrimitiveToConservedFace(
+        primitiveLeft, face, nFaces, nEq, gamma, qL );
+    PrimitiveToConservedFace(
+        primitiveRight, face, nFaces, nEq, gamma, qR );
+
+    Primitive pL, pR;
+    ConservedValuesToPrimitive( qL, nEq, gamma, pL );
+    ConservedValuesToPrimitive( qR, nEq, gamma, pR );
+
+    Real fL[ 5 ] = {};
+    Real fR[ 5 ] = {};
+    Real lambdaMax = 0.0;
+    if ( scheme == 1 )
+    {
+        const Real ratio = sqrt( pR.density / pL.density );
+        const Real coef = 1.0 / ( 1.0 + ratio );
+        const Real densityMean = sqrt( pL.density * pR.density );
+        const Real uMean = ( pL.u + pR.u * ratio ) * coef;
+        const Real vMean = ( pL.v + pR.v * ratio ) * coef;
+        const Real wMean = ( pL.w + pR.w * ratio ) * coef;
+        const Real pressureMean =
+            ( pL.pressure + pR.pressure * ratio ) * coef;
+        const Real normalVelocityMean =
+            nx * uMean + ny * vMean + nz * wMean - vfn;
+        const Real soundSpeedMean = sqrt(
+            fabs( gamma * pressureMean / densityMean ) );
+        lambdaMax = fabs( normalVelocityMean ) + soundSpeedMean;
+
+        const Real normalVelocityLeft =
+            nx * pL.u + ny * pL.v + nz * pL.w - vfn;
+        const Real normalVelocityRight =
+            nx * pR.u + ny * pR.v + nz * pR.w - vfn;
+        const Real massFluxLeft = pL.density * normalVelocityLeft;
+        const Real massFluxRight = pR.density * normalVelocityRight;
+        fL[ 0 ] = massFluxLeft;
+        fL[ 1 ] = massFluxLeft * pL.u + nx * pL.pressure;
+        fR[ 0 ] = massFluxRight;
+        fR[ 1 ] = massFluxRight * pR.u + nx * pR.pressure;
+        if ( nEq >= 4 )
+        {
+            fL[ 2 ] = massFluxLeft * pL.v + ny * pL.pressure;
+            fL[ 3 ] = massFluxLeft * pL.w + nz * pL.pressure;
+            fL[ 4 ] = massFluxLeft * pL.enthalpy + vfn * pL.pressure;
+            fR[ 2 ] = massFluxRight * pR.v + ny * pR.pressure;
+            fR[ 3 ] = massFluxRight * pR.w + nz * pR.pressure;
+            fR[ 4 ] = massFluxRight * pR.enthalpy + vfn * pR.pressure;
+        }
+        else
+        {
+            fL[ 2 ] = massFluxLeft * pL.enthalpy + vfn * pL.pressure;
+            fR[ 2 ] = massFluxRight * pR.enthalpy + vfn * pR.pressure;
+        }
+    }
+    else
+    {
+        PhysicalFlux( pL, nx, ny, nz, vfn, fL, nEq );
+        PhysicalFlux( pR, nx, ny, nz, vfn, fR, nEq );
+        const Real lambdaL = MaxWaveSpeed( pL, nx, ny, nz, vfn );
+        const Real lambdaR = MaxWaveSpeed( pR, nx, ny, nz, vfn );
+        lambdaMax = lambdaL > lambdaR ? lambdaL : lambdaR;
+    }
+
+    const int left = leftCell[ face ];
+    const int right = rightCell[ face ];
+    const bool boundary = boundaryMask != nullptr
+        ? boundaryMask[ face ] != 0
+        : face < nBoundaryFaces;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const Real faceFlux = faceArea * (
+            0.5 * ( fL[ eq ] + fR[ eq ] )
+            - 0.5 * lambdaMax * ( qR[ eq ] - qL[ eq ] ) );
+        if ( flux != nullptr )
+            flux[ eq * nFaces + face ] = faceFlux;
+        atomicAdd(
+            &residual[ eq * nCells + left ], -faceFlux );
+        if ( ! boundary && right >= 0 && right < nCells )
+            atomicAdd(
+                &residual[ eq * nCells + right ], faceFlux );
+    }
+}
+
 __global__ void AddFaceFluxEulerKernel(
     const Real * flux,
     const int * leftCell,
@@ -310,6 +474,25 @@ __global__ void ScatterFaceFluxEulerKernel(
 }
 
 } // namespace
+
+HipFluxBackend & HipFluxBackend::Shared()
+{
+    if ( ! sharedHipFluxBackend )
+    {
+        if ( ! AccelRuntime::Instance().IsInitialized() )
+        {
+            throw std::runtime_error(
+                "cannot create shared HIP flux backend before runtime initialization." );
+        }
+        sharedHipFluxBackend = std::make_unique< HipFluxBackend >();
+    }
+    return *sharedHipFluxBackend;
+}
+
+void HipFluxBackend::ReleaseShared()
+{
+    sharedHipFluxBackend.reset();
+}
 
 void HipFluxBackend::CalcInvFlux(
     const FaceStateView & state,
@@ -543,6 +726,136 @@ void HipFluxBackend::AddCurrentFaceFlux(
         hipDeviceSynchronize(),
         "ScatterFaceFluxEulerKernel synchronize" );
     deviceResidual.CopyToHost( residual.values, totalResidual );
+}
+
+void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
+    const PrimitiveFaceStateView & state,
+    const FaceConnectivityView & connectivity,
+    ResidualView & residual,
+    int scheme,
+    FaceFluxView * hostFlux,
+    const void * cacheKey )
+{
+    if ( state.nFaces <= 0 || state.nEquations < 3
+         || state.primitiveLeft == nullptr
+         || state.primitiveRight == nullptr
+         || state.gamma <= 1.0
+         || state.nFaces != connectivity.nFaces
+         || residual.nCells <= 0
+         || residual.nEquations != state.nEquations
+         || residual.values == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid fused HIP primitive residual request." );
+    }
+    if ( hostFlux != nullptr
+         && ( hostFlux->nFaces != state.nFaces
+              || hostFlux->nEquations != state.nEquations
+              || hostFlux->values == nullptr ) )
+    {
+        throw std::invalid_argument(
+            "invalid fused HIP host flux request." );
+    }
+    ValidateFaceConnectivityView( connectivity );
+
+    const int nFaces = state.nFaces;
+    const int nCells = residual.nCells;
+    const int nEq = state.nEquations;
+    const int totalFlux = nFaces * nEq;
+    const int totalResidual = nCells * nEq;
+
+    qLeft_.CopyFromHost( state.primitiveLeft, totalFlux );
+    qRight_.CopyFromHost( state.primitiveRight, totalFlux );
+
+    const bool geometryCacheMatches =
+        geometryCacheValid_
+        && cachedFaces_ == nFaces
+        && cachedBoundaryFaces_ == connectivity.nBoundaryFaces
+        && cachedOwner_ == cacheKey
+        && cachedXNormal_ == state.xNormal
+        && cachedYNormal_ == state.yNormal
+        && cachedZNormal_ == state.zNormal
+        && cachedMeshVelocityNormal_ == state.meshVelocityNormal
+        && cachedArea_ == state.faceArea
+        && cachedLeftCell_ == connectivity.leftCell
+        && cachedRightCell_ == connectivity.rightCell
+        && cachedBoundaryMask_ == connectivity.boundaryMask;
+    if ( ! geometryCacheMatches )
+    {
+        if ( state.xNormal )
+            xNormal_.CopyFromHost( state.xNormal, nFaces );
+        if ( state.yNormal )
+            yNormal_.CopyFromHost( state.yNormal, nFaces );
+        if ( state.zNormal )
+            zNormal_.CopyFromHost( state.zNormal, nFaces );
+        if ( state.meshVelocityNormal )
+        {
+            meshVelocityNormal_.CopyFromHost(
+                state.meshVelocityNormal, nFaces );
+        }
+        if ( state.faceArea )
+            area_.CopyFromHost( state.faceArea, nFaces );
+        leftCell_.CopyFromHost( connectivity.leftCell, nFaces );
+        rightCell_.CopyFromHost( connectivity.rightCell, nFaces );
+        if ( connectivity.boundaryMask )
+        {
+            boundaryMask_.CopyFromHost(
+                connectivity.boundaryMask, nFaces );
+        }
+        cachedXNormal_ = state.xNormal;
+        cachedYNormal_ = state.yNormal;
+        cachedZNormal_ = state.zNormal;
+        cachedMeshVelocityNormal_ = state.meshVelocityNormal;
+        cachedArea_ = state.faceArea;
+        cachedLeftCell_ = connectivity.leftCell;
+        cachedRightCell_ = connectivity.rightCell;
+        cachedBoundaryMask_ = connectivity.boundaryMask;
+        cachedOwner_ = cacheKey;
+        cachedFaces_ = nFaces;
+        cachedBoundaryFaces_ = connectivity.nBoundaryFaces;
+        geometryCacheValid_ = true;
+    }
+    deviceResidual_.CopyFromHost( residual.values, totalResidual );
+    if ( hostFlux != nullptr ) deviceFlux_.Resize( totalFlux );
+
+    const int blockSize = 256;
+    const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
+    hipLaunchKernelGGL(
+        CalcAndScatterPrimitiveEulerKernel,
+        dim3( gridSize ),
+        dim3( blockSize ),
+        0,
+        0,
+        qLeft_.Data(),
+        qRight_.Data(),
+        state.xNormal ? xNormal_.Data() : nullptr,
+        state.yNormal ? yNormal_.Data() : nullptr,
+        state.zNormal ? zNormal_.Data() : nullptr,
+        state.meshVelocityNormal ? meshVelocityNormal_.Data() : nullptr,
+        state.faceArea ? area_.Data() : nullptr,
+        leftCell_.Data(),
+        rightCell_.Data(),
+        connectivity.boundaryMask ? boundaryMask_.Data() : nullptr,
+        connectivity.nBoundaryFaces,
+        nFaces,
+        nCells,
+        nEq,
+        state.gamma,
+        scheme,
+        hostFlux != nullptr ? deviceFlux_.Data() : nullptr,
+        deviceResidual_.Data() );
+    CheckHip(
+        hipGetLastError(), "CalcAndScatterPrimitiveEulerKernel launch" );
+    CheckHip(
+        hipDeviceSynchronize(),
+        "CalcAndScatterPrimitiveEulerKernel synchronize" );
+    deviceResidual_.CopyToHost( residual.values, totalResidual );
+    if ( hostFlux != nullptr )
+    {
+        deviceFlux_.CopyToHost( hostFlux->values, totalFlux );
+        deviceFluxFaces_ = nFaces;
+        deviceFluxEquations_ = nEq;
+    }
 }
 
 }

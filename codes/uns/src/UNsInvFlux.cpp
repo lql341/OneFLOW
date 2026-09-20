@@ -371,7 +371,7 @@ void UNsInvFlux::CalcInvFluxCpuBatch()
 void UNsInvFlux::CalcInvFluxHipBatch()
 {
 #ifdef ONEFLOW_ENABLE_HIP
-    HipFluxBackend backend;
+    HipFluxBackend & backend = HipFluxBackend::Shared();
     this->CalcInvFluxBatch( backend );
 #else
     throw std::runtime_error(
@@ -382,9 +382,6 @@ void UNsInvFlux::CalcInvFluxHipBatch()
 void UNsInvFlux::CalcAndAddInvFluxHipBatch()
 {
 #ifdef ONEFLOW_ENABLE_HIP
-    HipFluxBackend backend;
-    this->CalcInvFluxBatch( backend );
-
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * res = GetFieldPointer< MRField >( grid, "res" );
     if ( res == nullptr
@@ -394,8 +391,22 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
             "UNs HIP batch residual field is unavailable." );
     }
 
+    const int nFaces = ug.nFaces;
     const int nCells = ug.nCells;
     const int nEquations = nscom.nEqu;
+    std::vector< Real > primitiveLeft( nEquations * nFaces );
+    std::vector< Real > primitiveRight( nEquations * nFaces );
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+        {
+            primitiveLeft[ equation * nFaces + face ] =
+                ( * limf->qf1 )[ equation ][ face ];
+            primitiveRight[ equation * nFaces + face ] =
+                ( * limf->qf2 )[ equation ][ face ];
+        }
+    }
+
     std::vector< Real > residualValues( nEquations * nCells );
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
@@ -412,8 +423,20 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
         }
     }
 
+    PrimitiveFaceStateView primitiveState;
+    primitiveState.nFaces = nFaces;
+    primitiveState.nEquations = nEquations;
+    primitiveState.primitiveLeft = primitiveLeft.data();
+    primitiveState.primitiveRight = primitiveRight.data();
+    primitiveState.xNormal = ( * ug.xfn ).data();
+    primitiveState.yNormal = ( * ug.yfn ).data();
+    primitiveState.zNormal = ( * ug.zfn ).data();
+    primitiveState.meshVelocityNormal = ( * ug.vfn ).data();
+    primitiveState.faceArea = ( * ug.farea ).data();
+    primitiveState.gamma = nscom.gama_ref;
+
     FaceConnectivityView connectivity;
-    connectivity.nFaces = ug.nFaces;
+    connectivity.nFaces = nFaces;
     connectivity.nBoundaryFaces = ug.nBFaces;
     connectivity.leftCell = ug.lcf->data();
     connectivity.rightCell = ug.rcf->data();
@@ -422,7 +445,41 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
     residual.nCells = nCells;
     residual.nEquations = nEquations;
     residual.values = residualValues.data();
-    backend.AddCurrentFaceFlux( connectivity, residual );
+
+    const char * traceFile = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
+    const char * stageTraceFile =
+        std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    const bool needFlux =
+        ( traceFile != nullptr && traceFile[ 0 ] != '\0' )
+        || ( stageTraceFile != nullptr && stageTraceFile[ 0 ] != '\0' );
+
+    std::vector< Real > faceFlux;
+    FaceFluxView hostFlux;
+    FaceFluxView * hostFluxPointer = nullptr;
+    if ( needFlux )
+    {
+        faceFlux.resize( nEquations * nFaces );
+        hostFlux.nFaces = nFaces;
+        hostFlux.nEquations = nEquations;
+        hostFlux.values = faceFlux.data();
+        hostFluxPointer = & hostFlux;
+    }
+
+    HipFluxBackend & backend = HipFluxBackend::Shared();
+    backend.CalcAndAddPrimitiveFaceFlux(
+        primitiveState, connectivity, residual, 1, hostFluxPointer, grid );
+
+    if ( needFlux )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+        {
+            for ( int face = 0; face < nFaces; ++ face )
+            {
+                ( * invflux )[ equation ][ face ] =
+                    faceFlux[ equation * nFaces + face ];
+            }
+        }
+    }
 
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
