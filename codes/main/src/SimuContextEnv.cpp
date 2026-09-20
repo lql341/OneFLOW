@@ -28,6 +28,9 @@ License
 #include "ParaFile.h"
 #include "Parallel.h"
 #include "AccelRuntime.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 #include <iostream>
 
 BeginNameSpace( ONEFLOW )
@@ -52,9 +55,12 @@ void SimuContext::SetupEnvironment()
 
 void SimuContext::TeardownEnvironment()
 {
-    // Device-backed states must release allocations while the selected
-    // accelerator runtime is still alive.
+    // Device-backed states and shared HIP solver buffers must release
+    // allocations while the selected accelerator runtime is still alive.
     ClearAccelStates();
+#ifdef ONEFLOW_ENABLE_HIP
+    HipFluxBackend::ReleaseShared();
+#endif
     ONEFLOW::FinalizeAccelRuntime();
     HXFinalize();
     envReady_ = false;

@@ -12,9 +12,6 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "AccelRuntime.h"
-#ifdef ONEFLOW_ENABLE_HIP
-#include "HipFluxBackend.h"
-#endif
 #include <cerrno>
 #include <climits>
 #include <cstdlib>
@@ -198,10 +195,6 @@ void AccelRuntime::Initialize( int worldRank, int worldSize )
 void AccelRuntime::Finalize()
 {
     if ( ! initialized ) return;
-#ifdef ONEFLOW_ENABLE_HIP
-    // Release shared HIP solver buffers while the runtime is still alive.
-    HipFluxBackend::ReleaseShared();
-#endif
     backend->Finalize();
     backend.reset();
     initialized = false;
