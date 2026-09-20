@@ -736,14 +736,20 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     FaceFluxView * hostFlux,
     const void * cacheKey )
 {
+    const bool componentInput =
+        state.primitiveLeft == nullptr && state.primitiveRight == nullptr
+        && state.primitiveLeftComponents[ 0 ] != nullptr
+        && state.primitiveRightComponents[ 0 ] != nullptr;
     if ( state.nFaces <= 0 || state.nEquations < 3
-         || state.primitiveLeft == nullptr
-         || state.primitiveRight == nullptr
+         || ( !componentInput
+              && ( state.primitiveLeft == nullptr
+                   || state.primitiveRight == nullptr ) )
          || state.gamma <= 1.0
          || state.nFaces != connectivity.nFaces
          || residual.nCells <= 0
          || residual.nEquations != state.nEquations
-         || residual.values == nullptr )
+         || ( residual.values == nullptr
+              && residual.components[ 0 ] == nullptr ) )
     {
         throw std::invalid_argument(
             "invalid fused HIP primitive residual request." );
@@ -764,8 +770,27 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     const int totalFlux = nFaces * nEq;
     const int totalResidual = nCells * nEq;
 
-    qLeft_.CopyFromHost( state.primitiveLeft, totalFlux );
-    qRight_.CopyFromHost( state.primitiveRight, totalFlux );
+    if ( componentInput )
+    {
+        qLeft_.Resize( totalFlux );
+        qRight_.Resize( totalFlux );
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                qLeft_.Data() + equation * nFaces,
+                state.primitiveLeftComponents[ equation ],
+                nFaces * sizeof( Real ), AccelCopyKind::HostToDevice );
+            AccelRuntime::Instance().Backend().Copy(
+                qRight_.Data() + equation * nFaces,
+                state.primitiveRightComponents[ equation ],
+                nFaces * sizeof( Real ), AccelCopyKind::HostToDevice );
+        }
+    }
+    else
+    {
+        qLeft_.CopyFromHost( state.primitiveLeft, totalFlux );
+        qRight_.CopyFromHost( state.primitiveRight, totalFlux );
+    }
 
     const bool geometryCacheMatches =
         geometryCacheValid_
@@ -815,7 +840,21 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         cachedBoundaryFaces_ = connectivity.nBoundaryFaces;
         geometryCacheValid_ = true;
     }
-    deviceResidual_.CopyFromHost( residual.values, totalResidual );
+    deviceResidual_.Resize( totalResidual );
+    if ( residual.values != nullptr )
+    {
+        deviceResidual_.CopyFromHost( residual.values, totalResidual );
+    }
+    else
+    {
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                deviceResidual_.Data() + equation * nCells,
+                residual.components[ equation ],
+                nCells * sizeof( Real ), AccelCopyKind::HostToDevice );
+        }
+    }
     if ( hostFlux != nullptr ) deviceFlux_.Resize( totalFlux );
 
     const int blockSize = 256;
@@ -849,7 +888,20 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     CheckHip(
         hipDeviceSynchronize(),
         "CalcAndScatterPrimitiveEulerKernel synchronize" );
-    deviceResidual_.CopyToHost( residual.values, totalResidual );
+    if ( residual.values != nullptr )
+    {
+        deviceResidual_.CopyToHost( residual.values, totalResidual );
+    }
+    else
+    {
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                residual.components[ equation ],
+                deviceResidual_.Data() + equation * nCells,
+                nCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        }
+    }
     if ( hostFlux != nullptr )
     {
         deviceFlux_.CopyToHost( hostFlux->values, totalFlux );

@@ -18,6 +18,8 @@ struct PrimitiveFaceStateView
     int nEquations = 0;
     const Real * primitiveLeft = nullptr;
     const Real * primitiveRight = nullptr;
+    const Real * primitiveLeftComponents[ 5 ] = {};
+    const Real * primitiveRightComponents[ 5 ] = {};
     const Real * xNormal = nullptr;
     const Real * yNormal = nullptr;
     const Real * zNormal = nullptr;

@@ -394,20 +394,6 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
     const int nFaces = ug.nFaces;
     const int nCells = ug.nCells;
     const int nEquations = nscom.nEqu;
-    std::vector< Real > primitiveLeft( nEquations * nFaces );
-    std::vector< Real > primitiveRight( nEquations * nFaces );
-    for ( int face = 0; face < nFaces; ++ face )
-    {
-        for ( int equation = 0; equation < nEquations; ++ equation )
-        {
-            primitiveLeft[ equation * nFaces + face ] =
-                ( * limf->qf1 )[ equation ][ face ];
-            primitiveRight[ equation * nFaces + face ] =
-                ( * limf->qf2 )[ equation ][ face ];
-        }
-    }
-
-    std::vector< Real > residualValues( nEquations * nCells );
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         if ( ( * res )[ equation ].size()
@@ -416,18 +402,20 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
             throw std::runtime_error(
                 "UNs HIP batch residual extent is invalid." );
         }
-        for ( int cell = 0; cell < nCells; ++ cell )
-        {
-            residualValues[ equation * nCells + cell ] =
-                ( * res )[ equation ][ cell ];
-        }
     }
 
     PrimitiveFaceStateView primitiveState;
     primitiveState.nFaces = nFaces;
     primitiveState.nEquations = nEquations;
-    primitiveState.primitiveLeft = primitiveLeft.data();
-    primitiveState.primitiveRight = primitiveRight.data();
+    primitiveState.primitiveLeft = nullptr;
+    primitiveState.primitiveRight = nullptr;
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        primitiveState.primitiveLeftComponents[ equation ] =
+            ( * limf->qf1 )[ equation ].data();
+        primitiveState.primitiveRightComponents[ equation ] =
+            ( * limf->qf2 )[ equation ].data();
+    }
     primitiveState.xNormal = ( * ug.xfn ).data();
     primitiveState.yNormal = ( * ug.yfn ).data();
     primitiveState.zNormal = ( * ug.zfn ).data();
@@ -444,7 +432,11 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
     ResidualView residual;
     residual.nCells = nCells;
     residual.nEquations = nEquations;
-    residual.values = residualValues.data();
+    residual.values = nullptr;
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        residual.components[ equation ] = ( * res )[ equation ].data();
+    }
 
     const char * traceFile = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
     const char * stageTraceFile =

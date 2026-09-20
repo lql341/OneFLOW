@@ -414,6 +414,10 @@ void Limiter::SetInitValue()
 
 void Limiter::CalcLimiterScalar()
 {
+    // SetInitValue() has already filled the complete cell field with one.
+    // The no-limiter mode therefore needs no face traversal at all.
+    if ( limflag == ILMT_NO ) return;
+
     if ( limflag == ILMT_ZERO )
     {
         this->CalcZeroLimiter();

@@ -167,6 +167,7 @@ struct ResidualView
     int nCells = 0;
     int nEquations = 0;
     Real * values = nullptr;
+    Real * components[ 5 ] = {};
 };
 
 inline void ValidateSolverFieldView( const SolverConstFieldView & field )
