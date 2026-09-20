@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-19（PR 暂不推进；3D m6 3-step accuracy gate 已在 HIP 优化工作树上通过，但端到端仍未加速；50-step 稳定性与 GPU-resident 优化仍未收口）
+> 最后更新：2026-09-20（主线已同步到 `063c0a12`；3D HIP residual face-scatter 已接入生产调用链并通过本地 CPU 编译/CTest；真实 DCU 验证、50-step 稳定性与 GPU-resident 优化仍未收口）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -13,7 +13,7 @@
 
 | 项 | 状态 |
 |---|---|
-| `origin/dev` / 本地 `dev` | 已推送对齐（0/0）；含 `upstream/master` 全部内容（相对 upstream ahead 102 / behind 0）。**注意**：本文档自身的提交会让 dev 再 +1，精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
+| `origin/dev` / 本地 `dev` | 本轮提交待推送；推送后应与本地 `dev` 对齐。`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
 | PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端，规则 1 的五算例与 HIP contract 均不适用 |
 | PR #160 `pr/euler-weno5-unified` | OPEN / MERGEABLE；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 
@@ -73,6 +73,14 @@ ONEFLOW_ARTIFACT_DIR=\$W/runs/<date>/dcu-single-$R/artifacts \
   - CPU batch：`24656.08 ms`，相对 legacy `0.9717x`（慢约 `2.91%`）
   - HIP/DCU batch：`24323.63 ms`，相对 legacy `0.9850x`（慢约 `1.52%`）
 - 结论：face-scatter 没有带来应用级加速；当前主要瓶颈不在单一 flux/residual kernel。主 solver 当前 `UNsInvFlux` 路径仍主要是 host pack、H2D、HIP flux、D2H、host residual/state task 的串联，`FluxBackend::AddFaceFlux` 优化不能代表完整生产路径已经 device-resident。
+
+## 本轮实现状态（2026-09-20）
+
+- `master`、`origin/master`、`upstream/master` 已统一为 `063c0a12`；该主线已合入 `dev`（merge commit `0a1666eb`）。
+- 主线合并后发现的 `SimuContext` 重复 accelerator state 定义已在 `6d6547c5` 清理。
+- `UNsInvFlux::CalcFlux` 在 HIP batch 模式下现在执行 `CalcInvFluxBatch` 后直接调用 `HipFluxBackend::AddCurrentFaceFlux`；生产 residual 回写走 face-scatter kernel，不再把同一份 flux 再次从 host 上传。
+- 本地 CPU-only 根工程已用 OpenMPI 编译成功；CMake/CTest 4.2.0 下 `241/241` 测试通过。该结果不替代 Kunshan DCU 目标节点验证。
+- 当前实现仍在每次 HIP batch 调用中创建临时 backend，并对 residual/connectivity 做 host↔device 拷贝；P2.1–P2.3（生命周期、geometry/connectivity 缓存、减少 stage 数据搬运）仍未完成。
 
 ## 上一轮证据（2026-09-16，保留）
 
@@ -205,9 +213,9 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 项目 | 状态 |
 |---|---|
-| 主分支 | `master` = `origin/master` = `upstream/master` = `fa3f3b06`（三端 0/0；已合入 dev） |
+| 主分支 | `master` = `origin/master` = `upstream/master` = `063c0a12`（三端 0/0；已合入 dev） |
 | 进行中的 PR | **#159**（`pr/agents-branch-model`）：`AGENTS.md` 的 fork 无关分支模型，1 文件 +23/−0。**#160**（`pr/euler-weno5-unified`）：accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract，64 文件 +4771/−272。两者均 OPEN / MERGEABLE、CI 4/4 绿，都基于 `upstream/master` 分叉且不含 fork-only 文档 |
-| 分支 | 本地 `dev` = `origin/dev`（0/0，精确 commit 见 §交接摘要的说明）；含 `upstream/master` `fa3f3b06` 全部内容（ahead 102 / behind 0）。两个 topic 分支 `pr/agents-branch-model`（`b4c041c6`）与 `pr/euler-weno5-unified`（`ef36b928`）已推送到 origin。**仅 50-step 稳定性仍是 blocker** |
+| 分支 | 本地 `dev` 将在本轮文档提交后推送到 `origin/dev`；含 `upstream/master` `063c0a12` 全部内容，并新增主线重复定义修复与 3D HIP residual 接入（ahead 102 / behind 0）。两个 topic 分支 `pr/agents-branch-model`（`b4c041c6`）与 `pr/euler-weno5-unified`（`ef36b928`）已推送到 origin。**仅 50-step 稳定性仍是 blocker** |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
@@ -369,8 +377,8 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
   - [ ] 优先实现单 zone/finest grid/Lax-Friedrichs 五方程路径，其他 capability 保持 legacy fallback。
   - [ ] 验收：3-step accuracy gate 通过；D2H/H2D 总字节数和 stage breakdown 明显下降。
 
-- [ ] **P2.4：让 face-scatter 真正接入主 solver 生产路径**
-  - [ ] 确认 `UNsInvFlux::CalcInvFluxBatch` 与 `AddInvFlux` 的实际调用链，避免只优化未被 benchmark 使用的 `FluxBackend::AddFaceFlux` API。
+- [x] **P2.4：让 face-scatter 接入主 solver 生产路径（第一步）**
+  - [x] 已确认 `UNsInvFlux::CalcFlux` 的 HIP batch 调用链，并让 `AddCurrentFaceFlux` 在主 solver 中执行 face-scatter residual kernel；不再只优化未被 benchmark 使用的 `FluxBackend::AddFaceFlux` API。
   - [ ] 比较 atomic face scatter、cell adjacency/segmented reduction 两种 residual 回写方案，记录 atomic contention 风险。
   - [ ] 验收：主 solver HIP batch 的 residual 回写确实走 device kernel，并通过 conservation、state trace 和 50-step stability gate。
 
