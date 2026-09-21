@@ -39,7 +39,11 @@ cpu_ranks="${ONEFLOW_F2_STABILITY_CPU_RANKS:-8}"
 hip_ranks="${ONEFLOW_F2_STABILITY_HIP_RANKS:-1}"
 time_integral="${ONEFLOW_F2_STABILITY_TIME_INTEGRAL:-1}"
 rk_stages="${ONEFLOW_F2_STABILITY_RK_STAGES:-3}"
-cfl="${ONEFLOW_F2_STABILITY_CFL:-0.01}"
+cfl_start="${ONEFLOW_F2_STABILITY_CFL:-0.01}"
+cfl_end="${ONEFLOW_F2_STABILITY_CFL_END:-$cfl_start}"
+disable_viscous="${ONEFLOW_F2_STABILITY_DISABLE_VISCOUS:-1}"
+disable_limiter="${ONEFLOW_F2_STABILITY_DISABLE_LIMITER:-1}"
+limiter="${ONEFLOW_F2_STABILITY_LIMITER:-}"
 stability_root="${ONEFLOW_F2_STABILITY_RUN_DIR:-$PWD/f2-main-solver-stability-${SLURM_JOB_ID:-manual}}"
 
 for value_name in steps timeout_seconds cpu_ranks hip_ranks time_integral rk_stages; do
@@ -48,6 +52,35 @@ for value_name in steps timeout_seconds cpu_ranks hip_ranks time_integral rk_sta
         ''|*[!0-9]*|0) echo "Invalid $value_name=$value" >&2; exit 2 ;;
     esac
 done
+for value_name in cfl_start cfl_end; do
+    value="${!value_name}"
+    if ! awk -v value="$value" \
+        'BEGIN {
+            valid = value ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/;
+            exit !(valid && value + 0.0 > 0.0);
+        }'
+    then
+        echo "Invalid $value_name=$value" >&2
+        exit 2
+    fi
+done
+
+for value_name in disable_viscous disable_limiter; do
+    value="${!value_name}"
+    case "$value" in
+        0|1) ;;
+        *) echo "Invalid $value_name=$value (expected 0 or 1)" >&2; exit 2 ;;
+    esac
+done
+
+if [ -n "$limiter" ]; then
+    case "$limiter" in
+        -1|0|1|2) ;;
+        *) echo "Invalid limiter=$limiter (expected -1, 0, 1 or 2)" >&2; exit 2 ;;
+    esac
+elif [ "$disable_limiter" = 1 ]; then
+    limiter=0
+fi
 
 if [ -e "$stability_root" ]; then
     echo "Refusing to overwrite existing F2 stability run directory" >&2
@@ -70,16 +103,18 @@ for mode in legacy cpu_batch hip_batch; do
         "$stability_root/$mode/script/cfd.txt"
     sed -i -E "s/^int[[:space:]]+rk_stage[[:space:]]*=.*/int rk_stage = ${rk_stages};/" \
         "$stability_root/$mode/script/cfd.txt"
-    sed -i -E "s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${cfl};/" \
+    sed -i -E "s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${cfl_start};/" \
         "$stability_root/$mode/script/cfd.txt"
-    if [ "${ONEFLOW_F2_STABILITY_DISABLE_VISCOUS:-1}" = 1 ]; then
+    sed -i -E "s/^Real[[:space:]]+cfled[[:space:]]*=.*/Real cfled = ${cfl_end};/" \
+        "$stability_root/$mode/script/cfd.txt"
+    if [ "$disable_viscous" = 1 ]; then
         sed -i -E 's/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0; \/\/ F stability inviscid gate/' \
             "$stability_root/$mode/script/vismodel.txt"
         sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' \
             "$stability_root/$mode/script/solver.txt"
     fi
-    if [ "${ONEFLOW_F2_STABILITY_DISABLE_LIMITER:-1}" = 1 ]; then
-        sed -i -E 's/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0; \/\/ F stability limiter gate/' \
+    if [ -n "$limiter" ]; then
+        sed -i -E "s/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = ${limiter}; \/\/ F stability limiter gate/" \
             "$stability_root/$mode/script/cfd.txt"
     fi
 done
@@ -91,6 +126,19 @@ fi
 
 summary_file="$stability_root/stability.tsv"
 printf 'mode\tranks\texit_code\tdiagnostic_hits\tstatus\n' > "$summary_file"
+config_file="$stability_root/configuration.tsv"
+{
+    printf 'key\tvalue\n'
+    printf 'steps\t%s\n' "$steps"
+    printf 'time_integral\t%s\n' "$time_integral"
+    printf 'rk_stages\t%s\n' "$rk_stages"
+    printf 'cfl_start\t%s\n' "$cfl_start"
+    printf 'cfl_end\t%s\n' "$cfl_end"
+    printf 'disable_viscous\t%s\n' "$disable_viscous"
+    printf 'limiter\t%s\n' "${limiter:-source}"
+    printf 'cpu_ranks\t%s\n' "$cpu_ranks"
+    printf 'hip_ranks\t%s\n' "$hip_ranks"
+} > "$config_file"
 overall=0
 
 run_mode() {
