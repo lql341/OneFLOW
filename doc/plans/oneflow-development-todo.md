@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-21（已提交并推送 3D HIP stage-breakdown checkpoint；本轮补上异常路径 teardown 和非物理状态诊断，Kunshan stability 复测待执行；50-step 稳定性与完整 GPU-resident 仍未收口）
+> 最后更新：2026-09-21（已提交并推送 stage-breakdown、异常 teardown、稳定性 runner 和 fail-fast 诊断改动；Kunshan 已确认三路首个坏状态一致且 HIP 不再 signal 11；CPU 物理稳定性与完整 GPU-resident 仍未收口）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -13,19 +13,19 @@
 
 | 项 | 状态 |
 |---|---|
-| `origin/dev` / 本地 `dev` | 本轮提交待推送；推送后应与本地 `dev` 对齐。`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
+| `origin/dev` / 本地 `dev` | 已同步到当前 checkpoint；`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
 | PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端，规则 1 的五算例与 HIP contract 均不适用 |
 | PR #160 `pr/euler-weno5-unified` | OPEN / MERGEABLE；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 
 两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
-**当前阻塞项**：2026-09-20 的 fresh inviscid-only 50-step gate 再次确认三路在相同配置下共同失稳：第 13 步出现负压警告，第 20 步 residual 爆炸；legacy CPU 与 CPU batch 均以工作负载退出码 `1` 结束，HIP batch 在同样的 NaN 之后还于 backend teardown 触发 signal 11。共同发散不能归因于 HIP 数值分歧。本轮已在 `SimuImp::Run()` 异常路径补 teardown，并让 `DeviceBuffer` 在 runtime 已结束时不再解引用 backend；同时把 step/cell/primitive/delta/timestep 写入首个非物理状态诊断。Kunshan 复测前不能宣称 signal 11 已解决。CPU 物理稳定性仍未解决前不能宣称 F 阶段完成。当前单次同 basis raw timing 显示 HIP/legacy `1.085759x`，但 50-step 未通过且跨作业波动尚未排除，不能作为稳定加速结论。
+**当前阻塞项**：Kunshan target-node 复测已确认 legacy CPU、CPU batch、HIP batch 在相同 m6 inviscid 配置下于 `step=14, zone=0, cell=37710` 首次出现相同负压力（约 `-0.075965`），三路状态差异约 `1e-14`；共同发散不能归因于 HIP 数值分歧。旧 HIP teardown signal 11 已不再复现，HIP mode 现在以普通非零 workload exit 结束；legacy/CPU batch 仍可能在 MPI launcher 回收阶段返回 timeout，需要继续收口 runner 与 solver 的失败路径。CPU 物理稳定性仍未解决前不能宣称 F 阶段完成。当前单次同 basis raw timing 显示 HIP/legacy `1.085759x`，但 50-step 未通过且跨作业波动尚未排除，不能作为稳定加速结论。
 
 **下一步（按优先级）**
 
 1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
 2. 收口 50-step 稳定性（§2 的 F2.4b）：先修 CPU legacy 的 CFL/边界/初始化/物理模型条件，再要求 CPU batch / HIP batch 逐步对齐。
-3. 在 Kunshan target node 复跑 50-step stability，确认异常路径 teardown 修复是否消除 `HipFluxBackend` 析构 signal 11；随后继续修复 CPU legacy 的 CFL/边界/初始化/物理模型条件。
+3. 继续定位 CPU legacy 的 CFL/边界/初始化/物理模型条件；把 stability runner 的 fail-fast 环境传递和 MPI 回收行为做成可重复门禁。
 4. 按 breakdown 决定的路线优先迁移 gradient/reconstruction；每一步先过 3-step accuracy gate，再做同 basis timing。
 5. 完成 backend/state 生命周期、完整 NS 与 MPI correctness；只有 50-step 稳定且连续多次性能测量方向一致后，才更新已发布性能报告或整理后续 PR。
 
@@ -452,6 +452,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-21 | 稳定性失败路径与 target-node 复测：异常 teardown 修复、首个非物理状态诊断、stability runner 的 foreground timeout、opt-in fail-fast 和 MPI 启动传递 | 本地 CPU build + CTest `242/242`；Kunshan `gfx906`/`dcu:1` 的 m6 复测定位三路共同坏状态为 step 14、zone 0、cell 37710，HIP 不再出现 signal 11；50-step 仍未通过，当前不更新正式性能报告 |
 | 2026-09-20 | 3D persistent-state / stage-breakdown vertical slice：新增 `Ns3DDeviceState` 注册与 host scratch ownership、HIP geometry/connectivity cache、opt-in `StageProfiler`、正式 repeat breakdown 汇总、8-rank Slurm slot 修正、可参数化 trace timeout 和独立 50-step stability runner | 本地 CPU build + CTest `242/242`；Kunshan v4 root HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step accuracy、breakdown 和 timing 全通过；v5 CPU normal/strict 各 5/5；v5b 50-step 三路均于第 20 步共同失稳，HIP 错误路径另有 teardown signal 11。当前 3D 仍是 host-staged，不是完整 GPU-resident |
 | 2026-09-19 | 开出 upstream **PR #160**（`pr/euler-weno5-unified`）：accelerator substrate（Phase 1–3 + E1–E6 CPU vertical slice，含主 solver gated CPU batch 路径、mutable `SimuContext` 透传、MRField 生命周期绑定、RungeKutta capability guard）与 1D Euler port 的 WENO5 / AccelBackend 设备管理 / HIP contract 注册；**门禁在 PR 分支自身上跑**：T1 `cpu-regression` normal 5/5 + strict 5/5，T2 `dcu-single` GoogleTest 9/9 + CTest 9/9，CI 4/4 绿 | revision `ef36b928`；64 文件 +4771/−272；F 阶段（50-step 未收口、无端到端加速）刻意排除在外，并在 PR 描述中写明边界 |
 | 2026-09-19 | 开出 upstream **PR #159**（`pr/agents-branch-model`）：`AGENTS.md` 增加 fork 无关的分支模型（baseline / working / topic 三类分支，`dev` 引用带存在性条件，不引用 fork-only 文件）；CI 4/4 绿 | revision `b4c041c6`；1 文件 +23/−0；共享文件单独成 PR，不与 dev 的 fork-only 文档混在一起 |
