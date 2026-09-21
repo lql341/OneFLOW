@@ -109,4 +109,26 @@ TEST( EulerDomainStateRegistry, RestartInvalidateCreatesFreshState )
     EXPECT_EQ( creations, 2 );
 }
 
+TEST( Ns3DDeviceState, OwnsPersistentVerticalSliceBuffers )
+{
+    const EulerDomainProblem problem{ 4, 2, 5, 1.4, 0.01, 1.0, EulerDomainBoundary::Periodic };
+    const EulerDomainStateKey key{ 2, 7, 0, AccelBackendKind::HIP };
+    Ns3DDeviceState state( problem, key );
+    state.ReserveFaces( 3 );
+    std::vector< Real > values( 20, 1.0 );
+    const EulerDomainConstFieldView field{ 4, 5, values.data() };
+    state.Upload( field );
+
+    EXPECT_EQ( state.key, key );
+    EXPECT_EQ( state.nFaces, 3 );
+    EXPECT_TRUE( state.uploaded );
+    EXPECT_EQ( state.conservedState.size(), 20u );
+    EXPECT_EQ( state.oldState.size(), 20u );
+    EXPECT_EQ( state.rkScratch.size(), 20u );
+    EXPECT_EQ( state.gradient.size(), 60u );
+    EXPECT_EQ( state.faceFlux.size(), 15u );
+    EXPECT_EQ( state.leftCell.size(), 3u );
+    EXPECT_EQ( state.haloMetadata.size(), 3u );
+}
+
 } // namespace

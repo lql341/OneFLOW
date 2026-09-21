@@ -1,5 +1,6 @@
 #include "EulerDomainStateSync.h"
 
+#include "AccelRuntime.h"
 #include "CpuEulerDomainBackend.h"
 #include "EulerDomainMrFieldAdapter.h"
 #include "EulerDomainStateLifecycle.h"
@@ -7,6 +8,7 @@
 #include "Ctrl.h"
 #include "DataBase.h"
 #include "FieldImp.h"
+#include "UnsGrid.h"
 #include "Grid.h"
 #include "GridState.h"
 #include "NsCom.h"
@@ -94,7 +96,22 @@ void SyncCurrentEulerDomainState(
     {
         context.InitializeAccelState( backend, problem, key, field );
     }
+
+    AccelRuntime & runtime = AccelRuntime::Instance();
+    if ( runtime.IsInitialized()
+         && runtime.Backend().Kind() == AccelBackendKind::HIP )
+    {
+        EulerDomainStateKey hipKey = key;
+        hipKey.backend = AccelBackendKind::HIP;
+        context.AccelStates().Invalidate( hipKey );
+        auto hipState = std::make_unique< Ns3DDeviceState >( problem, hipKey );
+        UnsGrid * unsGrid = Zone::GetUnsGrid();
+        if ( unsGrid != nullptr ) hipState->ReserveFaces( unsGrid->nFaces );
+        hipState->Upload( field );
+        context.AccelStates().Insert( hipKey, std::move( hipState ) );
+    }
 }
+
 
 void UploadCurrentEulerDomainState(
     SimuContext & context,

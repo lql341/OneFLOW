@@ -18,6 +18,7 @@ License
 
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -136,6 +137,79 @@ class EulerDomainState
 {
 public:
     virtual ~EulerDomainState() = default;
+};
+
+// Long-lived 3D main-solver state metadata. This is a separate specialization
+// rather than forcing the 1D port state shape onto Navier--Stokes. The HIP
+// backend owns device allocations; this object aligns solver/grid identity,
+// host mirrors and scratch lifetimes with lifecycle boundaries.
+class Ns3DDeviceState final : public EulerDomainState
+{
+public:
+    Ns3DDeviceState( const EulerDomainProblem & problemValue,
+                     const EulerDomainStateKey & keyValue )
+        : problem( problemValue ), key( keyValue )
+    {
+    }
+
+    void ReserveFaces( int faceCount )
+    {
+        if ( faceCount < 0 )
+            throw std::invalid_argument( "negative Ns3D face count" );
+        nFaces = faceCount;
+        faceState.resize( problem.nEquations * faceCount );
+        faceFlux.resize( problem.nEquations * faceCount );
+        xNormal.resize( faceCount );
+        yNormal.resize( faceCount );
+        zNormal.resize( faceCount );
+        meshVelocityNormal.resize( faceCount );
+        faceArea.resize( faceCount );
+        leftCell.resize( faceCount );
+        rightCell.resize( faceCount );
+        boundaryMetadata.resize( faceCount );
+        haloMetadata.resize( faceCount );
+    }
+
+    void Upload( const EulerDomainConstFieldView & field )
+    {
+        ValidateEulerDomainField( problem, field );
+        const std::size_t count =
+            static_cast< std::size_t >( problem.nCells ) * problem.nEquations;
+        conservedState.assign( field.values, field.values + count );
+        oldState = conservedState;
+        residual.assign( count, 0.0 );
+        rkScratch.assign( count, 0.0 );
+        gradient.assign( count * 3, 0.0 );
+        limiter.assign( count, 0.0 );
+        reconstruction.assign( count, 0.0 );
+        viscousTurbulence.assign( count, 0.0 );
+        uploaded = true;
+    }
+
+    EulerDomainProblem problem;
+    EulerDomainStateKey key;
+    int nFaces = 0;
+    bool uploaded = false;
+
+    std::vector< Real > conservedState;
+    std::vector< Real > oldState;
+    std::vector< Real > residual;
+    std::vector< Real > rkScratch;
+    std::vector< Real > gradient;
+    std::vector< Real > limiter;
+    std::vector< Real > reconstruction;
+    std::vector< Real > faceState;
+    std::vector< Real > faceFlux;
+    std::vector< Real > xNormal;
+    std::vector< Real > yNormal;
+    std::vector< Real > zNormal;
+    std::vector< Real > meshVelocityNormal;
+    std::vector< Real > faceArea;
+    std::vector< int > leftCell;
+    std::vector< int > rightCell;
+    std::vector< unsigned char > boundaryMetadata;
+    std::vector< unsigned char > haloMetadata;
+    std::vector< Real > viscousTurbulence;
 };
 
 class EulerDomainBackend

@@ -38,6 +38,7 @@ set(DATABASE_TEST_SOURCES
 	${TASK_SRC_DIR}/Task.cpp
 	${TASK_SRC_DIR}/TaskState.cpp
 	${TASK_SRC_DIR}/SimpleTask.cpp
+	${CMAKE_SOURCE_DIR}/codes/accel/src/StageProfiler.cpp
 	${TASK_SRC_DIR}/CmxTask.cpp	
 	${TASK_SRC_DIR}/FileInfo.cpp
 	${TASK_SRC_DIR}/ActionState.cpp
@@ -90,6 +91,7 @@ target_include_directories(task_test
 	${GLOBAL_INCLUDE_DIR}
 	${GEOMETRY_INCLUDE_DIR}
 	${PARALLEL_INCLUDE_DIR}
+	${CMAKE_SOURCE_DIR}/codes/accel/include
 	${ARRAY_INCLUDE_DIR}
 	
 )

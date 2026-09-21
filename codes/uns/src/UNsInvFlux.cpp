@@ -44,6 +44,7 @@ License
 #include "ZoneState.h"
 #include "GridState.h"
 #include "AccelRuntime.h"
+#include "StageProfiler.h"
 #include "CpuFluxBackend.h"
 #include "EulerCpuAdapter.h"
 #include "EulerInvFluxCapability.h"
@@ -201,16 +202,20 @@ void UNsInvFlux::CalcLimiter()
 
 void UNsInvFlux::CalcInvFace()
 {
-    uns_grad.Init();
-    uns_grad.CalcGrad();
-
-    this->CalcLimiter();
-
-    this->GetQlQrField();
-
-    this->ReconstructFaceValueField();
-
-    this->BoundaryQlQrFixField();
+    { ScopedStageTimer timer( "gradient" );
+        uns_grad.Init();
+        uns_grad.CalcGrad();
+    }
+    { ScopedStageTimer timer( "limiter" );
+        this->CalcLimiter();
+    }
+    { ScopedStageTimer timer( "reconstruction" );
+        this->GetQlQrField();
+        this->ReconstructFaceValueField();
+    }
+    { ScopedStageTimer timer( "boundary_reconstruction" );
+        this->BoundaryQlQrFixField();
+    }
 }
 
 void UNsInvFlux::GetQlQrField()
@@ -492,6 +497,7 @@ void UNsInvFlux::CalcInvFluxBatch( FluxBackend & backend )
     std::vector< Real > faceArea( nFaces );
     std::vector< Real > faceFlux( nEquations * nFaces );
 
+    { ScopedStageTimer timer( "host_pack" );
     for ( int face = 0; face < nFaces; ++ face )
     {
         xNormal[ face ] = ( * ug.xfn )[ face ];
@@ -506,6 +512,7 @@ void UNsInvFlux::CalcInvFluxBatch( FluxBackend & backend )
             primitiveRight[ equation * nFaces + face ] =
                 ( * limf->qf2 )[ equation ][ face ];
         }
+    }
     }
 
     PrimitiveFaceStateView primitiveState;
@@ -525,8 +532,10 @@ void UNsInvFlux::CalcInvFluxBatch( FluxBackend & backend )
     flux.nEquations = nEquations;
     flux.values = faceFlux.data();
 
-    EulerCpuAdapter adapter;
-    adapter.CalcInvFlux( primitiveState, flux, backend, 1 );
+    { ScopedStageTimer timer( "flux_backend" );
+        EulerCpuAdapter adapter;
+        adapter.CalcInvFlux( primitiveState, flux, backend, 1 );
+    }
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         for ( int face = 0; face < nFaces; ++ face )
@@ -676,6 +685,7 @@ void UNsInvFlux::DumpInvFluxStageTrace()
 
 void UNsInvFlux::AddInvFlux()
 {
+    ScopedStageTimer timer( "residual_state_update" );
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * res = GetFieldPointer< MRField >( grid, "res" );
 

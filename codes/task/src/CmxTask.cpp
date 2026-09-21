@@ -37,6 +37,7 @@ License
 #include "Zone.h"
 #include "Grid.h"
 #include "LogFile.h"
+#include "StageProfiler.h"
 #include "FileMap.h"
 #include <memory>
 #include <utility>
@@ -332,7 +333,16 @@ void SingleSolverSingleGridTask( int operationId )
 {
     // Runtime form: plan + execute by id (no string lookup here).
     GenerateCmdList( operationId );
-    CMD::ExecuteCmd();
+    const char * category = StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
+    if ( category[ 0 ] != '\0' )
+    {
+        ScopedStageTimer timer( category );
+        CMD::ExecuteCmd();
+    }
+    else
+    {
+        CMD::ExecuteCmd();
+    }
 }
 
 void SingleSolverSingleGridTask( const std::string & taskName )

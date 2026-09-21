@@ -12,6 +12,7 @@ add_executable ( OneFLOWHipSmoke
     src/EulerCpuAdapter.cpp
     src/HipBackend.cpp
     src/HipFluxBackend.hip
+    src/StageProfiler.cpp
 )
 
 target_include_directories ( OneFLOWHipSmoke

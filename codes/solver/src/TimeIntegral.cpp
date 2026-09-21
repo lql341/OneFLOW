@@ -31,6 +31,7 @@ License
 #include "EulerDomainStateSync.h"
 #include "EulerRungeKuttaCapability.h"
 #include "EulerDomainStateRegistry.h"
+#include "StageProfiler.h"
 #include "SimuContext.h"
 #include "SolverDef.h"
 #include "SolverState.h"
@@ -64,6 +65,7 @@ struct EulerRungeKuttaStageContext
 
 void RunEulerRungeKuttaStage( int, int stage, void * userData )
 {
+    ScopedStageTimer timer( "rk_update" );
     auto * context =
         static_cast< EulerRungeKuttaStageContext * >( userData );
     if ( context == nullptr || stage < 0 || stage >= context->stageCount )
@@ -91,7 +93,7 @@ EulerRungeKuttaCapabilityRequest CurrentEulerRungeKuttaCapabilityRequest(
     request.inviscidScheme = nscom.ischeme;
     request.timeIntegral =
         static_cast< EulerRungeKuttaTimeIntegral >( ctrl.time_integral );
-    request.hasViscousTerms = nscom.nTModel != 0;
+    request.hasViscousTerms = vis_model.vismodel != 0;
     request.hasSourceTerms = nscom.chemModel != 0;
     request.hasLimiter = ctrl.ilim != 0;
     request.hasInterfaceExchange = ZoneState::nLocal > 1;

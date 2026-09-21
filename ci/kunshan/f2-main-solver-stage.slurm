@@ -4,8 +4,8 @@
 #SBATCH --job-name=oneflow_f2_stage
 #SBATCH --partition=kshdnormal
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
 #SBATCH --mem=27G
 #SBATCH --gres=dcu:1
 #SBATCH --time=00:20:00
@@ -30,6 +30,11 @@ module load python/3.8.10
 
 source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/$ONEFLOW_F2_STAGE_CASE"
 trace_root="${ONEFLOW_F2_STAGE_RUN_DIR:-$PWD/f2-main-solver-stage-${SLURM_JOB_ID:-manual}}"
+trace_timeout="${ONEFLOW_F2_STAGE_TRACE_TIMEOUT_SECONDS:-180}"
+
+case "$trace_timeout" in
+    ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_TRACE_TIMEOUT_SECONDS=$trace_timeout" >&2; exit 2 ;;
+esac
 
 if [ -e "$trace_root" ]; then
     echo "Refusing to overwrite existing F2 stage run directory" >&2
@@ -51,8 +56,10 @@ for mode in legacy cpu_batch hip_batch; do
     sed -i -E "s/^int[[:space:]]+rk_stage[[:space:]]*=.*/int rk_stage = ${ONEFLOW_F2_STAGE_RK_STAGES};/" \
         "$trace_root/$mode/script/cfd.txt"
     if [ "${ONEFLOW_F2_STAGE_DISABLE_VISCOUS:-0}" = 1 ]; then
-        sed -i -E 's/^int[[:space:]]+nTModel[[:space:]]*=.*/int nTModel = 0; \/\/ F stage inviscid gate/' \
-            "$trace_root/$mode/script/cfd.txt"
+        sed -i -E 's/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0; \/\/ F stage inviscid gate/' \
+            "$trace_root/$mode/script/vismodel.txt"
+        sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' \
+            "$trace_root/$mode/script/solver.txt"
     fi
     if [ -n "${ONEFLOW_F2_STAGE_CFL:-}" ]; then
         sed -i -E "s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${ONEFLOW_F2_STAGE_CFL};/" "$trace_root/$mode/script/cfd.txt"
@@ -70,9 +77,11 @@ fi
 
 run_case() {
     local mode=$1
+    rm -f "$trace_root/$mode.breakdown-"*.tsv
     rm -f "$trace_root/$mode.stage"
     (
         cd "$trace_root"
+        export ONEFLOW_STAGE_BREAKDOWN_FILE="$trace_root/$mode.breakdown-%r.tsv"
         export ONEFLOW_UNS_STAGE_TRACE_FILE="$trace_root/$mode.stage"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH || true
         if [ "$mode" = hip_batch ]; then
@@ -84,7 +93,7 @@ run_case() {
                 export ONEFLOW_ENABLE_UNS_CPU_BATCH=1
             fi
         fi
-        timeout --signal=TERM --kill-after=10s 180 \
+        timeout --signal=TERM --kill-after=10s "$trace_timeout" \
             mpirun -np 1 "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
     ) > "$trace_root/$mode.log" 2>&1
 }
@@ -173,6 +182,8 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
             log_file="$bench_root/$mode/warmup-$repeat.log"
             (
                 cd "$bench_root"
+                mkdir -p "$bench_root/$mode/warmup-$repeat"
+                export ONEFLOW_STAGE_BREAKDOWN_FILE="$bench_root/$mode/warmup-$repeat/breakdown-%r.tsv"
                 configure_mode "$mode"
                 timeout --signal=TERM --kill-after=10s "$bench_timeout" \
                     mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
@@ -185,6 +196,8 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
             start_ns=$(date +%s%N)
             (
                 cd "$bench_root"
+                mkdir -p "$bench_root/$mode/repeat-$repeat"
+                export ONEFLOW_STAGE_BREAKDOWN_FILE="$bench_root/$mode/repeat-$repeat/breakdown-%r.tsv"
                 configure_mode "$mode"
                 timeout --signal=TERM --kill-after=10s "$bench_timeout" \
                     mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
@@ -205,6 +218,22 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
         run_benchmark_case "$mode"
     done
 
+    breakdown_file="$trace_root/breakdown.tsv"
+    printf "mode\trepeat\tcategory\telapsed_ms\n" > "$breakdown_file"
+    breakdown_count=0
+    while IFS= read -r -d "" breakdown_path; do
+        breakdown_count=$((breakdown_count + 1))
+        repeat_name="$(basename "$(dirname "$breakdown_path")")"
+        mode_name="$(basename "$(dirname "$(dirname "$breakdown_path")")")"
+        while IFS="$(printf "\t")" read -r category elapsed; do
+            printf "%s\t%s\t%s\t%s\n" "$mode_name" "$repeat_name" "$category" "$elapsed" >> "$breakdown_file"
+        done < <(tail -n +2 "$breakdown_path")
+    done < <(find "$bench_root" -type f -path "*/repeat-*/breakdown-*.tsv" -print0)
+    if [ "$breakdown_count" -eq 0 ]; then
+        echo "ERROR: no formal-repeat stage breakdown files found" >&2
+        exit 1
+    fi
+    echo "BREAKDOWN_PASS file=$breakdown_file"
     python3 - "$timing_file" <<PY
 import collections
 import pathlib

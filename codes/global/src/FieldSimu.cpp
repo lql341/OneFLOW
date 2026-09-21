@@ -34,6 +34,7 @@ License
 #include "Multigrid.h"
 #include "BcData.h"
 #include "GridState.h"
+#include "StageProfiler.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -103,13 +104,14 @@ void FieldPipeline::Run()
 
 void FieldPipeline::Run( SimuContext & ctx )
 {
-    FieldSimuSetupGlobals();
-    FieldSimuLoadGrid();
-    FieldSimuPrepareWallDist();
-    FieldSimuCreateSolvers( ctx );
-    FieldSimuInitFlowField();
-    SyncAllEulerDomainStates( ctx );
+    { ScopedStageTimer timer( "initialization" ); FieldSimuSetupGlobals(); }
+    { ScopedStageTimer timer( "initialization" ); FieldSimuLoadGrid(); }
+    { ScopedStageTimer timer( "initialization" ); FieldSimuPrepareWallDist(); }
+    { ScopedStageTimer timer( "initialization" ); FieldSimuCreateSolvers( ctx ); }
+    { ScopedStageTimer timer( "initialization" ); FieldSimuInitFlowField(); }
+    { ScopedStageTimer timer( "initialization" ); SyncAllEulerDomainStates( ctx ); }
     FieldSimuRun( ctx );
+    StageProfiler::Flush();
 }
 
 void FieldSimuRunPipeline()

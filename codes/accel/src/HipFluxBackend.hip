@@ -11,6 +11,7 @@ License
 #include "AccelRuntime.h"
 #include "EulerCpuAdapter.h"
 #include "DeviceBuffer.h"
+#include "StageProfiler.h"
 
 #include <hip/hip_runtime.h>
 
@@ -693,19 +694,35 @@ void HipFluxBackend::AddCurrentFaceFlux(
     const int nEq = residual.nEquations;
     const int totalResidual = nCells * nEq;
 
-    DeviceBuffer< int > leftCell( nFaces );
-    DeviceBuffer< int > rightCell( nFaces );
-    DeviceBuffer< unsigned char > boundaryMask( nFaces );
-    DeviceBuffer< Real > deviceResidual( totalResidual );
-
-    leftCell.CopyFromHost( connectivity.leftCell, nFaces );
-    rightCell.CopyFromHost( connectivity.rightCell, nFaces );
-    if ( connectivity.boundaryMask )
-        boundaryMask.CopyFromHost( connectivity.boundaryMask, nFaces );
-    deviceResidual.CopyFromHost( residual.values, totalResidual );
+    const bool connectivityCacheMatches =
+        geometryCacheValid_
+        && cachedFaces_ == nFaces
+        && cachedBoundaryFaces_ == connectivity.nBoundaryFaces
+        && cachedLeftCell_ == connectivity.leftCell
+        && cachedRightCell_ == connectivity.rightCell
+        && cachedBoundaryMask_ == connectivity.boundaryMask;
+    if ( ! connectivityCacheMatches )
+    {
+        ScopedStageTimer timer( "geometry_connectivity_H2D" );
+        leftCell_.CopyFromHost( connectivity.leftCell, nFaces );
+        rightCell_.CopyFromHost( connectivity.rightCell, nFaces );
+        if ( connectivity.boundaryMask )
+            boundaryMask_.CopyFromHost( connectivity.boundaryMask, nFaces );
+        cachedLeftCell_ = connectivity.leftCell;
+        cachedRightCell_ = connectivity.rightCell;
+        cachedBoundaryMask_ = connectivity.boundaryMask;
+        cachedFaces_ = nFaces;
+        cachedBoundaryFaces_ = connectivity.nBoundaryFaces;
+        geometryCacheValid_ = true;
+    }
+    deviceResidual_.Resize( totalResidual );
+    { ScopedStageTimer timer( "H2D" );
+        deviceResidual_.CopyFromHost( residual.values, totalResidual );
+    }
 
     const int blockSize = 256;
     const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
+    { ScopedStageTimer timer( "HIP kernel" );
     hipLaunchKernelGGL(
         ScatterFaceFluxEulerKernel,
         dim3( gridSize ),
@@ -713,19 +730,22 @@ void HipFluxBackend::AddCurrentFaceFlux(
         0,
         0,
         deviceFlux_.Data(),
-        leftCell.Data(),
-        rightCell.Data(),
-        connectivity.boundaryMask ? boundaryMask.Data() : nullptr,
+        leftCell_.Data(),
+        rightCell_.Data(),
+        connectivity.boundaryMask ? boundaryMask_.Data() : nullptr,
         connectivity.nBoundaryFaces,
         nFaces,
         nCells,
         nEq,
-        deviceResidual.Data() );
+        deviceResidual_.Data() );
     CheckHip( hipGetLastError(), "ScatterFaceFluxEulerKernel launch" );
     CheckHip(
         hipDeviceSynchronize(),
         "ScatterFaceFluxEulerKernel synchronize" );
-    deviceResidual.CopyToHost( residual.values, totalResidual );
+    }
+    { ScopedStageTimer timer( "D2H" );
+        deviceResidual_.CopyToHost( residual.values, totalResidual );
+    }
 }
 
 void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
@@ -772,6 +792,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
 
     if ( componentInput )
     {
+        ScopedStageTimer timer( "H2D" );
         qLeft_.Resize( totalFlux );
         qRight_.Resize( totalFlux );
         for ( int equation = 0; equation < nEq; ++ equation )
@@ -788,6 +809,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     }
     else
     {
+        ScopedStageTimer timer( "H2D" );
         qLeft_.CopyFromHost( state.primitiveLeft, totalFlux );
         qRight_.CopyFromHost( state.primitiveRight, totalFlux );
     }
@@ -807,6 +829,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         && cachedBoundaryMask_ == connectivity.boundaryMask;
     if ( ! geometryCacheMatches )
     {
+        ScopedStageTimer timer( "geometry_connectivity_H2D" );
         if ( state.xNormal )
             xNormal_.CopyFromHost( state.xNormal, nFaces );
         if ( state.yNormal )
@@ -841,6 +864,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         geometryCacheValid_ = true;
     }
     deviceResidual_.Resize( totalResidual );
+    { ScopedStageTimer timer( "H2D" );
     if ( residual.values != nullptr )
     {
         deviceResidual_.CopyFromHost( residual.values, totalResidual );
@@ -856,9 +880,11 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         }
     }
     if ( hostFlux != nullptr ) deviceFlux_.Resize( totalFlux );
+    }
 
     const int blockSize = 256;
     const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
+    { ScopedStageTimer kernelTimer( "HIP kernel" );
     hipLaunchKernelGGL(
         CalcAndScatterPrimitiveEulerKernel,
         dim3( gridSize ),
@@ -888,6 +914,8 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     CheckHip(
         hipDeviceSynchronize(),
         "CalcAndScatterPrimitiveEulerKernel synchronize" );
+    }
+    { ScopedStageTimer timer( "D2H" );
     if ( residual.values != nullptr )
     {
         deviceResidual_.CopyToHost( residual.values, totalResidual );
@@ -902,8 +930,10 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
                 nCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
         }
     }
+    }
     if ( hostFlux != nullptr )
     {
+        ScopedStageTimer timer( "D2H" );
         deviceFlux_.CopyToHost( hostFlux->values, totalFlux );
         deviceFluxFaces_ = nFaces;
         deviceFluxEquations_ = nEq;

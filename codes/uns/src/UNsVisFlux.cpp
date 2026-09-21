@@ -40,6 +40,7 @@ License
 #include "ULimiter.h"
 #include "FieldImp.h"
 #include "Iteration.h"
+#include "StageProfiler.h"
 #include <iostream>
 #include <iomanip>
 
@@ -89,6 +90,7 @@ void UNsVisFlux::SetVisPointer()
 
 void UNsVisFlux::CalcFlux()
 {
+    ScopedStageTimer timer( "viscous_turbulence" );
     if ( vis_model.vismodel == 0 ) return;
     ug.Init();
     unsf.Init();
@@ -101,7 +103,9 @@ void UNsVisFlux::CalcFlux()
 
     this->SetVisPointer();
 
-    this->PrepareField();
+    { ScopedStageTimer gradientTimer( "gradient" );
+        this->PrepareField();
+    }
     this->CalcVisFlux();
     this->AddVisFlux();
 
