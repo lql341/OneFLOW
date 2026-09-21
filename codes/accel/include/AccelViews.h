@@ -162,6 +162,61 @@ inline void ValidateFaceConnectivityView(
     }
 }
 
+struct CellGradientView
+{
+    int nCells = 0;
+    int nGhostCells = 0;
+    int nFaces = 0;
+    int nBoundaryFaces = 0;
+    int nEquations = 0;
+    const Real * q[ 5 ] = {};
+    const Real * xFace = nullptr;
+    const Real * yFace = nullptr;
+    const Real * zFace = nullptr;
+    const Real * xNormal = nullptr;
+    const Real * yNormal = nullptr;
+    const Real * zNormal = nullptr;
+    const Real * faceArea = nullptr;
+    const Real * xCell = nullptr;
+    const Real * yCell = nullptr;
+    const Real * zCell = nullptr;
+    const Real * cellVolume = nullptr;
+    const int * leftCell = nullptr;
+    const int * rightCell = nullptr;
+    Real * dqdx[ 5 ] = {};
+    Real * dqdy[ 5 ] = {};
+    Real * dqdz[ 5 ] = {};
+    const void * cacheKey = nullptr;
+};
+
+inline void ValidateCellGradientView( const CellGradientView & view )
+{
+    if ( view.nCells <= 0 || view.nGhostCells < 0
+         || view.nGhostCells != view.nBoundaryFaces || view.nFaces <= 0
+         || view.nBoundaryFaces < 0 || view.nBoundaryFaces > view.nFaces
+         || ( view.nEquations != 3 && view.nEquations != 5 )
+         || view.xFace == nullptr || view.yFace == nullptr
+         || view.zFace == nullptr || view.xNormal == nullptr
+         || view.yNormal == nullptr || view.zNormal == nullptr
+         || view.faceArea == nullptr || view.xCell == nullptr
+         || view.yCell == nullptr || view.zCell == nullptr
+         || view.cellVolume == nullptr || view.leftCell == nullptr
+         || view.rightCell == nullptr )
+    {
+        throw std::invalid_argument( "invalid solver cell gradient view" );
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( view.q[ equation ] == nullptr || view.dqdx[ equation ] == nullptr
+             || view.dqdy[ equation ] == nullptr
+             || view.dqdz[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "cell gradient view has a missing equation component" );
+        }
+    }
+}
+
 struct ResidualView
 {
     int nCells = 0;

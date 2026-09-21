@@ -47,6 +47,7 @@ public:
     void CalcInvFluxBatch( FluxBackend & backend );
     bool UseCpuBatchAdapter() const;
     bool UseHipBatchAdapter() const;
+    bool UseHipGradient() const;
     void CalcInvFace();
     void CalcLimiter();
     void AddInvFlux();

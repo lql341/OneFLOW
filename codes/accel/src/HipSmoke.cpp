@@ -445,6 +445,123 @@ bool TestMainSolverFiveEquationLaxFriedrichs()
     return true;
 }
 
+bool TestMainSolverGradient()
+{
+    constexpr int nCells = 2;
+    constexpr int nBoundaryFaces = 2;
+    constexpr int nFaces = 3;
+    constexpr int nEq = 5;
+    constexpr int nTotalCells = nCells + nBoundaryFaces;
+    const int leftCell[ nFaces ] = { 0, 1, 0 };
+    const int rightCell[ nFaces ] = { 2, 3, 1 };
+    const ONEFLOW::Real xCell[ nTotalCells ] = { 0.0, 1.0, -1.0, 2.0 };
+    const ONEFLOW::Real yCell[ nTotalCells ] = { 0.0, 0.2, 0.0, 0.2 };
+    const ONEFLOW::Real zCell[ nTotalCells ] = { 0.0, 0.1, 0.0, 0.1 };
+    const ONEFLOW::Real xFace[ nFaces ] = { -0.5, 1.5, 0.5 };
+    const ONEFLOW::Real yFace[ nFaces ] = { 0.0, 0.2, 0.1 };
+    const ONEFLOW::Real zFace[ nFaces ] = { 0.0, 0.1, 0.05 };
+    const ONEFLOW::Real xNormal[ nFaces ] = { -1.0, 1.0, 0.98 };
+    const ONEFLOW::Real yNormal[ nFaces ] = { 0.0, 0.0, 0.2 };
+    const ONEFLOW::Real zNormal[ nFaces ] = { 0.0, 0.0, 0.02 };
+    const ONEFLOW::Real area[ nFaces ] = { 1.0, 1.1, 1.2 };
+    const ONEFLOW::Real volume[ nCells ] = { 1.0, 1.2 };
+    std::vector< ONEFLOW::Real > q( nEq * nTotalCells );
+    for ( int eq = 0; eq < nEq; ++ eq )
+        for ( int cell = 0; cell < nTotalCells; ++ cell )
+            q[ eq * nTotalCells + cell ] =
+                0.7 + 0.13 * eq + 0.07 * cell + 0.01 * eq * cell;
+
+    std::vector< ONEFLOW::Real > expected( 3 * nEq * nTotalCells, 0.0 );
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        const int left = leftCell[ face ];
+        const int right = rightCell[ face ];
+        const double dxl = xFace[ face ] - xCell[ left ];
+        const double dyl = yFace[ face ] - yCell[ left ];
+        const double dzl = zFace[ face ] - zCell[ left ];
+        const double dxr = xFace[ face ] - xCell[ right ];
+        const double dyr = yFace[ face ] - yCell[ right ];
+        const double dzr = zFace[ face ] - zCell[ right ];
+        const double delt1 = std::sqrt( dxl * dxl + dyl * dyl + dzl * dzl );
+        const double delt2 = std::sqrt( dxr * dxr + dyr * dyr + dzr * dzr );
+        const double delta = 1.0 / ( delt1 + delt2 + 1.0e-40 );
+        const double cl = delt2 * delta;
+        const double cr = delt1 * delta;
+        const double ax = xNormal[ face ] * area[ face ];
+        const double ay = yNormal[ face ] * area[ face ];
+        const double az = zNormal[ face ] * area[ face ];
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            const double value = cl * q[ eq * nTotalCells + left ]
+                + cr * q[ eq * nTotalCells + right ];
+            const int base = eq * 3 * nTotalCells;
+            expected[ base + left ] += ax * value;
+            expected[ base + nTotalCells + left ] += ay * value;
+            expected[ base + 2 * nTotalCells + left ] += az * value;
+            if ( face >= nBoundaryFaces )
+            {
+                expected[ base + right ] -= ax * value;
+                expected[ base + nTotalCells + right ] -= ay * value;
+                expected[ base + 2 * nTotalCells + right ] -= az * value;
+            }
+        }
+    }
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int base = eq * 3 * nTotalCells;
+        for ( int cell = 0; cell < nCells; ++ cell )
+        {
+            expected[ base + cell ] /= volume[ cell ];
+            expected[ base + nTotalCells + cell ] /= volume[ cell ];
+            expected[ base + 2 * nTotalCells + cell ] /= volume[ cell ];
+        }
+        for ( int face = 0; face < nBoundaryFaces; ++ face )
+        {
+            const int left = leftCell[ face ];
+            const int ghost = rightCell[ face ];
+            expected[ base + ghost ] = expected[ base + left ];
+            expected[ base + nTotalCells + ghost ] =
+                expected[ base + nTotalCells + left ];
+            expected[ base + 2 * nTotalCells + ghost ] =
+                expected[ base + 2 * nTotalCells + left ];
+        }
+    }
+
+    std::vector< ONEFLOW::Real > actual( 3 * nEq * nTotalCells );
+    ONEFLOW::CellGradientView view;
+    view.nCells = nCells;
+    view.nGhostCells = nBoundaryFaces;
+    view.nFaces = nFaces;
+    view.nBoundaryFaces = nBoundaryFaces;
+    view.nEquations = nEq;
+    view.xFace = xFace; view.yFace = yFace; view.zFace = zFace;
+    view.xNormal = xNormal; view.yNormal = yNormal;
+    view.zNormal = zNormal; view.faceArea = area;
+    view.xCell = xCell; view.yCell = yCell; view.zCell = zCell;
+    view.cellVolume = volume;
+    view.leftCell = leftCell; view.rightCell = rightCell;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int base = eq * 3 * nTotalCells;
+        view.q[ eq ] = q.data() + eq * nTotalCells;
+        view.dqdx[ eq ] = actual.data() + base;
+        view.dqdy[ eq ] = actual.data() + base + nTotalCells;
+        view.dqdz[ eq ] = actual.data() + base + 2 * nTotalCells;
+    }
+    ONEFLOW::HipFluxBackend backend;
+    backend.CalcGradient( view );
+    const double error = MaxDiff( expected, actual );
+    if ( error > 1.0e-13 )
+    {
+        std::fprintf( stderr, "Main solver HIP gradient FAIL: %.3e\n", error );
+        return false;
+    }
+    std::printf(
+        "OneFLOW HIP main solver gradient: PASS (max error %.3e)\n",
+        error );
+    return true;
+}
+
 bool TestMainSolverAleAreaContract()
 {
     constexpr int nFaces = 1;
@@ -542,6 +659,7 @@ int main()
         ok = TestScalarConvection() && ok;
         ok = TestEulerRusanov() && ok;
         ok = TestMainSolverFiveEquationLaxFriedrichs() && ok;
+        ok = TestMainSolverGradient() && ok;
         ok = TestMainSolverAleAreaContract() && ok;
 
         ONEFLOW::FinalizeAccelRuntime();

@@ -50,6 +50,8 @@ public:
         FaceFluxView * hostFlux = nullptr,
         const void * cacheKey = nullptr );
 
+    void CalcGradient( const CellGradientView & view );
+
 private:
     DeviceBuffer< Real > qLeft_;
     DeviceBuffer< Real > qRight_;
@@ -63,6 +65,21 @@ private:
     DeviceBuffer< int > rightCell_;
     DeviceBuffer< unsigned char > boundaryMask_;
     DeviceBuffer< Real > deviceResidual_;
+    DeviceBuffer< Real > cellState_;
+    DeviceBuffer< Real > cellGradient_;
+    DeviceBuffer< Real > xFaceCenter_;
+    DeviceBuffer< Real > yFaceCenter_;
+    DeviceBuffer< Real > zFaceCenter_;
+    DeviceBuffer< Real > gradientXNormal_;
+    DeviceBuffer< Real > gradientYNormal_;
+    DeviceBuffer< Real > gradientZNormal_;
+    DeviceBuffer< Real > gradientFaceArea_;
+    DeviceBuffer< Real > xCellCenter_;
+    DeviceBuffer< Real > yCellCenter_;
+    DeviceBuffer< Real > zCellCenter_;
+    DeviceBuffer< Real > cellVolume_;
+    DeviceBuffer< int > gradientLeftCell_;
+    DeviceBuffer< int > gradientRightCell_;
     int deviceFluxFaces_ = 0;
     int deviceFluxEquations_ = 0;
     const Real * cachedXNormal_ = nullptr;
@@ -77,6 +94,25 @@ private:
     int cachedFaces_ = 0;
     int cachedBoundaryFaces_ = -1;
     bool geometryCacheValid_ = false;
+    const void * cachedGradientOwner_ = nullptr;
+    const Real * cachedGradientXFace_ = nullptr;
+    const Real * cachedGradientYFace_ = nullptr;
+    const Real * cachedGradientZFace_ = nullptr;
+    const Real * cachedGradientXNormal_ = nullptr;
+    const Real * cachedGradientYNormal_ = nullptr;
+    const Real * cachedGradientZNormal_ = nullptr;
+    const Real * cachedGradientFaceArea_ = nullptr;
+    const Real * cachedGradientXCell_ = nullptr;
+    const Real * cachedGradientYCell_ = nullptr;
+    const Real * cachedGradientZCell_ = nullptr;
+    const Real * cachedGradientVolume_ = nullptr;
+    const int * cachedGradientLeftCell_ = nullptr;
+    const int * cachedGradientRightCell_ = nullptr;
+    int cachedGradientCells_ = 0;
+    int cachedGradientGhostCells_ = -1;
+    int cachedGradientFaces_ = 0;
+    int cachedGradientBoundaryFaces_ = -1;
+    bool gradientGeometryCacheValid_ = false;
 };
 
 }

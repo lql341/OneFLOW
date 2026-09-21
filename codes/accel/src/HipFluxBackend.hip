@@ -412,6 +412,93 @@ __global__ void CalcAndScatterPrimitiveEulerKernel(
     }
 }
 
+__global__ void GradientZeroKernel( Real * gradient, int nValues )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( index < nValues ) gradient[ index ] = 0.0;
+}
+
+__global__ void GradientAccumulateKernel(
+    const Real * q, const Real * xFace, const Real * yFace,
+    const Real * zFace, const Real * xNormal,
+    const Real * yNormal, const Real * zNormal, const Real * faceArea,
+    const Real * xCell, const Real * yCell,
+    const Real * zCell, const int * leftCell, const int * rightCell,
+    int nFaces, int nBoundaryFaces, int nCells, int nEq,
+    Real * gradient )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nFaces ) return;
+    const int left = leftCell[ face ];
+    const int right = rightCell[ face ];
+    const Real dxl = xFace[ face ] - xCell[ left ];
+    const Real dyl = yFace[ face ] - yCell[ left ];
+    const Real dzl = zFace[ face ] - zCell[ left ];
+    const Real dxr = xFace[ face ] - xCell[ right ];
+    const Real dyr = yFace[ face ] - yCell[ right ];
+    const Real dzr = zFace[ face ] - zCell[ right ];
+    const Real delt1 = sqrt( dxl * dxl + dyl * dyl + dzl * dzl );
+    const Real delt2 = sqrt( dxr * dxr + dyr * dyr + dzr * dzr );
+    const Real delta = 1.0 / ( delt1 + delt2 + 1.0e-40 );
+    const Real cl = delt2 * delta;
+    const Real cr = delt1 * delta;
+    const Real ax = xNormal[ face ] * faceArea[ face ];
+    const Real ay = yNormal[ face ] * faceArea[ face ];
+    const Real az = zNormal[ face ] * faceArea[ face ];
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const Real value = cl * q[ eq * ( nCells + nBoundaryFaces ) + left ]
+            + cr * q[ eq * ( nCells + nBoundaryFaces ) + right ];
+        const int base = eq * 3 * ( nCells + nBoundaryFaces );
+        atomicAdd( &gradient[ base + left ], ax * value );
+        atomicAdd( &gradient[ base + ( nCells + nBoundaryFaces ) + left ], ay * value );
+        atomicAdd( &gradient[ base + 2 * ( nCells + nBoundaryFaces ) + left ], az * value );
+        if ( face >= nBoundaryFaces )
+        {
+            atomicAdd( &gradient[ base + right ], -ax * value );
+            atomicAdd( &gradient[ base + ( nCells + nBoundaryFaces ) + right ], -ay * value );
+            atomicAdd( &gradient[ base + 2 * ( nCells + nBoundaryFaces ) + right ], -az * value );
+        }
+    }
+}
+
+__global__ void GradientNormalizeKernel(
+    Real * gradient, const Real * volume, int nCells,
+    int nBoundaryFaces, int nEq )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+    const int totalCells = nCells + nBoundaryFaces;
+    const Real inverseVolume = 1.0 / volume[ cell ];
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int base = eq * 3 * totalCells;
+        gradient[ base + cell ] *= inverseVolume;
+        gradient[ base + totalCells + cell ] *= inverseVolume;
+        gradient[ base + 2 * totalCells + cell ] *= inverseVolume;
+    }
+}
+
+__global__ void GradientCopyBoundaryKernel(
+    Real * gradient, const int * leftCell, const int * rightCell,
+    int nCells, int nBoundaryFaces, int nEq )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nBoundaryFaces ) return;
+    const int totalCells = nCells + nBoundaryFaces;
+    const int left = leftCell[ face ];
+    const int ghost = rightCell[ face ];
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int base = eq * 3 * totalCells;
+        gradient[ base + ghost ] = gradient[ base + left ];
+        gradient[ base + totalCells + ghost ] =
+            gradient[ base + totalCells + left ];
+        gradient[ base + 2 * totalCells + ghost ] =
+            gradient[ base + 2 * totalCells + left ];
+    }
+}
+
 __global__ void AddFaceFluxEulerKernel(
     const Real * flux,
     const int * leftCell,
@@ -475,6 +562,122 @@ __global__ void ScatterFaceFluxEulerKernel(
 }
 
 } // namespace
+
+void HipFluxBackend::CalcGradient( const CellGradientView & view )
+{
+    ValidateCellGradientView( view );
+    const int totalCells = view.nCells + view.nGhostCells;
+    const int totalState = view.nEquations * totalCells;
+    const int totalGradient = view.nEquations * 3 * totalCells;
+    cellState_.Resize( totalState );
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        AccelRuntime::Instance().Backend().Copy(
+            cellState_.Data() + equation * totalCells, view.q[ equation ],
+            totalCells * sizeof( Real ), AccelCopyKind::HostToDevice );
+    }
+    const bool cacheMatches = gradientGeometryCacheValid_
+        && cachedGradientOwner_ == view.cacheKey
+        && cachedGradientXFace_ == view.xFace
+        && cachedGradientYFace_ == view.yFace
+        && cachedGradientZFace_ == view.zFace
+        && cachedGradientXNormal_ == view.xNormal
+        && cachedGradientYNormal_ == view.yNormal
+        && cachedGradientZNormal_ == view.zNormal
+        && cachedGradientFaceArea_ == view.faceArea
+        && cachedGradientXCell_ == view.xCell
+        && cachedGradientYCell_ == view.yCell
+        && cachedGradientZCell_ == view.zCell
+        && cachedGradientVolume_ == view.cellVolume
+        && cachedGradientLeftCell_ == view.leftCell
+        && cachedGradientRightCell_ == view.rightCell
+        && cachedGradientCells_ == view.nCells
+        && cachedGradientGhostCells_ == view.nGhostCells
+        && cachedGradientFaces_ == view.nFaces
+        && cachedGradientBoundaryFaces_ == view.nBoundaryFaces;
+    if ( ! cacheMatches )
+    {
+        xFaceCenter_.CopyFromHost( view.xFace, view.nFaces );
+        yFaceCenter_.CopyFromHost( view.yFace, view.nFaces );
+        zFaceCenter_.CopyFromHost( view.zFace, view.nFaces );
+        gradientXNormal_.CopyFromHost( view.xNormal, view.nFaces );
+        gradientYNormal_.CopyFromHost( view.yNormal, view.nFaces );
+        gradientZNormal_.CopyFromHost( view.zNormal, view.nFaces );
+        gradientFaceArea_.CopyFromHost( view.faceArea, view.nFaces );
+        xCellCenter_.CopyFromHost( view.xCell, totalCells );
+        yCellCenter_.CopyFromHost( view.yCell, totalCells );
+        zCellCenter_.CopyFromHost( view.zCell, totalCells );
+        cellVolume_.CopyFromHost( view.cellVolume, view.nCells );
+        gradientLeftCell_.CopyFromHost( view.leftCell, view.nFaces );
+        gradientRightCell_.CopyFromHost( view.rightCell, view.nFaces );
+        cachedGradientOwner_ = view.cacheKey;
+        cachedGradientXFace_ = view.xFace;
+        cachedGradientYFace_ = view.yFace;
+        cachedGradientZFace_ = view.zFace;
+        cachedGradientXNormal_ = view.xNormal;
+        cachedGradientYNormal_ = view.yNormal;
+        cachedGradientZNormal_ = view.zNormal;
+        cachedGradientFaceArea_ = view.faceArea;
+        cachedGradientXCell_ = view.xCell;
+        cachedGradientYCell_ = view.yCell;
+        cachedGradientZCell_ = view.zCell;
+        cachedGradientVolume_ = view.cellVolume;
+        cachedGradientLeftCell_ = view.leftCell;
+        cachedGradientRightCell_ = view.rightCell;
+        cachedGradientCells_ = view.nCells;
+        cachedGradientGhostCells_ = view.nGhostCells;
+        cachedGradientFaces_ = view.nFaces;
+        cachedGradientBoundaryFaces_ = view.nBoundaryFaces;
+        gradientGeometryCacheValid_ = true;
+    }
+    cellGradient_.Resize( totalGradient );
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        GradientZeroKernel,
+        dim3( ( totalGradient + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0, cellGradient_.Data(), totalGradient );
+    hipLaunchKernelGGL(
+        GradientAccumulateKernel,
+        dim3( ( view.nFaces + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0, cellState_.Data(), xFaceCenter_.Data(),
+        yFaceCenter_.Data(), zFaceCenter_.Data(), gradientXNormal_.Data(),
+        gradientYNormal_.Data(), gradientZNormal_.Data(),
+        gradientFaceArea_.Data(), xCellCenter_.Data(), yCellCenter_.Data(),
+        zCellCenter_.Data(), gradientLeftCell_.Data(),
+        gradientRightCell_.Data(), view.nFaces, view.nBoundaryFaces,
+        view.nCells, view.nEquations, cellGradient_.Data() );
+    hipLaunchKernelGGL(
+        GradientNormalizeKernel,
+        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0, cellGradient_.Data(), cellVolume_.Data(),
+        view.nCells, view.nBoundaryFaces, view.nEquations );
+    if ( view.nBoundaryFaces > 0 )
+    {
+        hipLaunchKernelGGL(
+            GradientCopyBoundaryKernel,
+            dim3( ( view.nBoundaryFaces + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0, cellGradient_.Data(),
+            gradientLeftCell_.Data(), gradientRightCell_.Data(),
+            view.nCells, view.nBoundaryFaces, view.nEquations );
+    }
+    CheckHip( hipGetLastError(), "gradient kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        const int base = equation * 3 * totalCells;
+        AccelRuntime::Instance().Backend().Copy(
+            view.dqdx[ equation ], cellGradient_.Data() + base,
+            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        AccelRuntime::Instance().Backend().Copy(
+            view.dqdy[ equation ],
+            cellGradient_.Data() + base + totalCells,
+            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        AccelRuntime::Instance().Backend().Copy(
+            view.dqdz[ equation ],
+            cellGradient_.Data() + base + 2 * totalCells,
+            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+    }
+}
 
 HipFluxBackend & HipFluxBackend::Shared()
 {

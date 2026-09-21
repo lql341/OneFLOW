@@ -41,6 +41,7 @@ License
 #include "UTurbCom.h"
 #include "SolverDef.h"
 #include "SolverState.h"
+#include "Ctrl.h"
 #include "ZoneState.h"
 #include "GridState.h"
 #include "AccelRuntime.h"
@@ -204,7 +205,10 @@ void UNsInvFlux::CalcInvFace()
 {
     { ScopedStageTimer timer( "gradient" );
         uns_grad.Init();
-        uns_grad.CalcGrad();
+        if ( this->UseHipGradient() )
+            uns_grad.CalcGradHip();
+        else
+            uns_grad.CalcGrad();
     }
     { ScopedStageTimer timer( "limiter" );
         this->CalcLimiter();
@@ -332,6 +336,28 @@ bool UNsInvFlux::UseCpuBatchAdapter() const
     if ( AccelRuntime::Instance().IsAccelerator() ) return false;
     return nscom.ischeme == ISCHEME_LAX_FRIEDRICHS
         && nscom.nEqu == 5 && limf != nullptr && limf->nEqu == 5;
+}
+
+bool UNsInvFlux::UseHipGradient() const
+{
+    const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_GRADIENT" );
+    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    if ( ! this->UseHipBatchAdapter() )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires the HIP batch path" );
+    }
+    if ( ctrl.ilim != 0 )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires limiter off" );
+    }
+    if ( vis_model.vismodel != 0 )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires inviscid mode" );
+    }
+    return true;
 }
 
 bool UNsInvFlux::UseHipBatchAdapter() const

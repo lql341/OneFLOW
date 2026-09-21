@@ -102,6 +102,45 @@ TEST( AccelViewsContract, DescribesLayoutsAreaPolicyAndCapabilities )
     EXPECT_NO_THROW( ValidateFaceGeometryView( geometry ) );
 }
 
+TEST( AccelViewsContract, ValidatesCellGradientLayoutAndGhostExtent )
+{
+    Real q[ 4 ] = {};
+    Real faceValues[ 3 ] = {};
+    Real cellValues[ 4 ] = {};
+    Real volume[ 2 ] = { 1.0, 1.0 };
+    int left[ 3 ] = { 0, 1, 0 };
+    int right[ 3 ] = { 2, 3, 1 };
+    CellGradientView view;
+    view.nCells = 2;
+    view.nGhostCells = 2;
+    view.nFaces = 3;
+    view.nBoundaryFaces = 2;
+    view.nEquations = 3;
+    view.xFace = faceValues;
+    view.yFace = faceValues;
+    view.zFace = faceValues;
+    view.xNormal = faceValues;
+    view.yNormal = faceValues;
+    view.zNormal = faceValues;
+    view.faceArea = faceValues;
+    view.xCell = cellValues;
+    view.yCell = cellValues;
+    view.zCell = cellValues;
+    view.cellVolume = volume;
+    view.leftCell = left;
+    view.rightCell = right;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        view.q[ equation ] = q;
+        view.dqdx[ equation ] = q;
+        view.dqdy[ equation ] = q;
+        view.dqdz[ equation ] = q;
+    }
+    EXPECT_NO_THROW( ValidateCellGradientView( view ) );
+    view.nGhostCells = 1;
+    EXPECT_THROW( ValidateCellGradientView( view ), std::invalid_argument );
+}
+
 TEST( AccelViewsContract, RejectsUnsupportedStateAndGeometryContracts )
 {
     Real values[ 4 ] = {};

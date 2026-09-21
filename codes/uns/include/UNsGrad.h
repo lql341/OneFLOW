@@ -33,6 +33,7 @@ public:
     ~UNsGrad();
 public:
     void Init() override;
+    void CalcGradHip();
 };
 
 class UTGrad : public Grad

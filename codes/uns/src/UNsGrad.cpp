@@ -32,6 +32,10 @@ License
 #include "FaceMesh.h"
 #include "CellMesh.h"
 #include "CellTopo.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
 
@@ -68,6 +72,49 @@ void UNsGrad::Init()
     this->nEqu = nscom.nTEqu;
 
     this->istore = 1;
+}
+
+void UNsGrad::CalcGradHip()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( q == nullptr || dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
+    {
+        throw std::runtime_error( "UNs HIP gradient fields are unavailable" );
+    }
+    UnsGrid * grid = Zone::GetUnsGrid();
+    CellGradientView view;
+    view.nCells = ug.nCells;
+    view.nGhostCells = ug.nTCell - ug.nCells;
+    view.nFaces = ug.nFaces;
+    view.nBoundaryFaces = ug.nBFaces;
+    view.nEquations = nEqu;
+    view.xFace = ug.xfc->data();
+    view.yFace = ug.yfc->data();
+    view.zFace = ug.zfc->data();
+    view.xNormal = ug.xfn->data();
+    view.yNormal = ug.yfn->data();
+    view.zNormal = ug.zfn->data();
+    view.faceArea = ug.farea->data();
+    view.xCell = ug.xcc->data();
+    view.yCell = ug.ycc->data();
+    view.zCell = ug.zcc->data();
+    view.cellVolume = ug.cvol->data();
+    view.leftCell = ug.lcf->data();
+    view.rightCell = ug.rcf->data();
+    view.cacheKey = grid;
+    for ( int equation = 0; equation < nEqu; ++ equation )
+    {
+        view.q[ equation ] = ( * q )[ equation ].data();
+        view.dqdx[ equation ] = ( * dqdx )[ equation ].data();
+        view.dqdy[ equation ] = ( * dqdy )[ equation ].data();
+        view.dqdz[ equation ] = ( * dqdz )[ equation ].data();
+    }
+    HipFluxBackend::Shared().CalcGradient( view );
+    this->SwapBcGrad();
+#else
+    throw std::runtime_error(
+        "UNs HIP gradient was called without HIP support" );
+#endif
 }
 
 UTGrad::UTGrad()

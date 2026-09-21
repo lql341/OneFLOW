@@ -138,6 +138,7 @@ config_file="$stability_root/configuration.tsv"
     printf 'limiter\t%s\n' "${limiter:-source}"
     printf 'cpu_ranks\t%s\n' "$cpu_ranks"
     printf 'hip_ranks\t%s\n' "$hip_ranks"
+    printf 'hip_gradient\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}"
 } > "$config_file"
 overall=0
 
@@ -151,7 +152,7 @@ run_mode() {
     (
         cd "$stability_root"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
-            ONEFLOW_UNS_STAGE_TRACE_FILE ONEFLOW_STAGE_BREAKDOWN_FILE || true
+            ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_UNS_STAGE_TRACE_FILE ONEFLOW_STAGE_BREAKDOWN_FILE || true
         app_prefix=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
             app_prefix=( env ONEFLOW_FAIL_ON_NONPHYSICAL=1 )
@@ -159,6 +160,9 @@ run_mode() {
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
+            if [ "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
+            fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
             if [ "$mode" = cpu_batch ]; then
