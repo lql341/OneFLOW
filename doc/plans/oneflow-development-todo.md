@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-21（已提交并推送 stage-breakdown、异常 teardown、稳定性 runner 和 fail-fast 诊断改动；Kunshan 已确认三路首个坏状态一致且 HIP 不再 signal 11；CPU 物理稳定性与完整 GPU-resident 仍未收口）
+> 最后更新：2026-09-21（定位并修正 stability runner 的 CFL ramp 配置错误；fixed-CFL 四组 target-node 50-step 三路门禁全部通过；下一步按 breakdown 迁移 gradient/reconstruction，3D 仍不是完整 GPU-resident）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -19,15 +19,15 @@
 
 两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
-**当前阻塞项**：Kunshan target-node 复测已确认 legacy CPU、CPU batch、HIP batch 在相同 m6 inviscid 配置下于 `step=14, zone=0, cell=37710` 首次出现相同负压力（约 `-0.075965`），三路状态差异约 `1e-14`；共同发散不能归因于 HIP 数值分歧。旧 HIP teardown signal 11 已不再复现，HIP mode 现在以普通非零 workload exit 结束；legacy/CPU batch 仍可能在 MPI launcher 回收阶段返回 timeout，需要继续收口 runner 与 solver 的失败路径。CPU 物理稳定性仍未解决前不能宣称 F 阶段完成。当前单次同 basis raw timing 显示 HIP/legacy `1.085759x`，但 50-step 未通过且跨作业波动尚未排除，不能作为稳定加速结论。
+**当前状态**：旧 v5b 的第 14 步共同负压已定位为 stability runner 配置错误：runner 只改 `cflst`、保留原 case 的 `cfled=10.0,ncfl=100`，实际 CFL 在前 100 步线性增长。runner 现已固定 `cflst/cfled`、支持显式 limiter 并记录 `configuration.tsv`；Kunshan fixed-CFL 的 inviscid、limiter-on 和 viscous/turbulence 四组均完成 legacy/CPU batch/HIP batch 50-step，所有 workload `exit_code=0`、无非物理诊断，Slurm `COMPLETED/0:0`。这收口了当前稳定性门禁，但不改变 3D 仍为 host-staged、尚未完整 GPU-resident 的真实性边界；单次 timing 也仍不能外推为稳定加速。
 
 **下一步（按优先级）**
 
 1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
-2. 收口 50-step 稳定性（§2 的 F2.4b）：先修 CPU legacy 的 CFL/边界/初始化/物理模型条件，再要求 CPU batch / HIP batch 逐步对齐。
-3. 继续定位 CPU legacy 的 CFL/边界/初始化/物理模型条件；把 stability runner 的 fail-fast 环境传递和 MPI 回收行为做成可重复门禁。
-4. 按 breakdown 决定的路线优先迁移 gradient/reconstruction；每一步先过 3-step accuracy gate，再做同 basis timing。
-5. 完成 backend/state 生命周期、完整 NS 与 MPI correctness；只有 50-step 稳定且连续多次性能测量方向一致后，才更新已发布性能报告或整理后续 PR。
+2. fixed-CFL 50-step 稳定性已通过；旧 v5b 的共同负压来自 runner 保留 `cfled=10` 的 CFL ramp，后续不再把该快照当作 HIP blocker。
+3. 保持 fixed-CFL stability runner 的 workload exit code、configuration.tsv 和 Slurm accounting 门禁；随后开始 gradient/reconstruction device migration。
+4. 按 breakdown 决定的路线优先迁移 gradient/reconstruction；每一步先过 3-step accuracy gate，再做 fixed-CFL 50-step stability 和同 basis timing。
+5. 完成 backend/state 生命周期、完整 NS 与 MPI correctness；只有 fixed-CFL 50-step 稳定且连续多次性能测量方向一致后，才更新已发布性能报告或整理后续 PR。
 
 **注意**：dev 上仍留有大量未上游内容（F 阶段 DCU 主 solver 那批），它们**未收口、不要提前提 PR**；提 PR 的三个坑见 §协作约定。
 
@@ -348,14 +348,14 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
     - [x] F2.1：adapter one-call CPU/HIP oracle；257 faces × 5 equations，覆盖 3D normals、ALE mesh-normal velocity、face area 与非 boundary-first 显式 mask；flux 最大差 `6.661e-16`，residual 最大差 `1.110e-15`。
     - [x] F2.2：HIP 小 case 1-step LU-SGS 与 legacy CPU、CPU batch 对比，检查 `qf1`、`qf2`、face flux、residual、state trace。
     - [x] F2.3：小 case 检查 finite、positive density/pressure、boundary semantics、conservation、ALE 与 face-area ownership。
-    - [ ] F2.4：扩大到 3D m6 case，并完成长步稳定性门禁。
+    - [x] F2.4：扩大到 3D m6 case，并完成长步稳定性门禁。
       - [x] F2.4a：3D m6 896256 faces、Lax-Friedrichs、3-stage RK 1-step；HIP 对 legacy 最大差 `1.706e-13`，finite 且 density/pressure 为正。
       - [x] F2.4a-3：2026-09-20 inviscid-only v4 的 3-step 三路 trace 完整 verifier 通过；HIP invflux/residual 最大绝对差均不超过 `3.109e-15`、state 不超过 `2.887e-15`，三路 pair 最大绝对差 `2.8554936193359026e-13`，metadata 完全一致，finite/positive/conservation 全通过。
-      - [ ] F2.4b：50-step 稳定性；2026-09-20 fresh v5b 三路均在第 13 步出现负压、第 20 步失稳。legacy/CPU batch 分别以 `NotANumber` / `non-finite Euler primitive state` 退出，HIP 在同一 NaN 后还于 teardown signal 11。需先修复 CFL/边界/初始化/物理稳定性条件，并单独修复 HIP 错误路径析构。
-      - [ ] F2.4c：inviscid-only（`vismodel=0`、移除 `TurbSolver`）的 accuracy/breakdown/timing 已完成；完整 NS 仍未测。当前 HIP 只覆盖 inviscid face flux/residual，viscous/turbulence、gradient、face reconstruction、RK update 仍在 host，不能把当前 3D timing 与 1D Euler stateful 报告比较。
+      - [x] F2.4b：fixed-CFL 50-step 稳定性已闭环。runner 默认令 `cflst=cfled=0.01`，并把有效参数写入 `configuration.tsv`；`fixed_inviscid`、`fixed_limiter`、`fixed_lowcfl`、`fixed_viscous` 四组的 legacy、CPU batch、HIP batch 均 `exit_code=0`、无非物理诊断，不能再把旧 ramp 配置下的第 14 步负压当作 HIP 发散证据。
+      - [x] F2.4c：inviscid-only（`vismodel=0`、移除 `TurbSolver`）的 3-step accuracy/breakdown/timing 与 fixed-CFL 50-step stability 已完成；保留 viscous/turbulence 的 fixed-CFL 50-step 三路也已完成。当前 HIP 仍只覆盖 inviscid face flux/residual，gradient、face reconstruction、RK update、viscous/turbulence 和 MPI/interface 仍主要在 host，不能把当前 3D timing 与 1D Euler stateful 报告比较。
   - [ ] F3：主 solver DCU target-node evidence。说明：记录 DTK、gfx906、visible device、资源 tuple 和 workload exit code。
     - [x] F3.1：标准 root HIP runner 已沉淀；支持 trace step 参数化、精度门禁后 benchmark、同 basis timing 与非空 HIP test 检查。
-    - [x] F3.2：2026-09-20 v4 在 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 完成 root HIP build、smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step trace gate、正式 repeat breakdown 和同 basis timing；scheduler/workload 均为 0。raw mean 为 legacy CPU `15058.725461 ms`、CPU batch `15724.756053 ms`、HIP batch `13869.312341 ms`，raw ratio `1.085759x`。这仍是 host-staged 单次作业结果；50-step 未通过、跨作业稳定性未确认，因此不作为正式加速结论，也未更新性能报告。
+    - [x] F3.2：2026-09-20 v4 在 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 完成 root HIP build、smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step trace gate、正式 repeat breakdown 和同 basis timing；2026-09-21 fixed-CFL 四组 stability 作业的 scheduler/workload 均为 `COMPLETED/0:0`，legacy/CPU batch/HIP batch 全部 50-step PASS。raw mean 为 legacy CPU `15058.725461 ms`、CPU batch `15724.756053 ms`、HIP batch `13869.312341 ms`，raw ratio `1.085759x`；该 timing 仍是 host-staged 单次作业结果，不作为正式稳定加速结论，也未更新性能报告。
     - [x] F3.3：fresh CPU 五 case 门禁于 2026-09-20 在 v5 快照上复验：normal `1e-8` 5/5（最大绝对残差 `4.970574442764598e-10`）、strict `1e-15` 5/5（最大 `1.1072414686508214e-17`）；scheduler `COMPLETED`、workload exit `0:0`。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
@@ -452,7 +452,7 @@ CUDA、Kokkos、跨节点 MPI、完整 Navier–Stokes 主线均未验证。
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
-| 2026-09-21 | 稳定性失败路径与 target-node 复测：异常 teardown 修复、首个非物理状态诊断、stability runner 的 foreground timeout、opt-in fail-fast 和 MPI 启动传递 | 本地 CPU build + CTest `242/242`；Kunshan `gfx906`/`dcu:1` 的 m6 复测定位三路共同坏状态为 step 14、zone 0、cell 37710，HIP 不再出现 signal 11；50-step 仍未通过，当前不更新正式性能报告 |
+| 2026-09-21 | 定位并修正 stability runner 的 CFL ramp 配置错误：旧 runner 只改 `cflst`、保留 `cfled=10`，导致第 14 步实际 CFL 约 1.41；新增 fixed-CFL、显式 limiter 和 configuration.tsv | Kunshan DTK 26.04 / `gfx906` / `dcu:1`：`fixed_inviscid`、`fixed_limiter`、`fixed_lowcfl`、`fixed_viscous` 四组均为 legacy/CPU batch/HIP batch `exit_code=0`、`diagnostic_hits=0`、`PASS`，Slurm `COMPLETED/0:0`；当前 3D 仍是 host-staged，不是完整 GPU-resident |
 | 2026-09-20 | 3D persistent-state / stage-breakdown vertical slice：新增 `Ns3DDeviceState` 注册与 host scratch ownership、HIP geometry/connectivity cache、opt-in `StageProfiler`、正式 repeat breakdown 汇总、8-rank Slurm slot 修正、可参数化 trace timeout 和独立 50-step stability runner | 本地 CPU build + CTest `242/242`；Kunshan v4 root HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step accuracy、breakdown 和 timing 全通过；v5 CPU normal/strict 各 5/5；v5b 50-step 三路均于第 20 步共同失稳，HIP 错误路径另有 teardown signal 11。当前 3D 仍是 host-staged，不是完整 GPU-resident |
 | 2026-09-19 | 开出 upstream **PR #160**（`pr/euler-weno5-unified`）：accelerator substrate（Phase 1–3 + E1–E6 CPU vertical slice，含主 solver gated CPU batch 路径、mutable `SimuContext` 透传、MRField 生命周期绑定、RungeKutta capability guard）与 1D Euler port 的 WENO5 / AccelBackend 设备管理 / HIP contract 注册；**门禁在 PR 分支自身上跑**：T1 `cpu-regression` normal 5/5 + strict 5/5，T2 `dcu-single` GoogleTest 9/9 + CTest 9/9，CI 4/4 绿 | revision `ef36b928`；64 文件 +4771/−272；F 阶段（50-step 未收口、无端到端加速）刻意排除在外，并在 PR 描述中写明边界 |
 | 2026-09-19 | 开出 upstream **PR #159**（`pr/agents-branch-model`）：`AGENTS.md` 增加 fork 无关的分支模型（baseline / working / topic 三类分支，`dev` 引用带存在性条件，不引用 fork-only 文件）；CI 4/4 绿 | revision `b4c041c6`；1 文件 +23/−0；共享文件单独成 PR，不与 dev 的 fork-only 文档混在一起 |
