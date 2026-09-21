@@ -175,9 +175,20 @@ void UNsUpdate::PrepareData()
 
 void UNsUpdate::DumpProbeInfo()
 {
-    std::cout << std::setprecision( 3 );
-    std::cout << "Warning : p = " << nscom.prim[ IDX::IP ] << ", r = " << nscom.prim[ IDX::IR ];
-    std::cout << " <-> zid = " << ZoneState::zid << ", cid = " << ug.cId << std::endl;
+    std::cout << std::setprecision( 17 );
+    std::cout << "Warning : non-physical state"
+              << " step = " << Iteration::outerSteps
+              << ", zid = " << ZoneState::zid
+              << ", cid = " << ug.cId
+              << ", density = " << nscom.prim[ IDX::IR ]
+              << ", pressure = " << nscom.prim[ IDX::IP ]
+              << ", density0 = " << nscom.prim0[ IDX::IR ]
+              << ", pressure0 = " << nscom.prim0[ IDX::IP ]
+              << ", dq_density = " << nscom.dq[ IDX::IR ]
+              << ", dq_pressure = " << nscom.dq[ IDX::IP ]
+              << ", timestep = " << nscom.timestep
+              << ", dt = " << nscom.dt
+              << std::endl;
 }
 
 void UNsUpdate::SolutionFix()

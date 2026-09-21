@@ -69,7 +69,12 @@ public:
     {
         if ( pointer_ != nullptr )
         {
-            AccelRuntime::Instance().Backend().Deallocate( pointer_ );
+            // A failure path may reach static destruction after the
+            // accelerator runtime has already been finalized.
+            if ( AccelRuntime::Instance().IsInitialized() )
+            {
+                AccelRuntime::Instance().Backend().Deallocate( pointer_ );
+            }
         }
         pointer_ = nullptr;
         count_ = 0;

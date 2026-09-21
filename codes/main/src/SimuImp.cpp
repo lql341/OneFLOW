@@ -44,8 +44,28 @@ SimuImp::~SimuImp()
 void SimuImp::Run()
 {
     this->PreProcess();
-    this->MainProcess();
-    this->PostProcess();
+    try
+    {
+        this->MainProcess();
+        this->PostProcess();
+    }
+    catch ( ... )
+    {
+        // MainProcess exceptions must not bypass accelerator teardown. HIP
+        // buffers must be released while the runtime is still initialized.
+        if ( ctx_ != nullptr && ctx_->IsEnvironmentReady() )
+        {
+            try
+            {
+                this->PostProcess();
+            }
+            catch ( ... )
+            {
+                // Preserve the original solver failure.
+            }
+        }
+        throw;
+    }
 }
 
 void SimuImp::PreProcess()

@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-20（本轮完成 inviscid-only DCU target-node breakdown、3-step accuracy、同 basis timing 和 fresh CPU normal/strict；50-step 三路仍在第 20 步共同发散，3D 仍未达到完整 stateful/device-resident）
+> 最后更新：2026-09-21（已提交并推送 3D HIP stage-breakdown checkpoint；本轮补上异常路径 teardown 和非物理状态诊断，Kunshan stability 复测待执行；50-step 稳定性与完整 GPU-resident 仍未收口）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -19,13 +19,13 @@
 
 两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
-**当前阻塞项**：2026-09-20 的 fresh inviscid-only 50-step gate 再次确认三路在相同配置下共同失稳：第 13 步出现负压警告，第 20 步 residual 爆炸；legacy CPU 与 CPU batch 均以工作负载退出码 `1` 结束，HIP batch 在同样的 NaN 之后还于 backend teardown 触发 signal 11。共同发散不能归因于 HIP 数值分歧；HIP 的错误路径析构仍需单独修复。未解决前不能宣称 F 阶段完成。当前单次同 basis raw timing 显示 HIP/legacy `1.085759x`，但 50-step 未通过且跨作业波动尚未排除，不能作为稳定加速结论。
+**当前阻塞项**：2026-09-20 的 fresh inviscid-only 50-step gate 再次确认三路在相同配置下共同失稳：第 13 步出现负压警告，第 20 步 residual 爆炸；legacy CPU 与 CPU batch 均以工作负载退出码 `1` 结束，HIP batch 在同样的 NaN 之后还于 backend teardown 触发 signal 11。共同发散不能归因于 HIP 数值分歧。本轮已在 `SimuImp::Run()` 异常路径补 teardown，并让 `DeviceBuffer` 在 runtime 已结束时不再解引用 backend；同时把 step/cell/primitive/delta/timestep 写入首个非物理状态诊断。Kunshan 复测前不能宣称 signal 11 已解决。CPU 物理稳定性仍未解决前不能宣称 F 阶段完成。当前单次同 basis raw timing 显示 HIP/legacy `1.085759x`，但 50-step 未通过且跨作业波动尚未排除，不能作为稳定加速结论。
 
 **下一步（按优先级）**
 
 1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
 2. 收口 50-step 稳定性（§2 的 F2.4b）：先修 CPU legacy 的 CFL/边界/初始化/物理模型条件，再要求 CPU batch / HIP batch 逐步对齐。
-3. 修复 HIP 非物理错误后的 teardown/runtime-finalize 顺序，使失败路径干净退出，不在 `HipFluxBackend` 析构时 signal 11。
+3. 在 Kunshan target node 复跑 50-step stability，确认异常路径 teardown 修复是否消除 `HipFluxBackend` 析构 signal 11；随后继续修复 CPU legacy 的 CFL/边界/初始化/物理模型条件。
 4. 按 breakdown 决定的路线优先迁移 gradient/reconstruction；每一步先过 3-step accuracy gate，再做同 basis timing。
 5. 完成 backend/state 生命周期、完整 NS 与 MPI correctness；只有 50-step 稳定且连续多次性能测量方向一致后，才更新已发布性能报告或整理后续 PR。
 
