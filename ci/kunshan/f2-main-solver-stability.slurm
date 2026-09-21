@@ -113,7 +113,7 @@ run_mode() {
                 export ONEFLOW_ENABLE_UNS_CPU_BATCH=1
             fi
         fi
-        timeout --signal=TERM --kill-after=10s "$timeout_seconds" \
+        timeout --foreground --signal=TERM --kill-after=10s "$timeout_seconds" \
             mpirun -np "$ranks" "$ONEFLOW_F2_STABILITY_BINARY" 0 "$mode"
     ) > "$log_file" 2>&1
     rc=$?
