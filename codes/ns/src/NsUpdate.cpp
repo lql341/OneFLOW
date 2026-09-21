@@ -29,6 +29,17 @@ License
 
 BeginNameSpace( ONEFLOW )
 
+namespace
+{
+
+bool FailOnNonPhysicalState()
+{
+    const char * value = std::getenv( "ONEFLOW_FAIL_ON_NONPHYSICAL" );
+    return value != nullptr && value[ 0 ] == '1' && value[ 1 ] == '\0';
+}
+
+}
+
 NsUpdate::NsUpdate()
 {
 }
@@ -57,6 +68,10 @@ void NsUpdate::CalcFlowField()
         if ( nscom.nProbe < 2 )
         {
             this->DumpProbeInfo();
+        }
+        if ( FailOnNonPhysicalState() )
+        {
+            throw std::runtime_error( "non-physical Euler state" );
         }
 
         if ( ! this->WeekSolutionFix() )
@@ -122,6 +137,10 @@ void NsUpdate::CalcFlowFieldHyperSonic()
         {
             this->DumpProbeInfo();
         }
+        if ( FailOnNonPhysicalState() )
+        {
+            throw std::runtime_error( "non-physical Euler state" );
+        }
 
         if ( ! this->WeekSolutionFix() )
         {
@@ -150,6 +169,10 @@ void NsUpdate::CalcFlowFieldHyperSonic_Temperature()
         if ( nscom.nProbe < 2 )
         {
             this->DumpProbeInfo();
+        }
+        if ( FailOnNonPhysicalState() )
+        {
+            throw std::runtime_error( "non-physical Euler state" );
         }
 
         if ( ! this->WeekSolutionFix() )

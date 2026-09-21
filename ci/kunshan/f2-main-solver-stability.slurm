@@ -104,6 +104,11 @@ run_mode() {
         cd "$stability_root"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_UNS_STAGE_TRACE_FILE ONEFLOW_STAGE_BREAKDOWN_FILE || true
+        if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
+            export ONEFLOW_FAIL_ON_NONPHYSICAL=1
+        else
+            unset ONEFLOW_FAIL_ON_NONPHYSICAL || true
+        fi
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
