@@ -104,8 +104,10 @@ run_mode() {
         cd "$stability_root"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_UNS_STAGE_TRACE_FILE ONEFLOW_STAGE_BREAKDOWN_FILE || true
+        mpi_env_args=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
             export ONEFLOW_FAIL_ON_NONPHYSICAL=1
+            mpi_env_args+=( -x ONEFLOW_FAIL_ON_NONPHYSICAL )
         else
             unset ONEFLOW_FAIL_ON_NONPHYSICAL || true
         fi
@@ -119,7 +121,7 @@ run_mode() {
             fi
         fi
         timeout --foreground --signal=TERM --kill-after=10s "$timeout_seconds" \
-            mpirun -np "$ranks" "$ONEFLOW_F2_STABILITY_BINARY" 0 "$mode"
+            mpirun "${mpi_env_args[@]}" -np "$ranks" "$ONEFLOW_F2_STABILITY_BINARY" 0 "$mode"
     ) > "$log_file" 2>&1
     rc=$?
     set -e
