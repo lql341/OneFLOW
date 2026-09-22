@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-22（补充新会话 handoff 与收益判断：gradient slice 正确稳定，但当前应用级收益有限；下一步先做 reconstruction/residency contract 盘点，3D 仍不是完整 stateful/device-resident）
+> 最后更新：2026-09-22（完成 reconstruction/residency contract 只读盘点；下一步先建立 state-owned device contract，3D 仍不是完整 stateful/device-resident）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -70,6 +70,56 @@ ONEFLOW_ARTIFACT_DIR=\$W/runs/<date>/dcu-single-$R/artifacts \
 - 产物落在 `runs/<date>/<suite>-<rev>/artifacts/`：`result.txt`、`exitcodes.txt`、`normal.log`、`strict.log`、`gtest.log`、`ctest.log`。
 - 判据：T1 为 `CPU_REGRESSION_STANDARD_PASS` 且两档各 5/5；T2 为 `config=0 build=0 test=0` 且 GoogleTest/CTest 各 9/9。
 - **坑**：upstream 旧版 `euler-dcu-gtest.slurm` 在 `module purge` 之前解析 cmake 且不传 `-Damd_comgr_DIR`，在集群上必失败；本轮用的是 dev 上已修好的副本，PR #160 已把同一修复带入。此外 cmake 模块在部分节点加载不稳定，必要时显式指定 cmake 3.25 路径。
+
+### 2026-09-22 reconstruction/residency contract 只读盘点
+
+本轮先按 handoff 要求完成调用链和数据契约盘点，**没有新增 kernel，也没有把仍需
+gradient D2H + qf H2D 的路径包装成性能优化**。结论如下：
+
+1. **reconstruction 输入不能直接消费当前 device gradient。** `UNsInvFlux::CalcInvFace`
+   先执行 `UNsGrad::CalcGradHip`，`HipFluxBackend::CalcGradient` 把 `q` 的
+   `nEqu × (nCells+nGhostCells)` 从 host 上传，计算后把 `dqdx/dqdy/dqdz` 完整下载
+   回 MRField；随后 `LimField::CalcFaceValue` 只读 host `qf1/qf2`、gradient、
+   limiter 和几何。数学上所需数据已经齐全，布局也是 equation-major，但现有接口没有
+   device pointer/view，也没有 reconstruction → flux 的 device chaining seam。因此
+   仅替换 `CalcFaceValue` 内层循环不能消除本轮 D2H。
+
+2. **qf1/qf2 目前必然发生下一次 H2D。** `NsLimField::Init` 每次宏步为
+   `nEqu × nFaces` 新建 host MRField；`GetQlQr`/`CalcFaceValue`/`BcQlQrFix` 在 host
+   完成后，`UNsInvFlux::CalcAndAddInvFluxHipBatch` 通过
+   `primitiveLeftComponents`/`primitiveRightComponents` 交给
+   `HipFluxBackend::CalcAndAddPrimitiveFaceFlux`，backend 再逐方程 H2D。现有 fused
+   API 只接受 host pointers，不能接收 reconstruction 输出的 device buffers。
+
+3. **边界/ghost/ownership 语义已明确。** `UCom::Init` 定义
+   `nTCell = nCells + nBFaces`；HIP gradient contract 强制
+   `nGhostCells == nBoundaryFaces`。boundary faces 位于 `[0,nBFaces)`，每个 boundary
+   face 的 `rightCell` 是对应 ghost；gradient kernel 先按 internal cell 归一化，再把
+   left gradient 复制到 ghost。`GetQlQr` 先用 `q[left/right]` 初始化全部 face；
+   `CalcFaceValue` 对两侧使用 face-center 到 cell-center 的位移和 limiter；随后
+   `NsLimField::BcQlQrFix` 对前 `nBFaces` 逐面处理：`INTERFACE`/`PERIODIC` 保留重构值，
+   其他边界退回 `q` 左右平均，`SOLID_SURFACE` 再以 face-indexed `bc_q` 覆盖两侧。
+   residual ownership 是 left `-flux`，仅非 boundary 且 valid right cell 才加 right
+   `+flux`。主 HIP path 当前不传显式 `boundaryMask`，所以仍依赖 boundary-first；
+   trace metadata 也按 `face < nBFaces` 判定，不能在 reconstruction slice 中悄悄改变排序。
+
+4. **应迁入 `Ns3DDeviceState` 的第一批持久 buffer。** state key 必须继续覆盖
+   solver/zone/grid/backend，并在 restart/invalidate 时整体失效。受限
+   limiter-off/inviscid slice 需要：cell `q`（含 ghost）、三方向 gradient、
+   `qf1/qf2`、face geometry（face center/normal/area/mesh velocity）、cell geometry
+   （center/volume）、left/right connectivity、显式 boundary mask、cell residual；只有
+   FullTrace 才需要 device face flux D2H。`limiter` 在该 slice 可由 device 常量 `1`
+   代替，`bc_q` 仅在存在 `SOLID_SURFACE` 时上传。RK、viscous/turbulence、halo/MPI
+   不应混入第一刀。当前 `Ns3DDeviceState` 里的 vector 成员是 host scratch，HIP
+   `DeviceBuffer` 仍由 process-wide shared backend 持有，尚未满足唯一 ownership。
+
+5. **决策。** 先不实现孤立 reconstruction kernel。下一步应先建立 backend-neutral 的
+   cell/face reconstruction view 和 state-owned buffer contract，再让 HIP backend 提供
+   “gradient device buffer → qf1/qf2 device buffer → fused primitive flux/residual”
+   的连续调用；CPU legacy/batch 继续作为 oracle。若实现阶段仍必须把 gradient 下载到
+   MRField、再把 qf 上传，最多算架构接缝验证，不计入性能优化，也不启动 P2.7 多作业
+   性能声明。
+
 
 ## 本轮 gradient device migration（2026-09-21）
 
@@ -426,7 +476,8 @@ git show dev:doc/plans/oneflow-development-todo.md
   - 边界：当前仍每次 q H2D、gradient D2H，且 device buffers 尚未由 `Ns3DDeviceState` 唯一持有。
 
 - [ ] **P2.6：HIP reconstruction vertical slice**
-  - [ ] 先明确 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle。
+  - [x] 完成 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle 只读盘点；当前结论是不先写仍需 gradient D2H + qf H2D 的孤立 kernel。
+  - [ ] 先建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual buffers 纳入按 solver/zone/grid/backend key 管理的 state-owned contract。
   - [ ] 只覆盖单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；不同时迁移 limiter、RK 或 viscous/turbulence。
   - [ ] 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序验收。
 
