@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-22（完成 reconstruction/residency contract 只读盘点；下一步先建立 state-owned device contract，3D 仍不是完整 stateful/device-resident）
+> 最后更新：2026-09-22（完成 HIP gradient→reconstruction→fused flux/residual 的受限 device residency seam；RK/state update 及完整主链仍 host-staged）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -19,7 +19,7 @@
 
 两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
-**当前状态**：首个 gradient device migration vertical slice 已完成。`ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用 Green–Gauss gradient；geometry/connectivity 可缓存，但每次 gradient 仍从 host 上传 primitive state，并把 `dqdx/dqdy/dqdz` 下载回 host。Kunshan 的 root HIP build/smoke/contract、3-step accuracy、fixed-CFL 50-step stability 和同 basis timing 均通过；HIP `gradient` stage 从此前约 `1046.610 ms` 降为本次 `176.883 ms`，单作业端到端 HIP/legacy 为 `1.160129x`。该结果仍是一次正式作业，不更新已发布性能报告；3D 仍为 host-staged，远未达到 1D Euler 的完整 stateful/device-resident 状态。
+**当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation 和可选 `bc_q` 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2 或 invflux，FullTrace/stage trace 才回传诊断数组。Kunshan root HIP build/smoke/contract 通过；直接 1-step m6 trace 的 legacy/CPU batch/HIP reconstruction verifier 通过（12 records，HIP 相对 legacy 最大绝对差约 `2.40e-13`）；50-step 三路 workload 均 exit 0，标准精确诊断 regex 均为 0。仍保留每次 gradient 的 q H2D 与 gradient D2H CPU oracle，residual/state update 仍 host-staged；没有做 timing，也不更新正式性能报告。
 
 ### 2026-09-22 新会话 handoff
 
@@ -40,11 +40,11 @@
 **下一步（按优先级）**
 
 1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
-2. fixed-CFL 50-step 稳定性已通过；旧 v5b 的共同负压来自 runner 保留 `cfled=10` 的 CFL ramp，后续不再把该快照当作 HIP blocker。
-3. 先完成 reconstruction/residency contract 只读盘点；不要直接写一个仍需 gradient D2H 和 qf H2D 的孤立 kernel。
-4. 若选择实现 reconstruction slice，仍按 CPU oracle/trace → 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 验收，不一次扩大到 limiter/RK/viscous。
-5. 优先把 shared backend buffers 收敛到 `Ns3DDeviceState` ownership，并逐步消除 q H2D、gradient D2H 和 reconstructed face-state H2D。
-6. 完成完整 NS 与 MPI correctness；只有连续多次同 basis 测量方向一致且 accuracy/stability/MPI 全通过后，才更新已发布性能报告或整理后续 PR。
+2. 保持新 reconstruction seam 为显式 opt-in；继续保留 CPU legacy/batch 和旧 host-staged HIP fallback。
+3. 下一刀优先消除 gradient D2H：让 reconstruction view 直接消费 state-owned device gradient，同时保留 MRField 下载作为 CPU oracle/FullTrace fallback。
+4. 再迁移 device residual/state update；先确认 `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD` 契约，不混入 viscous/turbulence、MPI/halo 或 RK algorithm change。
+5. 为 interface/periodic/solid/ordinary boundary、ghost gradient copy、qf1/qf2 trace 补充小 case contract；记录 H2D/D2H bytes、kernel launches、sync 和 allocation。
+6. 继续按 CPU oracle/trace → 3-step accuracy → fixed-CFL 50-step stability → 多次同 basis timing 验收；只有 accuracy/stability/MPI correctness 和重复 timing 全通过后才更新正式报告。
 
 **注意**：dev 上仍留有大量未上游内容（F 阶段 DCU 主 solver 那批），它们**未收口、不要提前提 PR**；提 PR 的三个坑见 §协作约定。
 
@@ -120,6 +120,25 @@ gradient D2H + qf H2D 的路径包装成性能优化**。结论如下：
    MRField、再把 qf 上传，最多算架构接缝验证，不计入性能优化，也不启动 P2.7 多作业
    性能声明。
 
+
+## 本轮 HIP reconstruction residency seam（2026-09-22）
+
+- 新增 `CellFaceReconstructionView` 的 HIP consumer seam；`ReconstructFaceEulerKernel` 保持 CPU `GetQlQr`、face-center 到 left/right cell-center 位移、limiter-off `phi=1`、physicality fallback、boundary-first、`INTERFACE/PERIODIC` preserve、普通 boundary average、`SOLID_SURFACE` 的 face-indexed `bc_q` 覆盖语义。
+- `HipGradientStorage` 现在 state-own `qf1/qf2`、boundary operation/mask 和可选 `bc_q`；HIP fused flux/residual 直接读取 device qf1/qf2。`ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 是新的受限 opt-in，旧 host reconstruction 和旧 HIP batch fallback 保留。
+- NoTrace 不做 qf1/qf2 或 invflux D2H；只有 trace/stage trace 显式下载 qf1/qf2/invflux。当前 residual 仍 H2D/D2H，RK/state update 仍 host loop；q H2D、gradient D2H 仍保留用于 oracle/diagnostic，故不能称完整 device-resident solver。
+- Kunshan revision 使用 DTK 26.04 / `gfx906` / `dcu:1`：root configure/build、smoke、GoogleTest `9/9`、hardware CTest `10/10` 全通过。
+- 同一 revision 的标准 CPU 回归也通过：`kshcnormal`、16 CPU、normal `1e-8` 五算例 `5/5`，strict `1e-15` 五算例 `5/5`，Slurm `COMPLETED/0:0`。
+- 直接单进程 m6 1-step trace（legacy / CPU batch / HIP batch + gradient + reconstruction）三路 workload exit `0`；stream verifier `STAGE_TRACE_PASS records=12`，HIP 相对 legacy 最大绝对差约 `2.3981e-13`，finite/positive density-pressure 和 connectivity/geometry metadata 全通过。
+- fixed-CFL `0.01`、50-step 直接 workload 三路均 exit `0`，精确诊断 regex 三路 `diagnostic_hits=0`。该包装 job 因初版宽松 grep 把日志中的 “information” 误计为命中而返回 Slurm `FAILED/1:0`，所以不把它记为标准 stability runner PASS；workload 本身没有失败，也未做 timing。
+- 当前能力仍受限于单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；viscous/turbulence、MPI/interface、RK/state update、完整 q residency 和 GPU reduction 尚未迁移。
+
+## 本轮 HIP gradient ownership migration（2026-09-22）
+
+- `HipFluxBackend` 新增 HIP-specific `Ns3DBackendState`，production `CalcGradient` 按 grid binding 选择 state-owned `cellState`、gradient、geometry 和 connectivity DeviceBuffer；未绑定 direct/smoke API 保留 shared fallback。
+- bind/unbind 在 `EulerDomainStateSync` 的 HIP state create/invalidate/restart 路径接入；backend/device identity 校验保留，cache 失效同时比较 state owner token、topology generation 和 view extent/pointer。
+- Kunshan CPU 计算节点：5 个 Euler domain/registry contract binaries 全部通过（`4+9+2+3+8` tests）；DTK 26.04 / `gfx906` / `dcu:1`：root HIP configure/build 通过；smoke PASS；GoogleTest `9/9`；hardware CTest `10/10`。本轮未改变 kernel 数值语义、H2D/D2H 边界、allocation 或 sync 统计，未做性能 timing。
+- 本轮 root HIP 作业的三种 3-step workload 均生成完整 trace/log，但标准 `mpirun -np 1` runner 在 PMIX cleanup 阶段未返回，作业被取消，故该 revision 不把 stage verifier 或 workload exit 记为通过；此前同一基线 revision 的 3-step/50-step CPU/HIP 门禁证据仍有效。
+- 当前能力仍受限于单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；reconstruction、qf1/qf2、flux/residual、RK/state update、viscous/turbulence 与 MPI/interface 尚未 device-resident。
 
 ## 本轮 gradient device migration（2026-09-21）
 
@@ -434,6 +453,7 @@ git show dev:doc/plans/oneflow-development-todo.md
     - [x] F3.2：2026-09-20 v4 在 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 完成 root HIP build、smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step trace gate、正式 repeat breakdown 和同 basis timing；2026-09-21 fixed-CFL 四组 stability 作业的 scheduler/workload 均为 `COMPLETED/0:0`，legacy/CPU batch/HIP batch 全部 50-step PASS。raw mean 为 legacy CPU `15058.725461 ms`、CPU batch `15724.756053 ms`、HIP batch `13869.312341 ms`，raw ratio `1.085759x`；该 timing 仍是 host-staged 单次作业结果，不作为正式稳定加速结论，也未更新性能报告。
     - [x] F3.3：fresh CPU 五 case 门禁于 2026-09-20 在 v5 快照上复验：normal `1e-8` 5/5（最大绝对残差 `4.970574442764598e-10`）、strict `1e-15` 5/5（最大 `1.1072414686508214e-17`）；scheduler `COMPLETED`、workload exit `0:0`。
     - [x] F3.4：2026-09-21 gradient slice 在同一 Kunshan target-node 口径完成 root HIP build/smoke/contract、3-step 36-record accuracy、fixed-CFL 50-step stability 与同 basis timing；三路 workload 与 scheduler 均成功。HIP/legacy 单作业 mean `1.160129x`，但尚无连续多作业重复，因此不更新正式性能报告。
+    - [x] F3.5：2026-09-22 对包含 P0 contract 与 HIP gradient ownership wiring 的新 revision 完成 Kunshan CPU normal/strict 五算例各 `5/5`（workload/scheduler `0:0`/`COMPLETED`），以及 root HIP configure/build、smoke、GoogleTest `9/9`、hardware CTest `10/10`；3-step 三路 workload 生成完整 trace/log，但标准 `mpirun -np 1` runner 在 PMIX cleanup 阶段未返回并被取消，因此该 revision 不记 stage verifier/workload exit 为通过，也不产生性能结论。
 - [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
 
 ### P2 — 后续技术工作
@@ -448,7 +468,8 @@ git show dev:doc/plans/oneflow-development-todo.md
 - [ ] **P2.1：把 HIP backend/state 绑定到宏步生命周期**
   - [x] `HipFluxBackend::Shared()` 已让同一 runtime 内的 flux/gradient 调用复用长期 backend 与 device buffers，不再在每次 `CalcInvFlux` 创建临时 backend。
   - [x] `SimuContext::TeardownEnvironment()` 在 accelerator runtime finalize 前先 clear registry state、再 `ReleaseShared()`，旧 teardown signal 11 已消除。
-  - [ ] 把 shared backend/device buffers 收敛到按 solver/zone/grid/backend key 管理的 `Ns3DDeviceState`，补 teardown/reinitialize contract，形成唯一且可失效的 device ownership。
+  - [x] 建立 backend-neutral reconstruction view、opaque state-owned backend seam、generation/token，以及包含 backend/device identity 的 state key；补齐 create/reuse/invalidate/restart/teardown contract tests。
+  - [ ] 把实际 shared backend/device buffers 收敛到按 solver/zone/grid/backend/device key 管理的 `Ns3DDeviceState`，补 teardown/reinitialize contract，形成唯一且可失效的 device ownership。
   - [x] 连续多个 RK stage、3-step accuracy 与 fixed-CFL 50-step 重复宏步均无 device allocation/lifecycle 错误。
 
 - [x] **P2.2：缓存不变的 device geometry/connectivity**
@@ -477,7 +498,8 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 - [ ] **P2.6：HIP reconstruction vertical slice**
   - [x] 完成 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle 只读盘点；当前结论是不先写仍需 gradient D2H + qf H2D 的孤立 kernel。
-  - [ ] 先建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual buffers 纳入按 solver/zone/grid/backend key 管理的 state-owned contract。
+  - [x] 先建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual 的 ownership、generation 与失效边界纳入按 solver/zone/grid/backend/device key 管理的 state-owned contract；CPU/HIP 类型仍通过 opaque seam 隔离。
+  - [x] production gradient 的 HIP state/geometry/connectivity DeviceBuffer 已迁入上述 state-owned backend-specific seam；qf1/qf2、flux/residual 与 state update 仍待接入连续 device chain。
   - [ ] 只覆盖单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；不同时迁移 limiter、RK 或 viscous/turbulence。
   - [ ] 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序验收。
 
@@ -543,6 +565,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-22 | 完成 3D 主 solver P0 ownership/reconstruction contract scaffolding，并将 production gradient storage 接入 `Ns3DDeviceState` | 本地只做静态检查；Kunshan CPU normal/strict 各 `5/5` 且 scheduler `COMPLETED/0:0`；DTK 26.04 / `gfx906` / `dcu:1` root HIP configure/build、smoke、GoogleTest `9/9`、hardware CTest `10/10` 通过。3-step workload 生成完整 trace/log，但 PMIX cleanup 未返回，未将该 revision 的 stage verifier/workload exit 记为通过；无性能 timing。
 | 2026-09-21 | 完成首个 3D 主 solver HIP Green–Gauss gradient vertical slice；共享代码与 fork-only TODO 分开提交 | 本地 CPU build + CTest `243/243`、五算例 normal/strict 各 `5/5`；Kunshan DTK 26.04 / `gfx906` / `dcu:1` gradient smoke 误差 0、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy PASS、fixed-CFL 50-step 三路 PASS、同 basis HIP/legacy `1.160129x`；当前仍 host-staged，不是完整 stateful/device-resident |
 | 2026-09-21 | 定位并修正 stability runner 的 CFL ramp 配置错误：旧 runner 只改 `cflst`、保留 `cfled=10`，导致第 14 步实际 CFL 约 1.41；新增 fixed-CFL、显式 limiter 和 configuration.tsv | Kunshan DTK 26.04 / `gfx906` / `dcu:1`：`fixed_inviscid`、`fixed_limiter`、`fixed_lowcfl`、`fixed_viscous` 四组均为 legacy/CPU batch/HIP batch `exit_code=0`、`diagnostic_hits=0`、`PASS`，Slurm `COMPLETED/0:0`；当前 3D 仍是 host-staged，不是完整 GPU-resident |
 | 2026-09-20 | 3D persistent-state / stage-breakdown vertical slice：新增 `Ns3DDeviceState` 注册与 host scratch ownership、HIP geometry/connectivity cache、opt-in `StageProfiler`、正式 repeat breakdown 汇总、8-rank Slurm slot 修正、可参数化 trace timeout 和独立 50-step stability runner | 本地 CPU build + CTest `242/242`；Kunshan v4 root HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step accuracy、breakdown 和 timing 全通过；v5 CPU normal/strict 各 5/5；v5b 50-step 三路均于第 20 步共同失稳，HIP 错误路径另有 teardown signal 11。当前 3D 仍是 host-staged，不是完整 GPU-resident |
