@@ -4,6 +4,9 @@
 #include "CpuEulerDomainBackend.h"
 #include "EulerDomainMrFieldAdapter.h"
 #include "EulerDomainStateLifecycle.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 #include "SimuContext.h"
 #include "Ctrl.h"
 #include "DataBase.h"
@@ -103,12 +106,26 @@ void SyncCurrentEulerDomainState(
     {
         EulerDomainStateKey hipKey = key;
         hipKey.backend = AccelBackendKind::HIP;
+        hipKey.deviceId = runtime.Context().selectedDevice;
+#ifdef ONEFLOW_ENABLE_HIP
+        Grid * grid = Zone::GetGrid();
+        HipFluxBackend::Shared().UnbindState( grid );
+#endif
         context.AccelStates().Invalidate( hipKey );
         auto hipState = std::make_unique< Ns3DDeviceState >( problem, hipKey );
         UnsGrid * unsGrid = Zone::GetUnsGrid();
         if ( unsGrid != nullptr ) hipState->ReserveFaces( unsGrid->nFaces );
         hipState->Upload( field );
+#ifdef ONEFLOW_ENABLE_HIP
+        hipState->AttachBackendState(
+            CreateHipNs3DBackendState( hipKey.deviceId ) );
+#endif
         context.AccelStates().Insert( hipKey, std::move( hipState ) );
+#ifdef ONEFLOW_ENABLE_HIP
+        auto & registered = dynamic_cast< Ns3DDeviceState & >(
+            context.AccelStates().Get( hipKey ) );
+        HipFluxBackend::Shared().BindState( grid, registered );
+#endif
     }
 }
 

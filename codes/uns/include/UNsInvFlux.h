@@ -48,6 +48,7 @@ public:
     bool UseCpuBatchAdapter() const;
     bool UseHipBatchAdapter() const;
     bool UseHipGradient() const;
+    bool UseHipDeviceReconstruction() const;
     void CalcInvFace();
     void CalcLimiter();
     void AddInvFlux();

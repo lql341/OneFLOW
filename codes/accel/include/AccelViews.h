@@ -15,6 +15,7 @@ License
 
 #include "HXTypeBasic.h"
 
+#include <cstdint>
 #include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
@@ -36,6 +37,35 @@ enum class FaceAreaPolicy
 {
     BackendMultiplies,
     CallerMultiplies
+};
+
+enum class MemorySpace
+{
+    Host,
+    Device
+};
+
+enum class ReconstructionLimiterMode
+{
+    Disabled,
+    Cell
+};
+
+// The solver translates its BC types into these operations before dispatch.
+// Preserve keeps the reconstructed values (INTERFACE/PERIODIC), Average uses
+// the left/right cell average (ordinary boundaries), and SolidOverride copies
+// the face-indexed bcQ value to both sides.
+enum class ReconstructionBoundaryOperation : unsigned char
+{
+    Preserve,
+    Average,
+    SolidOverride
+};
+
+enum class ReconstructionPhysicalityPolicy
+{
+    None,
+    PositiveDensityPressure
 };
 
 // Solver-side capability metadata. Ownership remains with the solver; halo
@@ -213,6 +243,101 @@ inline void ValidateCellGradientView( const CellGradientView & view )
         {
             throw std::invalid_argument(
                 "cell gradient view has a missing equation component" );
+        }
+    }
+}
+
+// Backend-neutral reconstruction contract. Pointers may refer to host or
+// device memory as selected by memorySpace; ownership remains with the
+// per-solver/zone/grid state. All component arrays are equation-major by
+// construction: component[equation][entity].
+struct CellFaceReconstructionView
+{
+    int nCells = 0;
+    int nGhostCells = 0;
+    int nFaces = 0;
+    int nBoundaryFaces = 0;
+    int nEquations = 0;
+    const Real * q[ 5 ] = {};
+    const Real * dqdx[ 5 ] = {};
+    const Real * dqdy[ 5 ] = {};
+    const Real * dqdz[ 5 ] = {};
+    const Real * limiter[ 5 ] = {};
+    const Real * xFace = nullptr;
+    const Real * yFace = nullptr;
+    const Real * zFace = nullptr;
+    const Real * xCell = nullptr;
+    const Real * yCell = nullptr;
+    const Real * zCell = nullptr;
+    const int * leftCell = nullptr;
+    const int * rightCell = nullptr;
+    const unsigned char * boundaryMask = nullptr;
+    const ReconstructionBoundaryOperation * boundaryOperation = nullptr;
+    const Real * bcQ[ 5 ] = {};
+    Real * qLeft[ 5 ] = {};
+    Real * qRight[ 5 ] = {};
+    FieldLayout layout = FieldLayout::EquationMajor;
+    FieldRepresentation representation = FieldRepresentation::Primitive;
+    MemorySpace memorySpace = MemorySpace::Host;
+    ReconstructionLimiterMode limiterMode =
+        ReconstructionLimiterMode::Disabled;
+    ReconstructionPhysicalityPolicy physicality =
+        ReconstructionPhysicalityPolicy::PositiveDensityPressure;
+    int densityComponent = 0;
+    int pressureComponent = 4;
+    bool hasSolidBoundary = false;
+    const void * ownerToken = nullptr;
+    std::uint64_t topologyGeneration = 0;
+    std::uint64_t fieldGeneration = 0;
+    // Backend binding key (for example the local grid identity).
+    const void * cacheKey = nullptr;
+};
+
+inline void ValidateCellFaceReconstructionView(
+    const CellFaceReconstructionView & view )
+{
+    if ( view.nCells <= 0 || view.nGhostCells < 0
+         || view.nGhostCells != view.nBoundaryFaces || view.nFaces <= 0
+         || view.nBoundaryFaces < 0 || view.nBoundaryFaces > view.nFaces
+         || ( view.nEquations != 3 && view.nEquations != 5 )
+         || view.xFace == nullptr || view.yFace == nullptr
+         || view.zFace == nullptr || view.xCell == nullptr
+         || view.yCell == nullptr || view.zCell == nullptr
+         || view.leftCell == nullptr || view.rightCell == nullptr
+         || ( view.nBoundaryFaces > 0
+              && view.boundaryOperation == nullptr )
+         || view.layout != FieldLayout::EquationMajor
+         || view.representation != FieldRepresentation::Primitive
+         || view.ownerToken == nullptr || view.topologyGeneration == 0
+         || view.fieldGeneration == 0 )
+    {
+        throw std::invalid_argument(
+            "invalid solver cell/face reconstruction view" );
+    }
+    if ( view.physicality
+             == ReconstructionPhysicalityPolicy::PositiveDensityPressure
+         && ( view.densityComponent < 0
+              || view.densityComponent >= view.nEquations
+              || view.pressureComponent < 0
+              || view.pressureComponent >= view.nEquations ) )
+    {
+        throw std::invalid_argument(
+            "invalid reconstruction physicality components" );
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( view.q[ equation ] == nullptr
+             || view.dqdx[ equation ] == nullptr
+             || view.dqdy[ equation ] == nullptr
+             || view.dqdz[ equation ] == nullptr
+             || view.qLeft[ equation ] == nullptr
+             || view.qRight[ equation ] == nullptr
+             || ( view.limiterMode == ReconstructionLimiterMode::Cell
+                  && view.limiter[ equation ] == nullptr )
+             || ( view.hasSolidBoundary && view.bcQ[ equation ] == nullptr ) )
+        {
+            throw std::invalid_argument(
+                "cell/face reconstruction view has a missing component" );
         }
     }
 }

@@ -84,12 +84,15 @@ run_case() {
         export ONEFLOW_STAGE_BREAKDOWN_FILE="$trace_root/$mode.breakdown-%r.tsv"
         export ONEFLOW_UNS_STAGE_TRACE_FILE="$trace_root/$mode.stage"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
-            ONEFLOW_ENABLE_UNS_HIP_GRADIENT || true
+            ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
             if [ "${ONEFLOW_F2_STAGE_HIP_GRADIENT:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
+            fi
+            if [ "${ONEFLOW_F2_STAGE_HIP_RECONSTRUCTION:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1
             fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
@@ -151,12 +154,16 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
     configure_mode() {
         local mode=$1
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
-            ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_UNS_STAGE_TRACE_FILE || true
+            ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
+            ONEFLOW_UNS_STAGE_TRACE_FILE || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
             if [ "${ONEFLOW_F2_STAGE_HIP_GRADIENT:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
+            fi
+            if [ "${ONEFLOW_F2_STAGE_HIP_RECONSTRUCTION:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1
             fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU

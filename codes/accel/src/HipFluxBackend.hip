@@ -34,6 +34,34 @@ void CheckHip( hipError_t status, const char * operation )
 
 std::unique_ptr< HipFluxBackend > sharedHipFluxBackend;
 
+class HipNs3DBackendState final : public Ns3DBackendState
+{
+public:
+    explicit HipNs3DBackendState( int deviceIdValue )
+        : deviceId_( deviceIdValue )
+    {
+    }
+
+    AccelBackendKind Backend() const noexcept override
+    {
+        return AccelBackendKind::HIP;
+    }
+
+    int DeviceId() const noexcept override
+    {
+        return deviceId_;
+    }
+
+    HipGradientStorage & Gradient() noexcept
+    {
+        return gradient_;
+    }
+
+private:
+    int deviceId_ = -1;
+    HipGradientStorage gradient_;
+};
+
 // ---------------------------------------------------------------------------
 // Scalar convection kernel (nEquations == 1)
 // ---------------------------------------------------------------------------
@@ -499,6 +527,108 @@ __global__ void GradientCopyBoundaryKernel(
     }
 }
 
+
+__global__ void ReconstructFaceEulerKernel(
+    const Real * q,
+    const Real * gradient,
+    const Real * xFace,
+    const Real * yFace,
+    const Real * zFace,
+    const Real * xCell,
+    const Real * yCell,
+    const Real * zCell,
+    const int * leftCell,
+    const int * rightCell,
+    const unsigned char * boundaryMask,
+    const ReconstructionBoundaryOperation * boundaryOperation,
+    const Real * bcQ,
+    int nCells,
+    int nBoundaryFaces,
+    int nFaces,
+    int nEq,
+    int physicality,
+    int densityComponent,
+    int pressureComponent,
+    Real * qf1,
+    Real * qf2 )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nFaces ) return;
+
+    const int totalCells = nCells + nBoundaryFaces;
+    const int left = leftCell[ face ];
+    const int right = rightCell[ face ];
+    Real leftValue[ 5 ] = {};
+    Real rightValue[ 5 ] = {};
+    Real leftCandidate[ 5 ] = {};
+    Real rightCandidate[ 5 ] = {};
+    const Real dxl = xFace[ face ] - xCell[ left ];
+    const Real dyl = yFace[ face ] - yCell[ left ];
+    const Real dzl = zFace[ face ] - zCell[ left ];
+    const Real dxr = xFace[ face ] - xCell[ right ];
+    const Real dyr = yFace[ face ] - yCell[ right ];
+    const Real dzr = zFace[ face ] - zCell[ right ];
+
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int qBase = eq * totalCells;
+        const int gradientBase = eq * 3 * totalCells;
+        leftValue[ eq ] = q[ qBase + left ];
+        rightValue[ eq ] = q[ qBase + right ];
+        leftCandidate[ eq ] = leftValue[ eq ]
+            + gradient[ gradientBase + left ] * dxl
+            + gradient[ gradientBase + totalCells + left ] * dyl
+            + gradient[ gradientBase + 2 * totalCells + left ] * dzl;
+        rightCandidate[ eq ] = rightValue[ eq ]
+            + gradient[ gradientBase + right ] * dxr
+            + gradient[ gradientBase + totalCells + right ] * dyr
+            + gradient[ gradientBase + 2 * totalCells + right ] * dzr;
+    }
+
+    bool leftPhysical = true;
+    bool rightPhysical = true;
+    if ( physicality != 0 )
+    {
+        leftPhysical = leftCandidate[ densityComponent ] > 0.0
+            && leftCandidate[ pressureComponent ] > 0.0;
+        rightPhysical = rightCandidate[ densityComponent ] > 0.0
+            && rightCandidate[ pressureComponent ] > 0.0;
+    }
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        qf1[ eq * nFaces + face ] =
+            leftPhysical ? leftCandidate[ eq ] : leftValue[ eq ];
+        qf2[ eq * nFaces + face ] =
+            rightPhysical ? rightCandidate[ eq ] : rightValue[ eq ];
+    }
+
+    const bool boundary = boundaryMask != nullptr
+        ? boundaryMask[ face ] != 0
+        : face < nBoundaryFaces;
+    if ( ! boundary ) return;
+
+    ReconstructionBoundaryOperation operation =
+        ReconstructionBoundaryOperation::Average;
+    if ( boundaryOperation != nullptr ) operation = boundaryOperation[ face ];
+    if ( operation == ReconstructionBoundaryOperation::Preserve ) return;
+    if ( operation == ReconstructionBoundaryOperation::SolidOverride )
+    {
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            const Real value = bcQ[ eq * nFaces + face ];
+            qf1[ eq * nFaces + face ] = value;
+            qf2[ eq * nFaces + face ] = value;
+        }
+        return;
+    }
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const Real value = 0.5 * ( leftValue[ eq ] + rightValue[ eq ] );
+        qf1[ eq * nFaces + face ] = value;
+        qf2[ eq * nFaces + face ] = value;
+    }
+}
+
 __global__ void AddFaceFluxEulerKernel(
     const Real * flux,
     const int * leftCell,
@@ -563,101 +693,176 @@ __global__ void ScatterFaceFluxEulerKernel(
 
 } // namespace
 
+std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
+    int deviceId )
+{
+    if ( deviceId < 0 )
+    {
+        throw std::invalid_argument(
+            "cannot create HIP Ns3D state with an invalid device" );
+    }
+    return std::make_unique< HipNs3DBackendState >( deviceId );
+}
+
+void HipFluxBackend::BindState(
+    const void * cacheKey,
+    Ns3DDeviceState & state )
+{
+    if ( cacheKey == nullptr )
+    {
+        throw std::invalid_argument(
+            "cannot bind HIP Ns3D state without a cache key" );
+    }
+    if ( state.key.backend != AccelBackendKind::HIP
+         || state.key.deviceId
+             != AccelRuntime::Instance().Context().selectedDevice )
+    {
+        throw std::invalid_argument(
+            "HIP Ns3D state key does not match the active device" );
+    }
+    auto * hipState =
+        dynamic_cast< HipNs3DBackendState * >( state.BackendState() );
+    if ( hipState == nullptr
+         || hipState->DeviceId() != state.key.deviceId )
+    {
+        throw std::invalid_argument(
+            "HIP Ns3D state has no matching backend ownership" );
+    }
+    const auto found = boundStates_.find( cacheKey );
+    if ( found != boundStates_.end() && found->second != &state )
+    {
+        throw std::logic_error(
+            "HIP grid cache key is already bound to another Ns3D state" );
+    }
+    boundStates_[ cacheKey ] = &state;
+}
+
+void HipFluxBackend::UnbindState( const void * cacheKey ) noexcept
+{
+    if ( cacheKey != nullptr ) boundStates_.erase( cacheKey );
+}
+
 void HipFluxBackend::CalcGradient( const CellGradientView & view )
 {
     ValidateCellGradientView( view );
+    HipGradientStorage * storage = &fallbackGradientStorage_;
+    Ns3DDeviceState * owner = nullptr;
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding != boundStates_.end() )
+    {
+        owner = binding->second;
+        auto * hipState =
+            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+        if ( hipState == nullptr )
+        {
+            throw std::logic_error(
+                "bound HIP Ns3D state lost its backend ownership" );
+        }
+        storage = &hipState->Gradient();
+    }
     const int totalCells = view.nCells + view.nGhostCells;
     const int totalState = view.nEquations * totalCells;
     const int totalGradient = view.nEquations * 3 * totalCells;
-    cellState_.Resize( totalState );
+    storage->cellState.Resize( totalState );
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         AccelRuntime::Instance().Backend().Copy(
-            cellState_.Data() + equation * totalCells, view.q[ equation ],
-            totalCells * sizeof( Real ), AccelCopyKind::HostToDevice );
+            storage->cellState.Data() + equation * totalCells,
+            view.q[ equation ], totalCells * sizeof( Real ),
+            AccelCopyKind::HostToDevice );
     }
-    const bool cacheMatches = gradientGeometryCacheValid_
-        && cachedGradientOwner_ == view.cacheKey
-        && cachedGradientXFace_ == view.xFace
-        && cachedGradientYFace_ == view.yFace
-        && cachedGradientZFace_ == view.zFace
-        && cachedGradientXNormal_ == view.xNormal
-        && cachedGradientYNormal_ == view.yNormal
-        && cachedGradientZNormal_ == view.zNormal
-        && cachedGradientFaceArea_ == view.faceArea
-        && cachedGradientXCell_ == view.xCell
-        && cachedGradientYCell_ == view.yCell
-        && cachedGradientZCell_ == view.zCell
-        && cachedGradientVolume_ == view.cellVolume
-        && cachedGradientLeftCell_ == view.leftCell
-        && cachedGradientRightCell_ == view.rightCell
-        && cachedGradientCells_ == view.nCells
-        && cachedGradientGhostCells_ == view.nGhostCells
-        && cachedGradientFaces_ == view.nFaces
-        && cachedGradientBoundaryFaces_ == view.nBoundaryFaces;
+    const void * ownerToken =
+        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    const std::uint64_t topologyGeneration =
+        owner != nullptr ? owner->TopologyGeneration() : 0;
+    const bool cacheMatches = storage->geometryCacheValid
+        && storage->cachedOwnerToken == ownerToken
+        && storage->cachedTopologyGeneration == topologyGeneration
+        && storage->cachedXFace == view.xFace
+        && storage->cachedYFace == view.yFace
+        && storage->cachedZFace == view.zFace
+        && storage->cachedXNormal == view.xNormal
+        && storage->cachedYNormal == view.yNormal
+        && storage->cachedZNormal == view.zNormal
+        && storage->cachedFaceArea == view.faceArea
+        && storage->cachedXCell == view.xCell
+        && storage->cachedYCell == view.yCell
+        && storage->cachedZCell == view.zCell
+        && storage->cachedVolume == view.cellVolume
+        && storage->cachedLeftCell == view.leftCell
+        && storage->cachedRightCell == view.rightCell
+        && storage->cachedCells == view.nCells
+        && storage->cachedGhostCells == view.nGhostCells
+        && storage->cachedFaces == view.nFaces
+        && storage->cachedBoundaryFaces == view.nBoundaryFaces;
     if ( ! cacheMatches )
     {
-        xFaceCenter_.CopyFromHost( view.xFace, view.nFaces );
-        yFaceCenter_.CopyFromHost( view.yFace, view.nFaces );
-        zFaceCenter_.CopyFromHost( view.zFace, view.nFaces );
-        gradientXNormal_.CopyFromHost( view.xNormal, view.nFaces );
-        gradientYNormal_.CopyFromHost( view.yNormal, view.nFaces );
-        gradientZNormal_.CopyFromHost( view.zNormal, view.nFaces );
-        gradientFaceArea_.CopyFromHost( view.faceArea, view.nFaces );
-        xCellCenter_.CopyFromHost( view.xCell, totalCells );
-        yCellCenter_.CopyFromHost( view.yCell, totalCells );
-        zCellCenter_.CopyFromHost( view.zCell, totalCells );
-        cellVolume_.CopyFromHost( view.cellVolume, view.nCells );
-        gradientLeftCell_.CopyFromHost( view.leftCell, view.nFaces );
-        gradientRightCell_.CopyFromHost( view.rightCell, view.nFaces );
-        cachedGradientOwner_ = view.cacheKey;
-        cachedGradientXFace_ = view.xFace;
-        cachedGradientYFace_ = view.yFace;
-        cachedGradientZFace_ = view.zFace;
-        cachedGradientXNormal_ = view.xNormal;
-        cachedGradientYNormal_ = view.yNormal;
-        cachedGradientZNormal_ = view.zNormal;
-        cachedGradientFaceArea_ = view.faceArea;
-        cachedGradientXCell_ = view.xCell;
-        cachedGradientYCell_ = view.yCell;
-        cachedGradientZCell_ = view.zCell;
-        cachedGradientVolume_ = view.cellVolume;
-        cachedGradientLeftCell_ = view.leftCell;
-        cachedGradientRightCell_ = view.rightCell;
-        cachedGradientCells_ = view.nCells;
-        cachedGradientGhostCells_ = view.nGhostCells;
-        cachedGradientFaces_ = view.nFaces;
-        cachedGradientBoundaryFaces_ = view.nBoundaryFaces;
-        gradientGeometryCacheValid_ = true;
+        storage->xFaceCenter.CopyFromHost( view.xFace, view.nFaces );
+        storage->yFaceCenter.CopyFromHost( view.yFace, view.nFaces );
+        storage->zFaceCenter.CopyFromHost( view.zFace, view.nFaces );
+        storage->xNormal.CopyFromHost( view.xNormal, view.nFaces );
+        storage->yNormal.CopyFromHost( view.yNormal, view.nFaces );
+        storage->zNormal.CopyFromHost( view.zNormal, view.nFaces );
+        storage->faceArea.CopyFromHost( view.faceArea, view.nFaces );
+        storage->xCellCenter.CopyFromHost( view.xCell, totalCells );
+        storage->yCellCenter.CopyFromHost( view.yCell, totalCells );
+        storage->zCellCenter.CopyFromHost( view.zCell, totalCells );
+        storage->cellVolume.CopyFromHost( view.cellVolume, view.nCells );
+        storage->leftCell.CopyFromHost( view.leftCell, view.nFaces );
+        storage->rightCell.CopyFromHost( view.rightCell, view.nFaces );
+        storage->cachedOwnerToken = ownerToken;
+        storage->cachedTopologyGeneration = topologyGeneration;
+        storage->cachedXFace = view.xFace;
+        storage->cachedYFace = view.yFace;
+        storage->cachedZFace = view.zFace;
+        storage->cachedXNormal = view.xNormal;
+        storage->cachedYNormal = view.yNormal;
+        storage->cachedZNormal = view.zNormal;
+        storage->cachedFaceArea = view.faceArea;
+        storage->cachedXCell = view.xCell;
+        storage->cachedYCell = view.yCell;
+        storage->cachedZCell = view.zCell;
+        storage->cachedVolume = view.cellVolume;
+        storage->cachedLeftCell = view.leftCell;
+        storage->cachedRightCell = view.rightCell;
+        storage->cachedCells = view.nCells;
+        storage->cachedGhostCells = view.nGhostCells;
+        storage->cachedFaces = view.nFaces;
+        storage->cachedBoundaryFaces = view.nBoundaryFaces;
+        storage->geometryCacheValid = true;
     }
-    cellGradient_.Resize( totalGradient );
+    storage->cellGradient.Resize( totalGradient );
     const int blockSize = 256;
     hipLaunchKernelGGL(
         GradientZeroKernel,
         dim3( ( totalGradient + blockSize - 1 ) / blockSize ),
-        dim3( blockSize ), 0, 0, cellGradient_.Data(), totalGradient );
+        dim3( blockSize ), 0, 0, storage->cellGradient.Data(),
+        totalGradient );
     hipLaunchKernelGGL(
         GradientAccumulateKernel,
         dim3( ( view.nFaces + blockSize - 1 ) / blockSize ),
-        dim3( blockSize ), 0, 0, cellState_.Data(), xFaceCenter_.Data(),
-        yFaceCenter_.Data(), zFaceCenter_.Data(), gradientXNormal_.Data(),
-        gradientYNormal_.Data(), gradientZNormal_.Data(),
-        gradientFaceArea_.Data(), xCellCenter_.Data(), yCellCenter_.Data(),
-        zCellCenter_.Data(), gradientLeftCell_.Data(),
-        gradientRightCell_.Data(), view.nFaces, view.nBoundaryFaces,
-        view.nCells, view.nEquations, cellGradient_.Data() );
+        dim3( blockSize ), 0, 0, storage->cellState.Data(),
+        storage->xFaceCenter.Data(), storage->yFaceCenter.Data(),
+        storage->zFaceCenter.Data(), storage->xNormal.Data(),
+        storage->yNormal.Data(), storage->zNormal.Data(),
+        storage->faceArea.Data(), storage->xCellCenter.Data(),
+        storage->yCellCenter.Data(), storage->zCellCenter.Data(),
+        storage->leftCell.Data(), storage->rightCell.Data(),
+        view.nFaces, view.nBoundaryFaces, view.nCells,
+        view.nEquations, storage->cellGradient.Data() );
     hipLaunchKernelGGL(
         GradientNormalizeKernel,
         dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
-        dim3( blockSize ), 0, 0, cellGradient_.Data(), cellVolume_.Data(),
-        view.nCells, view.nBoundaryFaces, view.nEquations );
+        dim3( blockSize ), 0, 0, storage->cellGradient.Data(),
+        storage->cellVolume.Data(), view.nCells,
+        view.nBoundaryFaces, view.nEquations );
     if ( view.nBoundaryFaces > 0 )
     {
         hipLaunchKernelGGL(
             GradientCopyBoundaryKernel,
             dim3( ( view.nBoundaryFaces + blockSize - 1 ) / blockSize ),
-            dim3( blockSize ), 0, 0, cellGradient_.Data(),
-            gradientLeftCell_.Data(), gradientRightCell_.Data(),
+            dim3( blockSize ), 0, 0, storage->cellGradient.Data(),
+            storage->leftCell.Data(), storage->rightCell.Data(),
             view.nCells, view.nBoundaryFaces, view.nEquations );
     }
     CheckHip( hipGetLastError(), "gradient kernel launch" );
@@ -666,16 +871,260 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     {
         const int base = equation * 3 * totalCells;
         AccelRuntime::Instance().Backend().Copy(
-            view.dqdx[ equation ], cellGradient_.Data() + base,
+            view.dqdx[ equation ], storage->cellGradient.Data() + base,
             totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
         AccelRuntime::Instance().Backend().Copy(
             view.dqdy[ equation ],
-            cellGradient_.Data() + base + totalCells,
+            storage->cellGradient.Data() + base + totalCells,
             totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
         AccelRuntime::Instance().Backend().Copy(
             view.dqdz[ equation ],
-            cellGradient_.Data() + base + 2 * totalCells,
+            storage->cellGradient.Data() + base + 2 * totalCells,
             totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+    }
+}
+
+
+void HipFluxBackend::ReconstructFaceValues(
+    const CellFaceReconstructionView & view,
+    bool downloadToHost )
+{
+    ValidateCellFaceReconstructionView( view );
+    if ( view.limiterMode != ReconstructionLimiterMode::Disabled )
+    {
+        throw std::invalid_argument(
+            "HIP device reconstruction currently requires limiter off" );
+    }
+    const void * cacheKey = view.cacheKey != nullptr
+        ? view.cacheKey : view.ownerToken;
+    HipGradientStorage * storage = &fallbackGradientStorage_;
+    Ns3DDeviceState * owner = nullptr;
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding != boundStates_.end() )
+    {
+        owner = binding->second;
+        auto * hipState =
+            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+        if ( hipState == nullptr )
+        {
+            throw std::logic_error(
+                "bound HIP Ns3D state lost its backend ownership" );
+        }
+        storage = &hipState->Gradient();
+    }
+    if ( storage->cellState.Size() <
+             static_cast< std::size_t >( view.nEquations )
+                 * ( view.nCells + view.nGhostCells )
+         || storage->cellGradient.Size() <
+             static_cast< std::size_t >( view.nEquations ) * 3
+                 * ( view.nCells + view.nGhostCells )
+         || ! storage->geometryCacheValid
+         || storage->cachedFaces != view.nFaces
+         || storage->cachedBoundaryFaces != view.nBoundaryFaces )
+    {
+        throw std::logic_error(
+            "HIP reconstruction requires a preceding compatible gradient" );
+    }
+
+    const int totalCells = view.nCells + view.nGhostCells;
+    const int totalFaces = view.nFaces;
+    const int totalValues = view.nEquations * totalFaces;
+    storage->qf1.Resize( totalValues );
+    storage->qf2.Resize( totalValues );
+    storage->boundaryOperation.Resize( totalFaces );
+    if ( view.boundaryOperation != nullptr )
+    {
+        storage->boundaryOperation.CopyFromHost(
+            view.boundaryOperation, totalFaces );
+    }
+    else
+    {
+        std::vector< ReconstructionBoundaryOperation > defaultOperation(
+            totalFaces, ReconstructionBoundaryOperation::Preserve );
+        storage->boundaryOperation.CopyFromHost(
+            defaultOperation.data(), totalFaces );
+    }
+    if ( view.boundaryMask != nullptr )
+    {
+        storage->boundaryMask.CopyFromHost(
+            view.boundaryMask, totalFaces );
+        storage->boundaryMaskValid = true;
+    }
+    else
+    {
+        storage->boundaryMask.Reset();
+        storage->boundaryMaskValid = false;
+    }
+    const bool hasSolid = view.hasSolidBoundary;
+    if ( hasSolid )
+    {
+        storage->bcQ.Resize( totalValues );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage->bcQ.Data() + equation * totalFaces,
+                view.bcQ[ equation ], totalFaces * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+    }
+    else
+    {
+        storage->bcQ.Reset();
+    }
+    storage->cachedEquations = view.nEquations;
+    storage->cachedFieldGeneration = view.fieldGeneration;
+
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        ReconstructFaceEulerKernel,
+        dim3( ( totalFaces + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->cellState.Data(), storage->cellGradient.Data(),
+        storage->xFaceCenter.Data(), storage->yFaceCenter.Data(),
+        storage->zFaceCenter.Data(), storage->xCellCenter.Data(),
+        storage->yCellCenter.Data(), storage->zCellCenter.Data(),
+        storage->leftCell.Data(), storage->rightCell.Data(),
+        storage->boundaryMaskValid ? storage->boundaryMask.Data() : nullptr,
+        storage->boundaryOperation.Data(),
+        hasSolid ? storage->bcQ.Data() : nullptr,
+        view.nCells, view.nBoundaryFaces, view.nFaces, view.nEquations,
+        view.physicality == ReconstructionPhysicalityPolicy::None ? 0 : 1,
+        view.densityComponent, view.pressureComponent,
+        storage->qf1.Data(), storage->qf2.Data() );
+    CheckHip( hipGetLastError(), "reconstruction kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "reconstruction kernel synchronize" );
+
+    if ( downloadToHost )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                view.qLeft[ equation ], storage->qf1.Data() + equation * totalFaces,
+                totalFaces * sizeof( Real ), AccelCopyKind::DeviceToHost );
+            AccelRuntime::Instance().Backend().Copy(
+                view.qRight[ equation ], storage->qf2.Data() + equation * totalFaces,
+                totalFaces * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        }
+    }
+}
+
+void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
+    const FaceConnectivityView & connectivity,
+    ResidualView & residual,
+    int scheme,
+    Real gamma,
+    FaceFluxView * hostFlux,
+    const void * cacheKey )
+{
+    ValidateFaceConnectivityView( connectivity );
+    if ( residual.nCells <= 0 || residual.nEquations < 3 || gamma <= 1.0 )
+    {
+        throw std::invalid_argument(
+            "invalid reconstructed HIP residual request" );
+    }
+    const void * key = cacheKey;
+    if ( key == nullptr )
+    {
+        throw std::invalid_argument(
+            "reconstructed HIP flux requires a bound cache key" );
+    }
+    auto binding = boundStates_.find( key );
+    HipGradientStorage * storage = &fallbackGradientStorage_;
+    if ( binding != boundStates_.end() )
+    {
+        auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+            binding->second->BackendState() );
+        if ( hipState == nullptr )
+            throw std::logic_error( "bound HIP state is not HIP-owned" );
+        storage = &hipState->Gradient();
+    }
+    const int nFaces = storage->cachedFaces;
+    const int nEq = storage->cachedEquations;
+    const int nCells = residual.nCells;
+    if ( nFaces <= 0 || nEq < 3 || residual.nEquations != nEq
+         || connectivity.nFaces != nFaces
+         || storage->qf1.Size() < static_cast< std::size_t >( nFaces * nEq )
+         || storage->qf2.Size() < static_cast< std::size_t >( nFaces * nEq )
+         || storage->cachedBoundaryFaces != connectivity.nBoundaryFaces )
+    {
+        throw std::invalid_argument(
+            "reconstructed HIP flux dimensions do not match state" );
+    }
+    if ( storage->cachedLeftCell != connectivity.leftCell
+         || storage->cachedRightCell != connectivity.rightCell )
+    {
+        throw std::invalid_argument(
+            "reconstructed HIP flux connectivity does not match state" );
+    }
+    if ( hostFlux != nullptr
+         && ( hostFlux->nFaces != nFaces || hostFlux->nEquations != nEq
+              || hostFlux->values == nullptr ) )
+    {
+        throw std::invalid_argument( "invalid reconstructed HIP host flux" );
+    }
+
+    const int totalResidual = nCells * nEq;
+    deviceResidual_.Resize( totalResidual );
+    if ( residual.values != nullptr )
+    {
+        deviceResidual_.CopyFromHost(
+            residual.values, totalResidual );
+    }
+    else
+    {
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                deviceResidual_.Data() + equation * nCells,
+                residual.components[ equation ], nCells * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+    }
+    if ( hostFlux != nullptr ) deviceFlux_.Resize( nFaces * nEq );
+
+    const unsigned char * deviceBoundaryMask = nullptr;
+    if ( connectivity.boundaryMask != nullptr )
+    {
+        boundaryMask_.CopyFromHost(
+            connectivity.boundaryMask, nFaces );
+        deviceBoundaryMask = boundaryMask_.Data();
+    }
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        CalcAndScatterPrimitiveEulerKernel,
+        dim3( ( nFaces + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->qf1.Data(), storage->qf2.Data(),
+        storage->xNormal.Data(), storage->yNormal.Data(),
+        storage->zNormal.Data(), nullptr, storage->faceArea.Data(),
+        storage->leftCell.Data(), storage->rightCell.Data(),
+        deviceBoundaryMask, connectivity.nBoundaryFaces, nFaces, nCells,
+        nEq, gamma, scheme,
+        hostFlux != nullptr ? deviceFlux_.Data() : nullptr,
+        deviceResidual_.Data() );
+    CheckHip( hipGetLastError(),
+              "reconstructed primitive flux kernel launch" );
+    CheckHip( hipDeviceSynchronize(),
+              "reconstructed primitive flux kernel synchronize" );
+    if ( residual.values != nullptr )
+    {
+        deviceResidual_.CopyToHost( residual.values, totalResidual );
+    }
+    else
+    {
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                residual.components[ equation ],
+                deviceResidual_.Data() + equation * nCells,
+                nCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        }
+    }
+    if ( hostFlux != nullptr )
+    {
+        deviceFlux_.CopyToHost( hostFlux->values, nFaces * nEq );
+        deviceFluxFaces_ = nFaces;
+        deviceFluxEquations_ = nEq;
     }
 }
 

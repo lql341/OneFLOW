@@ -16,6 +16,7 @@ License
 #include "AccelBackend.h"
 #include "HXTypeBasic.h"
 
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -77,22 +78,24 @@ struct EulerDomainRunOptions
     void * stageContext = nullptr;
 };
 
-// One state per solver/zone/grid/backend. A solver index alone is not enough
-// because a multiblock solve can revisit the same solver on different local
-// zones or grid levels.
+// One state per solver/zone/grid/backend/device. A solver index alone is not
+// enough because a multiblock solve can revisit the same solver on different
+// local zones, grid levels, backends, or accelerator devices.
 struct EulerDomainStateKey
 {
     int solverIndex = -1;
     int localZoneId = -1;
     int gridLevel = -1;
     AccelBackendKind backend = AccelBackendKind::CPU;
+    int deviceId = -1;
 
     bool operator==( const EulerDomainStateKey & other ) const
     {
         return solverIndex == other.solverIndex
             && localZoneId == other.localZoneId
             && gridLevel == other.gridLevel
-            && backend == other.backend;
+            && backend == other.backend
+            && deviceId == other.deviceId;
     }
 };
 
@@ -139,10 +142,21 @@ public:
     virtual ~EulerDomainState() = default;
 };
 
+// Backend-specific allocations are hidden behind this ownership seam. A HIP
+// implementation may derive from it and own DeviceBuffer instances without
+// exposing HIP types in the solver-facing API.
+class Ns3DBackendState
+{
+public:
+    virtual ~Ns3DBackendState() = default;
+    virtual AccelBackendKind Backend() const noexcept = 0;
+    virtual int DeviceId() const noexcept = 0;
+};
+
 // Long-lived 3D main-solver state metadata. This is a separate specialization
 // rather than forcing the 1D port state shape onto Navier--Stokes. The HIP
-// backend owns device allocations; this object aligns solver/grid identity,
-// host mirrors and scratch lifetimes with lifecycle boundaries.
+// backend-specific allocations are owned through an opaque state object here,
+// aligned with solver/grid lifecycle boundaries.
 class Ns3DDeviceState final : public EulerDomainState
 {
 public:
@@ -156,6 +170,7 @@ public:
     {
         if ( faceCount < 0 )
             throw std::invalid_argument( "negative Ns3D face count" );
+        if ( nFaces != faceCount ) MarkTopologyChanged();
         nFaces = faceCount;
         faceState.resize( problem.nEquations * faceCount );
         faceFlux.resize( problem.nEquations * faceCount );
@@ -184,6 +199,72 @@ public:
         reconstruction.assign( count, 0.0 );
         viscousTurbulence.assign( count, 0.0 );
         uploaded = true;
+        MarkFieldChanged();
+    }
+
+    void AttachBackendState( std::unique_ptr< Ns3DBackendState > state )
+    {
+        if ( state == nullptr )
+        {
+            throw std::invalid_argument(
+                "cannot attach a null Ns3D backend state" );
+        }
+        if ( state->Backend() != key.backend )
+        {
+            throw std::invalid_argument(
+                "Ns3D backend state kind does not match its registry key" );
+        }
+        if ( state->DeviceId() != key.deviceId )
+        {
+            throw std::invalid_argument(
+                "Ns3D backend state device does not match its registry key" );
+        }
+        backendState = std::move( state );
+    }
+
+    Ns3DBackendState * BackendState() noexcept
+    {
+        return backendState.get();
+    }
+
+    const Ns3DBackendState * BackendState() const noexcept
+    {
+        return backendState.get();
+    }
+
+    bool HasBackendState() const noexcept
+    {
+        return backendState != nullptr;
+    }
+
+    void ReleaseBackendState() noexcept
+    {
+        backendState.reset();
+    }
+
+    const void * OwnerToken() const noexcept
+    {
+        return this;
+    }
+
+    std::uint64_t TopologyGeneration() const noexcept
+    {
+        return topologyGeneration;
+    }
+
+    std::uint64_t FieldGeneration() const noexcept
+    {
+        return fieldGeneration;
+    }
+
+    void MarkTopologyChanged() noexcept
+    {
+        ++topologyGeneration;
+    }
+
+    void MarkFieldChanged() noexcept
+    {
+        ++fieldGeneration;
     }
 
     EulerDomainProblem problem;
@@ -210,6 +291,11 @@ public:
     std::vector< unsigned char > boundaryMetadata;
     std::vector< unsigned char > haloMetadata;
     std::vector< Real > viscousTurbulence;
+
+private:
+    std::unique_ptr< Ns3DBackendState > backendState;
+    std::uint64_t topologyGeneration = 1;
+    std::uint64_t fieldGeneration = 1;
 };
 
 class EulerDomainBackend

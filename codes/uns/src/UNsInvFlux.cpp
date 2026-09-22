@@ -213,6 +213,102 @@ void UNsInvFlux::CalcInvFace()
     { ScopedStageTimer timer( "limiter" );
         this->CalcLimiter();
     }
+    if ( this->UseHipDeviceReconstruction() )
+    {
+#ifdef ONEFLOW_ENABLE_HIP
+        ScopedStageTimer timer( "reconstruction" );
+        UnsGrid * grid = Zone::GetUnsGrid();
+        const int nFaces = ug.nFaces;
+        const int nEquations = limf->nEqu;
+        std::vector< ReconstructionBoundaryOperation > boundaryOperation(
+            nFaces, ReconstructionBoundaryOperation::Preserve );
+        bool hasSolidBoundary = false;
+        for ( int face = 0; face < ug.nBFaces; ++ face )
+        {
+            const int bcType = ug.bcRecord->bcType[ face ];
+            if ( bcType == BC::INTERFACE || bcType == BC::PERIODIC )
+            {
+                boundaryOperation[ face ] =
+                    ReconstructionBoundaryOperation::Preserve;
+            }
+            else if ( bcType == BC::SOLID_SURFACE )
+            {
+                boundaryOperation[ face ] =
+                    ReconstructionBoundaryOperation::SolidOverride;
+                hasSolidBoundary = true;
+            }
+            else
+            {
+                boundaryOperation[ face ] =
+                    ReconstructionBoundaryOperation::Average;
+            }
+        }
+        std::vector< Real > bcQ;
+        if ( hasSolidBoundary )
+        {
+            if ( unsf.bc_q == nullptr )
+            {
+                throw std::runtime_error(
+                    "HIP reconstruction solid boundary is missing bc_q" );
+            }
+            bcQ.resize( nEquations * nFaces, 0.0 );
+            for ( int equation = 0; equation < nEquations; ++ equation )
+            {
+                for ( int face = 0; face < ug.nBFaces; ++ face )
+                {
+                    bcQ[ equation * nFaces + face ] =
+                        ( * unsf.bc_q )[ equation ][ face ];
+                }
+            }
+        }
+        CellFaceReconstructionView view;
+        view.nCells = ug.nCells;
+        view.nGhostCells = ug.nTCell - ug.nCells;
+        view.nFaces = nFaces;
+        view.nBoundaryFaces = ug.nBFaces;
+        view.nEquations = nEquations;
+        view.xFace = ug.xfc->data();
+        view.yFace = ug.yfc->data();
+        view.zFace = ug.zfc->data();
+        view.xCell = ug.xcc->data();
+        view.yCell = ug.ycc->data();
+        view.zCell = ug.zcc->data();
+        view.leftCell = ug.lcf->data();
+        view.rightCell = ug.rcf->data();
+        view.boundaryOperation = boundaryOperation.data();
+        view.limiterMode = ReconstructionLimiterMode::Disabled;
+        view.physicality = ReconstructionPhysicalityPolicy::PositiveDensityPressure;
+        view.densityComponent = 0;
+        view.pressureComponent = nEquations == 5 ? 4 : 2;
+        view.hasSolidBoundary = hasSolidBoundary;
+        view.ownerToken = grid;
+        view.cacheKey = grid;
+        view.topologyGeneration = 1;
+        view.fieldGeneration = 1;
+        for ( int equation = 0; equation < nEquations; ++ equation )
+        {
+            view.q[ equation ] = ( * limf->q )[ equation ].data();
+            view.dqdx[ equation ] = ( * limf->dqdx )[ equation ].data();
+            view.dqdy[ equation ] = ( * limf->dqdy )[ equation ].data();
+            view.dqdz[ equation ] = ( * limf->dqdz )[ equation ].data();
+            view.qLeft[ equation ] = ( * limf->qf1 )[ equation ].data();
+            view.qRight[ equation ] = ( * limf->qf2 )[ equation ].data();
+            if ( hasSolidBoundary )
+                view.bcQ[ equation ] = bcQ.data() + equation * nFaces;
+        }
+        const bool needFaceTrace =
+            ( std::getenv( "ONEFLOW_UNS_TRACE_FILE" ) != nullptr
+              && std::getenv( "ONEFLOW_UNS_TRACE_FILE" )[ 0 ] != '\0' )
+            || ( std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" ) != nullptr
+                 && std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" )[ 0 ] != '\0' );
+        HipFluxBackend::Shared().ReconstructFaceValues(
+            view, needFaceTrace );
+#else
+        throw std::runtime_error(
+            "HIP device reconstruction was requested without HIP support" );
+#endif
+        return;
+    }
     { ScopedStageTimer timer( "reconstruction" );
         this->GetQlQrField();
         this->ReconstructFaceValueField();
@@ -360,6 +456,15 @@ bool UNsInvFlux::UseHipGradient() const
     return true;
 }
 
+bool UNsInvFlux::UseHipDeviceReconstruction() const
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
+    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    if ( ! this->UseHipGradient() ) return false;
+    return true;
+}
+
 bool UNsInvFlux::UseHipBatchAdapter() const
 {
     const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BATCH" );
@@ -435,6 +540,52 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
         }
     }
 
+    const char * traceFile = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
+    const char * stageTraceFile =
+        std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    const bool needFlux =
+        ( traceFile != nullptr && traceFile[ 0 ] != '\0' )
+        || ( stageTraceFile != nullptr && stageTraceFile[ 0 ] != '\0' );
+    if ( this->UseHipDeviceReconstruction() )
+    {
+        FaceConnectivityView connectivity;
+        connectivity.nFaces = nFaces;
+        connectivity.nBoundaryFaces = ug.nBFaces;
+        connectivity.leftCell = ug.lcf->data();
+        connectivity.rightCell = ug.rcf->data();
+
+        ResidualView residual;
+        residual.nCells = nCells;
+        residual.nEquations = nEquations;
+        residual.values = nullptr;
+        for ( int equation = 0; equation < nEquations; ++ equation )
+            residual.components[ equation ] = ( * res )[ equation ].data();
+
+        std::vector< Real > faceFlux;
+        FaceFluxView hostFlux;
+        FaceFluxView * hostFluxPointer = nullptr;
+        if ( needFlux )
+        {
+            faceFlux.resize( nEquations * nFaces );
+            hostFlux.nFaces = nFaces;
+            hostFlux.nEquations = nEquations;
+            hostFlux.values = faceFlux.data();
+            hostFluxPointer = & hostFlux;
+        }
+        HipFluxBackend & backend = HipFluxBackend::Shared();
+        backend.CalcAndAddReconstructedFaceFlux(
+            connectivity, residual, 1, nscom.gama_ref,
+            hostFluxPointer, Zone::GetUnsGrid() );
+        if ( needFlux )
+        {
+            for ( int equation = 0; equation < nEquations; ++ equation )
+                for ( int face = 0; face < nFaces; ++ face )
+                    ( * invflux )[ equation ][ face ] =
+                        faceFlux[ equation * nFaces + face ];
+        }
+        return;
+    }
+
     PrimitiveFaceStateView primitiveState;
     primitiveState.nFaces = nFaces;
     primitiveState.nEquations = nEquations;
@@ -468,13 +619,6 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
     {
         residual.components[ equation ] = ( * res )[ equation ].data();
     }
-
-    const char * traceFile = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
-    const char * stageTraceFile =
-        std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
-    const bool needFlux =
-        ( traceFile != nullptr && traceFile[ 0 ] != '\0' )
-        || ( stageTraceFile != nullptr && stageTraceFile[ 0 ] != '\0' );
 
     std::vector< Real > faceFlux;
     FaceFluxView hostFlux;

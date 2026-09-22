@@ -10,11 +10,69 @@ License
 
 #include "FluxBackend.h"
 #include "DeviceBuffer.h"
+#include "EulerDomain.h"
+
+#include <cstdint>
+#include <memory>
+#include <unordered_map>
 
 namespace ONEFLOW
 {
 
 struct PrimitiveFaceStateView;
+
+// HIP-only storage owned either by a solver/grid Ns3DBackendState or by the
+// compatibility fallback in HipFluxBackend. Keeping this type in the HIP
+// header avoids leaking DeviceBuffer through backend-neutral contracts.
+struct HipGradientStorage
+{
+    DeviceBuffer< Real > cellState;
+    DeviceBuffer< Real > cellGradient;
+    DeviceBuffer< Real > xFaceCenter;
+    DeviceBuffer< Real > yFaceCenter;
+    DeviceBuffer< Real > zFaceCenter;
+    DeviceBuffer< Real > xNormal;
+    DeviceBuffer< Real > yNormal;
+    DeviceBuffer< Real > zNormal;
+    DeviceBuffer< Real > faceArea;
+    DeviceBuffer< Real > xCellCenter;
+    DeviceBuffer< Real > yCellCenter;
+    DeviceBuffer< Real > zCellCenter;
+    DeviceBuffer< Real > cellVolume;
+    DeviceBuffer< int > leftCell;
+    DeviceBuffer< int > rightCell;
+    const void * cachedOwnerToken = nullptr;
+    std::uint64_t cachedTopologyGeneration = 0;
+    const Real * cachedXFace = nullptr;
+    const Real * cachedYFace = nullptr;
+    const Real * cachedZFace = nullptr;
+    const Real * cachedXNormal = nullptr;
+    const Real * cachedYNormal = nullptr;
+    const Real * cachedZNormal = nullptr;
+    const Real * cachedFaceArea = nullptr;
+    const Real * cachedXCell = nullptr;
+    const Real * cachedYCell = nullptr;
+    const Real * cachedZCell = nullptr;
+    const Real * cachedVolume = nullptr;
+    const int * cachedLeftCell = nullptr;
+    const int * cachedRightCell = nullptr;
+    int cachedCells = 0;
+    int cachedGhostCells = -1;
+    int cachedFaces = 0;
+    int cachedBoundaryFaces = -1;
+    bool geometryCacheValid = false;
+    DeviceBuffer< Real > qf1;
+    DeviceBuffer< Real > qf2;
+    DeviceBuffer< unsigned char > boundaryMask;
+    DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
+    DeviceBuffer< Real > bcQ;
+    int cachedEquations = 0;
+    std::uint64_t cachedFieldGeneration = 0;
+    bool boundaryMaskValid = false;
+};
+
+std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
+    int deviceId );
 
 class HipFluxBackend final : public FluxBackend
 {
@@ -52,6 +110,27 @@ public:
 
     void CalcGradient( const CellGradientView & view );
 
+    // Reconstruct face primitive values into state-owned device buffers. The
+    // host view supplies metadata and optional diagnostic destinations; the
+    // numerical path consumes q/gradient/geometry already resident on device.
+    void ReconstructFaceValues(
+        const CellFaceReconstructionView & view,
+        bool downloadToHost = false );
+
+    // Consume the device qf1/qf2 produced by ReconstructFaceValues and scatter
+    // the resulting flux directly into the device residual. hostFlux is only
+    // populated for explicit trace/diagnostic requests.
+    void CalcAndAddReconstructedFaceFlux(
+        const FaceConnectivityView & connectivity,
+        ResidualView & residual,
+        int scheme,
+        Real gamma,
+        FaceFluxView * hostFlux = nullptr,
+        const void * cacheKey = nullptr );
+
+    void BindState( const void * cacheKey, Ns3DDeviceState & state );
+    void UnbindState( const void * cacheKey ) noexcept;
+
 private:
     DeviceBuffer< Real > qLeft_;
     DeviceBuffer< Real > qRight_;
@@ -65,21 +144,8 @@ private:
     DeviceBuffer< int > rightCell_;
     DeviceBuffer< unsigned char > boundaryMask_;
     DeviceBuffer< Real > deviceResidual_;
-    DeviceBuffer< Real > cellState_;
-    DeviceBuffer< Real > cellGradient_;
-    DeviceBuffer< Real > xFaceCenter_;
-    DeviceBuffer< Real > yFaceCenter_;
-    DeviceBuffer< Real > zFaceCenter_;
-    DeviceBuffer< Real > gradientXNormal_;
-    DeviceBuffer< Real > gradientYNormal_;
-    DeviceBuffer< Real > gradientZNormal_;
-    DeviceBuffer< Real > gradientFaceArea_;
-    DeviceBuffer< Real > xCellCenter_;
-    DeviceBuffer< Real > yCellCenter_;
-    DeviceBuffer< Real > zCellCenter_;
-    DeviceBuffer< Real > cellVolume_;
-    DeviceBuffer< int > gradientLeftCell_;
-    DeviceBuffer< int > gradientRightCell_;
+    HipGradientStorage fallbackGradientStorage_;
+    std::unordered_map< const void *, Ns3DDeviceState * > boundStates_;
     int deviceFluxFaces_ = 0;
     int deviceFluxEquations_ = 0;
     const Real * cachedXNormal_ = nullptr;
@@ -94,25 +160,6 @@ private:
     int cachedFaces_ = 0;
     int cachedBoundaryFaces_ = -1;
     bool geometryCacheValid_ = false;
-    const void * cachedGradientOwner_ = nullptr;
-    const Real * cachedGradientXFace_ = nullptr;
-    const Real * cachedGradientYFace_ = nullptr;
-    const Real * cachedGradientZFace_ = nullptr;
-    const Real * cachedGradientXNormal_ = nullptr;
-    const Real * cachedGradientYNormal_ = nullptr;
-    const Real * cachedGradientZNormal_ = nullptr;
-    const Real * cachedGradientFaceArea_ = nullptr;
-    const Real * cachedGradientXCell_ = nullptr;
-    const Real * cachedGradientYCell_ = nullptr;
-    const Real * cachedGradientZCell_ = nullptr;
-    const Real * cachedGradientVolume_ = nullptr;
-    const int * cachedGradientLeftCell_ = nullptr;
-    const int * cachedGradientRightCell_ = nullptr;
-    int cachedGradientCells_ = 0;
-    int cachedGradientGhostCells_ = -1;
-    int cachedGradientFaces_ = 0;
-    int cachedGradientBoundaryFaces_ = -1;
-    bool gradientGeometryCacheValid_ = false;
 };
 
 }
