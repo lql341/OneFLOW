@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-21（完成首个 HIP Green–Gauss gradient vertical slice；3-step accuracy、fixed-CFL 50-step stability 和同 basis timing 均通过；下一步迁移 reconstruction，3D 仍不是完整 stateful/device-resident）
+> 最后更新：2026-09-22（补充新会话 handoff 与收益判断：gradient slice 正确稳定，但当前应用级收益有限；下一步先做 reconstruction/residency contract 盘点，3D 仍不是完整 stateful/device-resident）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -21,13 +21,30 @@
 
 **当前状态**：首个 gradient device migration vertical slice 已完成。`ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用 Green–Gauss gradient；geometry/connectivity 可缓存，但每次 gradient 仍从 host 上传 primitive state，并把 `dqdx/dqdy/dqdz` 下载回 host。Kunshan 的 root HIP build/smoke/contract、3-step accuracy、fixed-CFL 50-step stability 和同 basis timing 均通过；HIP `gradient` stage 从此前约 `1046.610 ms` 降为本次 `176.883 ms`，单作业端到端 HIP/legacy 为 `1.160129x`。该结果仍是一次正式作业，不更新已发布性能报告；3D 仍为 host-staged，远未达到 1D Euler 的完整 stateful/device-resident 状态。
 
+### 2026-09-22 新会话 handoff
+
+**收益判断**：gradient kernel/stage 迁移是有效的，但还没有形成显著、可稳定声明的应用级加速。当前同 basis 只有一个正式性能作业，HIP/legacy 为 `1.160129x`；此前未启用 device gradient 的单作业为 `1.085759x`，两次作业之间不能当作严格配对重复。现有结果只说明方向正确，不足以宣称稳定约 `16%` 加速。
+
+当前 HIP breakdown 中 `reconstruction=933.296 ms`，占 HIP 总 wall-clock `12866.936 ms` 约 `7.25%`。即使孤立地把 reconstruction 时间完全消除、其他阶段不变，当前 basis 的理论额外 speedup 上限也只有约 `1.08x`；实际还会有 kernel、同步和数据搬运开销。因此若目标是显著性能提升，不能只继续逐个替换 host kernel，必须逐步形成 `q → gradient → reconstruction → flux/residual` 的连续 device-resident 数据链。
+
+**新会话第一件事（只读，不先写 kernel）**：盘点 limiter-off reconstruction 的调用链与 MRField 数据契约，同时回答以下问题：
+
+1. reconstruction 输入是否可直接消费 device gradient，避免本轮 `dqdx/dqdy/dqdz` D2H；
+2. reconstructed `qf1/qf2` 是否可直接留在 device，供 `CalcAndAddPrimitiveFaceFlux` 消费，避免下一次 H2D；
+3. boundary reconstruction 的顺序、ghost extent、face ownership 和 trace 语义如何保持与 CPU oracle 完全一致；
+4. 哪些 buffers 应迁入按 solver/zone/grid/backend key 管理的 `Ns3DDeviceState`，而不是继续由 process-wide shared backend 隐式持有；
+5. 如果最小 reconstruction slice 仍要求 gradient D2H + face-state H2D，则先不要把它作为性能优化实现；只在它能建立连续驻留链或明确架构价值时继续。
+
+**建议决策**：若下一轮目标是架构推进，可实现受限的 device reconstruction vertical slice；若目标是明显加速，应优先设计 persistent state/device ownership 与跨 stage 数据驻留，再把 gradient/reconstruction 串起来。两条路线都必须保留 CPU oracle，且不同时扩展 limiter、RK、viscous/turbulence 或 MPI。
+
 **下一步（按优先级）**
 
 1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
 2. fixed-CFL 50-step 稳定性已通过；旧 v5b 的共同负压来自 runner 保留 `cfled=10` 的 CFL ramp，后续不再把该快照当作 HIP blocker。
-3. 保持 fixed-CFL stability runner 的 workload exit code、configuration.tsv 和 Slurm accounting 门禁；gradient slice 已通过，下一步只迁移 reconstruction，不一次扩大到 limiter/RK/viscous。
-4. reconstruction 仍按同一顺序验收：CPU oracle/trace → 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing；若无改善，再依据 breakdown 决定下一步。
-5. 完成 backend/state 生命周期、完整 NS 与 MPI correctness；只有 fixed-CFL 50-step 稳定且连续多次性能测量方向一致后，才更新已发布性能报告或整理后续 PR。
+3. 先完成 reconstruction/residency contract 只读盘点；不要直接写一个仍需 gradient D2H 和 qf H2D 的孤立 kernel。
+4. 若选择实现 reconstruction slice，仍按 CPU oracle/trace → 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 验收，不一次扩大到 limiter/RK/viscous。
+5. 优先把 shared backend buffers 收敛到 `Ns3DDeviceState` ownership，并逐步消除 q H2D、gradient D2H 和 reconstructed face-state H2D。
+6. 完成完整 NS 与 MPI correctness；只有连续多次同 basis 测量方向一致且 accuracy/stability/MPI 全通过后，才更新已发布性能报告或整理后续 PR。
 
 **注意**：dev 上仍留有大量未上游内容（F 阶段 DCU 主 solver 那批），它们**未收口、不要提前提 PR**；提 PR 的三个坑见 §协作约定。
 
