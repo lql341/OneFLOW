@@ -497,35 +497,52 @@ git show dev:doc/plans/oneflow-development-todo.md
   - 边界：当前仍每次 q H2D、gradient D2H，且 device buffers 尚未由 `Ns3DDeviceState` 唯一持有。
 
 - [ ] **P2.6：HIP reconstruction vertical slice**
-  - [x] 完成 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle 只读盘点；当前结论是不先写仍需 gradient D2H + qf H2D 的孤立 kernel。
-  - [x] 先建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual 的 ownership、generation 与失效边界纳入按 solver/zone/grid/backend/device key 管理的 state-owned contract；CPU/HIP 类型仍通过 opaque seam 隔离。
-  - [x] production gradient 的 HIP state/geometry/connectivity DeviceBuffer 已迁入上述 state-owned backend-specific seam；qf1/qf2、flux/residual 与 state update 仍待接入连续 device chain。
-  - [ ] 只覆盖单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；不同时迁移 limiter、RK 或 viscous/turbulence。
-  - [ ] 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序验收。
+  - [x] **P2.6.1：** 完成 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle 只读盘点；不先写仍需 gradient D2H + qf H2D 的孤立 kernel。
+  - [x] **P2.6.2：** 建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual 的 ownership、generation 与失效边界纳入按 solver/zone/grid/backend/device key 管理的 state-owned contract；CPU/HIP 类型仍通过 opaque seam 隔离。
+  - [x] **P2.6.3：** production gradient 的 HIP state/geometry/connectivity DeviceBuffer 已迁入上述 state-owned backend-specific seam；qf1/qf2、flux/residual 与 state update 仍待接入连续 device chain。
+  - [ ] **P2.6.4：** 只覆盖单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；不同时迁移 limiter、RK 或 viscous/turbulence。
+  - [ ] **P2.6.5：** 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序验收。
+  - [ ] **P2.6.6：** 在最终 checkpoint 上修正/复核 stability wrapper，使用精确 diagnostic regex，重新闭环 legacy、CPU batch、HIP reconstruction 三路 50-step 的 workload exit、diagnostic hits 和 scheduler state。
+  - [ ] **P2.6.7：** 补齐 interface、periodic、solid-surface `bc_q`、ordinary boundary、ghost gradient copy 与 generation/token cache invalidation 小 case contract。
+  - [ ] **P2.6.8：** 继续比较 qf1、qf2、invflux、residual、state 和 connectivity/geometry metadata；NoTrace 不下载完整诊断数组。
 
 - [ ] **P2.7：重新测量端到端性能**
-  - [x] 已固定 `steps=3,warmup=1,repeats=3`、m6 输入、CPU 8 ranks、HIP 1 rank 和同一资源 tuple，完成 gradient slice 的首个正式单作业测量。
-  - [x] 首个阶段目标 `HIP batch < legacy CPU` 已在该单作业达到，但不提前承诺稳定倍数。
-  - [ ] 只有连续多次测量方向一致且 accuracy/50-step/MPI correctness 全通过，才更新性能报告。
+  - [x] **P2.7.1：** 已固定 `steps=3,warmup=1,repeats=3`、m6 输入、CPU 8 ranks、HIP 1 rank 和同一资源 tuple，完成 gradient slice 的首个正式单作业测量。
+  - [x] **P2.7.2：** 首个阶段目标 `HIP batch < legacy CPU` 已在该单作业达到，但不提前承诺稳定倍数。
+  - [ ] **P2.7.3：** 只有连续多次测量方向一致且 accuracy/50-step/MPI correctness 全通过，才更新性能报告。
+  - [ ] **P2.7.4：** 让 device gradient view 成为 HIP reconstruction 的生产输入，MRField gradient 下载只保留给 CPU oracle、FullTrace 和 diagnostic fallback，并记录 allocation、H2D/D2H、kernel launch、synchronize 与 stage wall-clock。
+  - [ ] **P2.7.5：** 不用 async API 掩盖未定义依赖，先保持明确 stage fence。
+
+- [ ] **P2.8：residual/state update**
+  - [ ] **P2.8.1：** 只读确认 `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD` 的真实数据契约。
+  - [ ] **P2.8.2：** 在当前受限 capability 下增加 device residual zero/accumulate、residual scaling/LHS 和 device q update。
+  - [ ] **P2.8.3：** 评估 `UNsUpdate::UpdateFlowField` host cell loop 的 HIP kernel 化；保留 host path 和 capability fail-fast。
+  - [ ] **P2.8.4：** 不同时迁移 viscous/turbulence、MPI halo 或改变 RK algorithm。
+
+- [ ] **P2.9：主链稳定后的优化**
+  - [ ] **P2.9.1：** 评估 stage-level stream/event 优化。
+  - [ ] **P2.9.2：** 比较 residual scatter 的 atomic、CSR 和 segmented reduction。
+  - [ ] **P2.9.3：** 增加 device-side finite/positivity/error/conservation reduction。
+  - [ ] **P2.9.4：** 单独探测 MPI/halo 与 GPU-aware MPI capability。
 
 
-- [ ] **GPU reduction**（优化计划阶段 D 唯一剩余项）
-  - 内容：checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
-  - 参考：`doc/plans/oneflow-euler-optimization-plan.md` 阶段 C/D。
-  - 验收：Kunshan 四规模 correctness 不变；D2H 占比进一步下降；性能复测。
+- [ ] **P2.10：GPU reduction**（优化计划阶段 D 唯一剩余项）
+  - **P2.10.1：** checksum、最大误差、有限性/正状态检查放到设备端归约，只回传标量。
+  - **P2.10.2：** 参考 `doc/plans/oneflow-euler-optimization-plan.md` 阶段 C/D。
+  - **P2.10.3：** 验收 Kunshan 四规模 correctness 不变、D2H 占比进一步下降并完成性能复测。
 
-- [ ] **WENO5 数值内核的 DCU 四规模验证**（单卡 contract 已完成）
-  - [x] `nx=32` contract：WENO5 HIP 与 CPU oracle 对齐。
-  - [ ] `nx=65536/262144/1048576/4194304` correctness 与性能复测。
+- [ ] **P2.11：WENO5 数值内核的 DCU 四规模验证**（单卡 contract 已完成）
+  - [x] **P2.11.1：** `nx=32` contract：WENO5 HIP 与 CPU oracle 对齐。
+  - [ ] **P2.11.2：** `nx=65536/262144/1048576/4194304` correctness 与性能复测。
 
 ### P3 — 维护与清理
 
 说明：清理临时分支和工作区，并把验证后的协作流程沉淀回技能与文档。
 
 
-- [ ] 本地分支清理：`pr/agents-branch-model`、`pr/euler-weno5-unified` 在对应 PR 合并/关闭后删除（本地 + origin）；`fix/contract-test-cmake-path` 已于 2026-09-19 删除（内容早经 PR #149 合入 master）。dev 上已无其他遗留分支。
-- [ ] 昆山 `<workspace>/work/`、`tmp/` 定期清理（均可重建）。
-- [ ] `oneflow-dev` 技能更新流程：改技能仓库 → `git push` → 各环境 `git pull`。
+- [ ] **P3.1：** 本地分支清理：`pr/agents-branch-model`、`pr/euler-weno5-unified` 在对应 PR 合并/关闭后删除（本地 + origin）；`fix/contract-test-cmake-path` 已于 2026-09-19 删除（内容早经 PR #149 合入 master）。dev 上已无其他遗留分支。
+- [ ] **P3.2：** 昆山 `<workspace>/work/`、`tmp/` 定期清理（均可重建）。
+- [ ] **P3.3：** `oneflow-dev` 技能更新流程：改技能仓库 → `git push` → 各环境 `git pull`。
 
 ### 环境提醒（不属于代码任务）
 

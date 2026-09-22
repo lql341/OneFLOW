@@ -168,68 +168,51 @@ fixed-CFL `0.01`、50-step 直接 workload：
 - 该数据不能被描述为稳定约 16% 加速，也不能外推到本轮 reconstruction seam。
 - 不更新正式性能报告。
 
-## 5. 明天的严格执行顺序
+## 5. 明天的严格执行顺序（稳定编号）
 
-### P0：先在最终 checkpoint 上补齐标准稳定性证据
+### P2.6 — HIP reconstruction vertical slice
 
-1. 确认 `dev == origin/dev`，工作区为空。
-2. 使用最终提交生成新的 cluster source archive，不复用未提交源码。
-3. 修正或复核 stability wrapper，只使用标准精确 diagnostic regex。
-4. 重跑 fixed-CFL `0.01`、50-step：
-   - legacy；
-   - CPU batch；
-   - HIP gradient + reconstruction。
-5. 记录 workload exit、diagnostic hits 和 scheduler state；三者必须同时成立。
-6. 若 runner 失败，先区分 workload 数值失败、HIP runtime 失败和 wrapper
-   解析失败，不用 scheduler state 代替 workload 证据。
+- [ ] **P2.6.4：** 保持单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、
+  inviscid capability；不复用未提交源码，并用最终提交生成新的 Kunshan source
+  archive。
+- [ ] **P2.6.5：** 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis
+  timing 顺序验收；先修正或复核 stability wrapper，只使用标准精确 diagnostic
+  regex，并重跑 legacy、CPU batch、HIP gradient + reconstruction 三路 workload。
+- [ ] **P2.6.6：** 同时记录 workload exit、diagnostic hits 和 scheduler state；
+  三者必须成立。若失败，区分数值失败、HIP runtime 失败和 wrapper 解析失败，
+  不用 scheduler state 代替 workload 证据。
+- [ ] **P2.6.7：** 补齐 interface、periodic、solid-surface `bc_q`、ordinary
+  boundary、ghost gradient copy，以及 generation/token cache invalidation 的
+  小 case contract。
+- [ ] **P2.6.8：** 继续比较 qf1、qf2、invflux、residual、state 和
+  connectivity/geometry metadata；NoTrace 不下载完整诊断数组。
 
-### P1：补 reconstruction/boundary 小 case contract
+### P2.7 — H2D/D2H 与性能验收
 
-优先补齐：
+- [ ] **P2.7.3：** 只有连续多次测量方向一致且 accuracy/50-step/MPI correctness
+  全通过，才更新正式性能报告。
+- [ ] **P2.7.4：** 让 device gradient view 成为 HIP reconstruction 的生产输入；
+  MRField gradient 下载只保留给 CPU oracle、FullTrace 和 diagnostic fallback，
+  并记录 allocation、H2D/D2H、kernel launch、synchronize 与 stage wall-clock。
+- [ ] **P2.7.5：** 不用 async API 掩盖未定义依赖，先保持明确 stage fence。
 
-- interface boundary preserve；
-- periodic boundary preserve；
-- solid-surface face-indexed `bc_q` override；
-- ordinary boundary average；
-- ghost gradient copy；
-- qf1/qf2 FullTrace 与 NoTrace 数据移动 contract；
-- generation/token 变化后的 geometry、boundary 和 `bc_q` cache invalidation。
+### P2.8 — residual/state update
 
-继续比较 qf1、qf2、invflux、residual、state 和 connectivity/geometry metadata。
+- [ ] **P2.8.1：** 只读确认
+  `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD`
+  的真实数据契约。
+- [ ] **P2.8.2：** 在当前受限 capability 下增加 device residual
+  zero/accumulate、residual scaling/LHS 和 device q update。
+- [ ] **P2.8.3：** 评估 `UNsUpdate::UpdateFlowField` host cell loop 的 HIP
+  kernel 化；保留 host path 和 capability fail-fast。
+- [ ] **P2.8.4：** 不同时迁移 viscous/turbulence、MPI halo 或改变 RK algorithm。
 
-### P2：消除无条件 gradient D2H
+### P2.9 — 主链稳定后的优化
 
-1. 让 device gradient view 成为 HIP reconstruction 的生产输入。
-2. 将 MRField gradient 下载改为明确的 CPU oracle/FullTrace/diagnostic fallback，
-   不在 NoTrace 每 stage 无条件执行。
-3. 记录改变前后的：
-   - allocation count；
-   - H2D/D2H bytes；
-   - kernel launches；
-   - synchronize count；
-   - per-stage wall-clock。
-4. 不用 async API 掩盖未定义依赖；先保持明确 stage fence。
-
-### P3：迁移 residual/state update
-
-1. 只读确认
-   `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD`
-   的真实数据契约。
-2. 在现有受限 capability 下增加：
-   - device residual zero/accumulate；
-   - residual scaling/LHS；
-   - device q update。
-3. 评估 `UNsUpdate::UpdateFlowField` host cell loop 的 HIP kernel 化。
-4. 保留 host path 和 capability fail-fast。
-5. 不同时迁移 viscous/turbulence、MPI halo 或改变 RK algorithm。
-
-### P4：主链稳定后再做的工作
-
-- stage-level stream/event 优化；
-- residual scatter 的 atomic / CSR / segmented reduction 比较；
-- device-side finite/positivity/error/conservation reduction；
-- MPI/halo 与 GPU-aware MPI capability probe；
-- 多次同 basis timing。
+- [ ] **P2.9.1：** 评估 stage-level stream/event 优化。
+- [ ] **P2.9.2：** 比较 residual scatter 的 atomic、CSR 和 segmented reduction。
+- [ ] **P2.9.3：** 增加 device-side finite/positivity/error/conservation reduction。
+- [ ] **P2.9.4：** 单独探测 MPI/halo 与 GPU-aware MPI capability。
 
 ## 6. 明天接手时的检查清单
 
