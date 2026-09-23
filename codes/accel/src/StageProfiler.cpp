@@ -31,9 +31,9 @@ struct CategoryTotal
     double elapsedMs;
 };
 
-std::array< CategoryTotal, 16 > & Totals()
+std::array< CategoryTotal, 32 > & Totals()
 {
-    static std::array< CategoryTotal, 16 > totals = {{
+    static std::array< CategoryTotal, 32 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -50,6 +50,22 @@ std::array< CategoryTotal, 16 > & Totals()
         { "residual_state_update", 0.0 },
         { "mpi_interface", 0.0 },
         { "output", 0.0 },
+        { "load_q", 0.0 },
+        { "calc_time_step", 0.0 },
+        { "load_residuals", 0.0 },
+        { "update_residuals", 0.0 },
+        { "calc_lhs", 0.0 },
+        { "update_flowfield", 0.0 },
+        { "calc_boundary", 0.0 },
+        { "boundary_gamma_inner", 0.0 },
+        { "boundary_viscosity_inner", 0.0 },
+        { "boundary_bc", 0.0 },
+        { "boundary_gamma_ghost", 0.0 },
+        { "boundary_viscosity_ghost", 0.0 },
+        { "boundary_set_id", 0.0 },
+        { "boundary_prepare_data", 0.0 },
+        { "boundary_calc_face_bc", 0.0 },
+        { "boundary_update_bc", 0.0 },
     }};
     return totals;
 }
@@ -130,6 +146,13 @@ void StageProfiler::Flush()
 
 const char * StageProfiler::CategoryForTask( const std::string & taskName )
 {
+    if ( taskName == "LOAD_Q" ) return "load_q";
+    if ( taskName == "CALC_TIME_STEP" ) return "calc_time_step";
+    if ( taskName == "LOAD_RESIDUALS" ) return "load_residuals";
+    if ( taskName == "UPDATE_RESIDUALS" ) return "update_residuals";
+    if ( taskName == "CALC_LHS" ) return "calc_lhs";
+    if ( taskName == "UPDATE_FLOWFIELD" ) return "update_flowfield";
+    if ( taskName == "CALC_BOUNDARY" ) return "calc_boundary";
     if ( taskName.find( "INIT" ) != std::string::npos
          || taskName.find( "READ_RESTART" ) != std::string::npos )
     {

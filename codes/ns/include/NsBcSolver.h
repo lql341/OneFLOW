@@ -39,6 +39,10 @@ public:
     virtual void Solve(){};
     BcPointer bcPointer;
     bool updateFlag;
+    bool farfieldCacheValid;
+    Real farfieldCachedGamma;
+    Real farfieldCachedSoundSpeed;
+    Real farfieldCachedEntropy;
 public:
     void InFlowBc           ();
     void OutFlowBc          ();

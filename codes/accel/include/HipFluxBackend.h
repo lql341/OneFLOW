@@ -12,6 +12,7 @@ License
 #include "DeviceBuffer.h"
 #include "EulerDomain.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -63,12 +64,21 @@ struct HipGradientStorage
     bool geometryCacheValid = false;
     DeviceBuffer< Real > qf1;
     DeviceBuffer< Real > qf2;
+    DeviceBuffer< Real > residual;
+    DeviceBuffer< Real > timeStep;
+    DeviceBuffer< int > stateUpdateStatus;
     DeviceBuffer< unsigned char > boundaryMask;
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
     DeviceBuffer< Real > bcQ;
+    const ReconstructionBoundaryOperation * cachedBoundaryOperationHost =
+        nullptr;
+    std::size_t cachedBoundaryOperationCount = 0;
     int cachedEquations = 0;
+    int residualCells = 0;
+    int residualEquations = 0;
     std::uint64_t cachedFieldGeneration = 0;
     bool boundaryMaskValid = false;
+    bool residualValid = false;
 };
 
 std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
@@ -126,7 +136,17 @@ public:
         int scheme,
         Real gamma,
         FaceFluxView * hostFlux = nullptr,
-        const void * cacheKey = nullptr );
+        const void * cacheKey = nullptr,
+        bool downloadResidual = true );
+
+    // Continue the reconstructed-flux path without a residual round trip.
+    // ScaleCurrentResidual implements CALC_LHS. UpdatePrimitiveState implements
+    // the five-equation primitive -> conserved -> primitive flow update and
+    // mirrors the internal-cell primitive state to host when requested.
+    void ScaleCurrentResidual( const CellStateUpdateView & view );
+    void UpdatePrimitiveState(
+        const CellStateUpdateView & view,
+        bool downloadToHost = true );
 
     void BindState( const void * cacheKey, Ns3DDeviceState & state );
     void UnbindState( const void * cacheKey ) noexcept;

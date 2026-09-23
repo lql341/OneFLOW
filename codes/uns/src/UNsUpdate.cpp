@@ -30,6 +30,12 @@ License
 #include "HXMath.h"
 #include "Iteration.h"
 #include "GridState.h"
+#include "SolverDef.h"
+#include "AccelViews.h"
+#include "AccelRuntime.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 #include <cstdlib>
 #include <cstdint>
 #include <fstream>
@@ -112,8 +118,76 @@ UNsUpdate::~UNsUpdate()
 {
 }
 
+namespace
+{
+
+bool UseHipDeviceStateUpdate( int solverType )
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
+    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    if ( solverType != NS_SOLVER )
+    {
+        throw std::runtime_error(
+            "HIP state update is only supported for the NS solver" );
+    }
+    const char * reconstruction =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
+    if ( reconstruction == nullptr || reconstruction[ 0 ] != '1' )
+    {
+        throw std::runtime_error(
+            "HIP state update requires HIP device reconstruction" );
+    }
+    if ( nscom.chemModel != 0 || nscom.nTModel != 1 )
+    {
+        throw std::runtime_error(
+            "HIP state update requires a single ideal-gas temperature field" );
+    }
+#ifndef ONEFLOW_ENABLE_HIP
+    throw std::runtime_error(
+        "HIP state update was requested without HIP support" );
+#else
+    return true;
+#endif
+}
+
+}
+
 void UNsUpdate::UpdateFlowField( int solverType )
 {
+    if ( UseHipDeviceStateUpdate( solverType ) )
+    {
+#ifdef ONEFLOW_ENABLE_HIP
+        UnsGrid * grid = Zone::GetUnsGrid();
+        ug.Init();
+        unsf.Init();
+
+        CellStateUpdateView view;
+        view.nCells = ug.nCells;
+        view.nGhostCells = ug.nTCell - ug.nCells;
+        view.nEquations = nscom.nEqu;
+        view.timeStep = ( * unsf.timestep )[ 0 ].data();
+        view.cellVolume = ug.cvol->data();
+        view.gamma = nscom.gama_ref;
+        view.rkCoefficient = 1.0;
+        view.cacheKey = grid;
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            view.primitive[ equation ] = ( * unsf.q )[ equation ].data();
+        }
+        HipFluxBackend::Shared().UpdatePrimitiveState( view, true );
+        for ( int cId = 0; cId < ug.nCells; ++ cId )
+        {
+            const Real density = ( * unsf.q )[ IDX::IR ][ cId ];
+            const Real pressure = ( * unsf.q )[ IDX::IP ][ cId ];
+            ( * unsf.tempr )[ 0 ][ cId ] =
+                pressure / ( nscom.statecoef * density );
+        }
+        this->DumpUpdatedStateTrace();
+        return;
+#endif
+    }
+
     GetUpdateField( solverType, this->q, this->dq );
 
     ug.Init();

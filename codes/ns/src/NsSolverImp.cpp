@@ -38,6 +38,7 @@ License
 #include "TurbPlate.h"
 #include "SolverRegister.h"
 #include "DataBase.h"
+#include "StageProfiler.h"
 #include <iomanip>
 
 
@@ -90,11 +91,28 @@ void NsVisual( StringField & data )
 
 void NsCalcBoundary( StringField & data )
 {
-    NsCalcGamaT( F_INNER );
-    CalcLaminarViscosity( F_INNER );
-    NsCalcBc();
-    NsCalcGamaT( F_GHOST );
-    CalcLaminarViscosity( F_GHOST );
+    {
+        ScopedStageTimer timer( "boundary_gamma_inner" );
+        NsCalcGamaT( F_INNER );
+    }
+    if ( vis_model.vismodel != 0 )
+    {
+        ScopedStageTimer timer( "boundary_viscosity_inner" );
+        CalcLaminarViscosity( F_INNER );
+    }
+    {
+        ScopedStageTimer timer( "boundary_bc" );
+        NsCalcBc();
+    }
+    {
+        ScopedStageTimer timer( "boundary_gamma_ghost" );
+        NsCalcGamaT( F_GHOST );
+    }
+    if ( vis_model.vismodel != 0 )
+    {
+        ScopedStageTimer timer( "boundary_viscosity_ghost" );
+        CalcLaminarViscosity( F_GHOST );
+    }
 }
 
 void NsCalcTimeStep( StringField & data )

@@ -58,8 +58,21 @@ void NsLimField::Init()
 
     this->nEqu = q->GetNEqu();
 
-    qf1 = new MRField( this->nEqu, grid->nFaces );
-    qf2 = new MRField( this->nEqu, grid->nFaces );
+    const bool needsAllocation =
+        qf1 == nullptr || qf2 == nullptr
+        || qf1->GetNEqu() != this->nEqu
+        || qf2->GetNEqu() != this->nEqu
+        || this->nEqu == 0
+        || ( this->nEqu > 0
+             && ( (*qf1)[ 0 ].size() != static_cast< HXSize_t >( grid->nFaces )
+                  || (*qf2)[ 0 ].size() != static_cast< HXSize_t >( grid->nFaces ) ) );
+    if ( needsAllocation )
+    {
+        delete qf1;
+        delete qf2;
+        qf1 = new MRField( this->nEqu, grid->nFaces );
+        qf2 = new MRField( this->nEqu, grid->nFaces );
+    }
 
     this->ckfun = & NsCheckFunction;
 }

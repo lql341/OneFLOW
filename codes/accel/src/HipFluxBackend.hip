@@ -691,6 +691,81 @@ __global__ void ScatterFaceFluxEulerKernel(
     }
 }
 
+__global__ void ScaleResidualKernel(
+    Real * residual,
+    const Real * timeStep,
+    const Real * cellVolume,
+    int nCells,
+    int nEquations,
+    Real rkCoefficient )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nCells * nEquations;
+    if ( index >= total ) return;
+
+    const int cell = index % nCells;
+    residual[ index ] *=
+        ( timeStep[ cell ] / cellVolume[ cell ] ) * rkCoefficient;
+}
+
+__global__ void UpdatePrimitiveStateKernel(
+    Real * primitive,
+    const Real * residual,
+    int nCells,
+    int totalCells,
+    Real gamma,
+    int * status )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+
+    const Real density = primitive[ 0 * totalCells + cell ];
+    const Real u = primitive[ 1 * totalCells + cell ];
+    const Real v = primitive[ 2 * totalCells + cell ];
+    const Real w = primitive[ 3 * totalCells + cell ];
+    const Real pressure = primitive[ 4 * totalCells + cell ];
+    const Real kinetic =
+        0.5 * density * ( u * u + v * v + w * w );
+
+    const Real updatedDensity =
+        density + residual[ 0 * nCells + cell ];
+    const Real updatedMomentumX =
+        density * u + residual[ 1 * nCells + cell ];
+    const Real updatedMomentumY =
+        density * v + residual[ 2 * nCells + cell ];
+    const Real updatedMomentumZ =
+        density * w + residual[ 3 * nCells + cell ];
+    const Real updatedEnergy =
+        pressure / ( gamma - 1.0 ) + kinetic
+        + residual[ 4 * nCells + cell ];
+
+    const Real inverseDensity = 1.0 / updatedDensity;
+    const Real updatedU = updatedMomentumX * inverseDensity;
+    const Real updatedV = updatedMomentumY * inverseDensity;
+    const Real updatedW = updatedMomentumZ * inverseDensity;
+    const Real updatedPressure = ( gamma - 1.0 )
+        * ( updatedEnergy
+            - 0.5 * updatedDensity
+                * ( updatedU * updatedU
+                    + updatedV * updatedV
+                    + updatedW * updatedW ) );
+
+    if ( ! isfinite( updatedDensity ) || ! isfinite( updatedU )
+         || ! isfinite( updatedV ) || ! isfinite( updatedW )
+         || ! isfinite( updatedPressure )
+         || updatedDensity <= 0.0 || updatedPressure <= 0.0 )
+    {
+        atomicExch( status, 1 );
+        return;
+    }
+
+    primitive[ 0 * totalCells + cell ] = updatedDensity;
+    primitive[ 1 * totalCells + cell ] = updatedU;
+    primitive[ 2 * totalCells + cell ] = updatedV;
+    primitive[ 3 * totalCells + cell ] = updatedW;
+    primitive[ 4 * totalCells + cell ] = updatedPressure;
+}
+
 } // namespace
 
 std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
@@ -931,18 +1006,27 @@ void HipFluxBackend::ReconstructFaceValues(
     const int totalValues = view.nEquations * totalFaces;
     storage->qf1.Resize( totalValues );
     storage->qf2.Resize( totalValues );
+    const bool operationChanged =
+        storage->cachedBoundaryOperationHost != view.boundaryOperation
+        || storage->cachedBoundaryOperationCount
+               != static_cast< std::size_t >( totalFaces );
     storage->boundaryOperation.Resize( totalFaces );
-    if ( view.boundaryOperation != nullptr )
+    if ( operationChanged && view.boundaryOperation != nullptr )
     {
         storage->boundaryOperation.CopyFromHost(
             view.boundaryOperation, totalFaces );
     }
-    else
+    else if ( operationChanged )
     {
         std::vector< ReconstructionBoundaryOperation > defaultOperation(
             totalFaces, ReconstructionBoundaryOperation::Preserve );
         storage->boundaryOperation.CopyFromHost(
             defaultOperation.data(), totalFaces );
+    }
+    if ( operationChanged )
+    {
+        storage->cachedBoundaryOperationHost = view.boundaryOperation;
+        storage->cachedBoundaryOperationCount = totalFaces;
     }
     if ( view.boundaryMask != nullptr )
     {
@@ -1014,7 +1098,8 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     int scheme,
     Real gamma,
     FaceFluxView * hostFlux,
-    const void * cacheKey )
+    const void * cacheKey,
+    bool downloadResidual )
 {
     ValidateFaceConnectivityView( connectivity );
     if ( residual.nCells <= 0 || residual.nEquations < 3 || gamma <= 1.0 )
@@ -1064,10 +1149,10 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     }
 
     const int totalResidual = nCells * nEq;
-    deviceResidual_.Resize( totalResidual );
+    storage->residual.Resize( totalResidual );
     if ( residual.values != nullptr )
     {
-        deviceResidual_.CopyFromHost(
+        storage->residual.CopyFromHost(
             residual.values, totalResidual );
     }
     else
@@ -1075,11 +1160,14 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         for ( int equation = 0; equation < nEq; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
-                deviceResidual_.Data() + equation * nCells,
+                storage->residual.Data() + equation * nCells,
                 residual.components[ equation ], nCells * sizeof( Real ),
                 AccelCopyKind::HostToDevice );
         }
     }
+    storage->residualCells = nCells;
+    storage->residualEquations = nEq;
+    storage->residualValid = true;
     if ( hostFlux != nullptr ) deviceFlux_.Resize( nFaces * nEq );
 
     const unsigned char * deviceBoundaryMask = nullptr;
@@ -1101,22 +1189,22 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         deviceBoundaryMask, connectivity.nBoundaryFaces, nFaces, nCells,
         nEq, gamma, scheme,
         hostFlux != nullptr ? deviceFlux_.Data() : nullptr,
-        deviceResidual_.Data() );
+        storage->residual.Data() );
     CheckHip( hipGetLastError(),
               "reconstructed primitive flux kernel launch" );
     CheckHip( hipDeviceSynchronize(),
               "reconstructed primitive flux kernel synchronize" );
-    if ( residual.values != nullptr )
+    if ( downloadResidual && residual.values != nullptr )
     {
-        deviceResidual_.CopyToHost( residual.values, totalResidual );
+        storage->residual.CopyToHost( residual.values, totalResidual );
     }
-    else
+    else if ( downloadResidual )
     {
         for ( int equation = 0; equation < nEq; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
                 residual.components[ equation ],
-                deviceResidual_.Data() + equation * nCells,
+                storage->residual.Data() + equation * nCells,
                 nCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
         }
     }
@@ -1126,6 +1214,118 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         deviceFluxFaces_ = nFaces;
         deviceFluxEquations_ = nEq;
     }
+}
+
+void HipFluxBackend::ScaleCurrentResidual(
+    const CellStateUpdateView & view )
+{
+    ValidateCellStateUpdateView( view );
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP state update requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP state update is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    if ( ! storage.residualValid
+         || storage.residualCells != view.nCells
+         || storage.residualEquations != view.nEquations
+         || storage.cachedCells != view.nCells
+         || storage.cachedGhostCells != view.nGhostCells
+         || storage.cachedVolume != view.cellVolume
+         || storage.cellVolume.Size()
+             < static_cast< std::size_t >( view.nCells ) )
+    {
+        throw std::logic_error(
+            "HIP state update requires a compatible resident residual" );
+    }
+
+    storage.timeStep.CopyFromHost( view.timeStep, view.nCells );
+    const int total = view.nCells * view.nEquations;
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        ScaleResidualKernel,
+        dim3( ( total + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.residual.Data(), storage.timeStep.Data(),
+        storage.cellVolume.Data(), view.nCells, view.nEquations,
+        view.rkCoefficient );
+    CheckHip( hipGetLastError(), "state residual scale kernel launch" );
+    CheckHip(
+        hipDeviceSynchronize(),
+        "state residual scale kernel synchronize" );
+}
+
+void HipFluxBackend::UpdatePrimitiveState(
+    const CellStateUpdateView & view,
+    bool downloadToHost )
+{
+    ValidateCellStateUpdateView( view );
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP primitive update requires a bound Ns3D state" );
+    }
+    Ns3DDeviceState * owner = binding->second;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        owner->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP primitive update is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = view.nCells + view.nGhostCells;
+    if ( ! storage.residualValid
+         || storage.residualCells != view.nCells
+         || storage.residualEquations != view.nEquations
+         || storage.cellState.Size()
+             < static_cast< std::size_t >(
+                 totalCells * view.nEquations ) )
+    {
+        throw std::logic_error(
+            "HIP primitive update requires resident state and residual" );
+    }
+
+    int status = 0;
+    storage.stateUpdateStatus.CopyFromHost( & status, 1 );
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        UpdatePrimitiveStateKernel,
+        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.cellState.Data(), storage.residual.Data(),
+        view.nCells, totalCells, view.gamma,
+        storage.stateUpdateStatus.Data() );
+    CheckHip( hipGetLastError(), "primitive state update kernel launch" );
+    storage.stateUpdateStatus.CopyToHost( & status, 1 );
+    if ( status != 0 )
+    {
+        throw std::runtime_error(
+            "HIP primitive state update produced a non-physical state" );
+    }
+
+    if ( downloadToHost )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                view.primitive[ equation ],
+                storage.cellState.Data() + equation * totalCells,
+                view.nCells * sizeof( Real ),
+                AccelCopyKind::DeviceToHost );
+        }
+    }
+    owner->MarkFieldChanged();
+    storage.residualValid = false;
 }
 
 HipFluxBackend & HipFluxBackend::Shared()

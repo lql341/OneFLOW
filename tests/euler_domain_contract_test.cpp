@@ -324,4 +324,38 @@ TEST( AccelViewsContract, RejectsUnsupportedStateAndGeometryContracts )
     EXPECT_THROW( ValidateFaceGeometryView( geometry ), std::invalid_argument );
 }
 
+TEST( AccelViewsContract, ValidatesCellStateUpdateContract )
+{
+    Real timeStep[ 2 ] = { 0.1, 0.2 };
+    Real volume[ 2 ] = { 1.0, 1.0 };
+    Real primitive[ 5 ][ 2 ] = {};
+    int owner = 0;
+
+    CellStateUpdateView view;
+    view.nCells = 2;
+    view.nGhostCells = 2;
+    view.nEquations = 5;
+    view.timeStep = timeStep;
+    view.cellVolume = volume;
+    view.gamma = 1.4;
+    view.rkCoefficient = 0.5;
+    view.cacheKey = &owner;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+        view.primitive[ equation ] = primitive[ equation ];
+
+    EXPECT_NO_THROW( ValidateCellStateUpdateView( view ) );
+
+    view.nEquations = 3;
+    EXPECT_THROW(
+        ValidateCellStateUpdateView( view ), std::invalid_argument );
+    view.nEquations = 5;
+    view.rkCoefficient = 0.0;
+    EXPECT_THROW(
+        ValidateCellStateUpdateView( view ), std::invalid_argument );
+    view.rkCoefficient = 0.5;
+    view.primitive[ 4 ] = nullptr;
+    EXPECT_THROW(
+        ValidateCellStateUpdateView( view ), std::invalid_argument );
+}
+
 } // namespace

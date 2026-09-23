@@ -398,6 +398,50 @@ struct ResidualView
     Real * components[ 5 ] = {};
 };
 
+// Contract for the explicit Euler/RK state-update slice.  The HIP backend
+// consumes the residual left resident by the fused flux path, scales it with
+// the host-computed local timestep and cell volume, updates its resident
+// primitive state, and optionally mirrors the internal-cell primitive values
+// back to the solver-owned MRField.
+struct CellStateUpdateView
+{
+    int nCells = 0;
+    int nGhostCells = 0;
+    int nEquations = 0;
+    const Real * timeStep = nullptr;
+    const Real * cellVolume = nullptr;
+    Real * primitive[ 5 ] = {};
+    Real gamma = 1.4;
+    Real rkCoefficient = 0.0;
+    FieldLayout layout = FieldLayout::EquationMajor;
+    FieldRepresentation representation = FieldRepresentation::Primitive;
+    const void * cacheKey = nullptr;
+};
+
+inline void ValidateCellStateUpdateView(
+    const CellStateUpdateView & view )
+{
+    if ( view.nCells <= 0 || view.nGhostCells < 0
+         || view.nEquations != 5 || view.timeStep == nullptr
+         || view.cellVolume == nullptr || view.gamma <= 1.0
+         || view.rkCoefficient <= 0.0
+         || view.layout != FieldLayout::EquationMajor
+         || view.representation != FieldRepresentation::Primitive
+         || view.cacheKey == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid solver cell state update view" );
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( view.primitive[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "cell state update view has a missing primitive component" );
+        }
+    }
+}
+
 inline void ValidateSolverFieldView( const SolverConstFieldView & field )
 {
     if ( field.nEntities <= 0 || field.nComponents <= 0

@@ -23,6 +23,9 @@ License
 
 #pragma once
 #include "NsInvFlux.h"
+#include "AccelViews.h"
+
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -30,6 +33,8 @@ class UNsFField;
 class Limiter;
 class LimField;
 class FluxBackend;
+class UnsGrid;
+class BcRecord;
 
 class UNsInvFlux : public NsInvFlux
 {
@@ -49,6 +54,7 @@ public:
     bool UseHipBatchAdapter() const;
     bool UseHipGradient() const;
     bool UseHipDeviceReconstruction() const;
+    bool UseHipDeviceStateUpdate() const;
     void CalcInvFace();
     void CalcLimiter();
     void AddInvFlux();
@@ -65,6 +71,17 @@ public:
     Limiter * limiter;
     LimField * limf;
     MRField * invflux;
+    // Boundary reconstruction metadata is topology-owned and remains valid
+    // across RK stages.  Keep the host containers stable so the HIP backend
+    // can detect and skip redundant operation metadata uploads.
+    std::vector< ReconstructionBoundaryOperation > hipBoundaryOperation;
+    std::vector< Real > hipBoundaryQ;
+    const UnsGrid * hipBoundaryGrid = nullptr;
+    const BcRecord * hipBoundaryRecord = nullptr;
+    int hipBoundaryFaces = -1;
+    int hipBoundaryBoundaryFaces = -1;
+    int hipBoundaryEquations = -1;
+    bool hipBoundaryHasSolid = false;
 };
 
 EndNameSpace

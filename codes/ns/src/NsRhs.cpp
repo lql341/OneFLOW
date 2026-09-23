@@ -93,12 +93,15 @@ void NsCalcGamaT( int flag )
 		//    int kkk = 1;
 		//}
 		Real oamw = one;
+		Real * density = ( * unsf.q )[ IDX::IR ].data();
+		Real * pressure = ( * unsf.q )[ IDX::IP ].data();
+		Real * gama = ( * unsf.gama )[ 0 ].data();
+		Real * temperature = ( * unsf.tempr )[ IDX::ITT ].data();
 		for ( int cId = ug.ist; cId < ug.ied; ++ cId )
 		{
-			Real & density  = (*unsf.q)[ IDX::IR ][ cId ];
-			Real & pressure = (*unsf.q)[ IDX::IP ][ cId ];
-			(*unsf.gama)[ 0 ][ cId ] = nscom.gama_ref;
-			(*unsf.tempr)[ IDX::ITT ][ cId ] = pressure / ( nscom.statecoef * density * oamw );
+			gama[ cId ] = nscom.gama_ref;
+			temperature[ cId ] =
+				pressure[ cId ] / ( nscom.statecoef * density[ cId ] * oamw );
 		}
 	}
 }
@@ -115,9 +118,11 @@ void NsCalcRHS()
 
 void NsCalcInvFlux()
 {
-	UNsInvFlux * uNsInvFlux = new UNsInvFlux();
-	uNsInvFlux->CalcFlux();
-	delete uNsInvFlux;
+    // Reuse the host-side limiter/face work buffers across RK stages.  The
+    // fields are rebound in Init() for the active zone/grid, while qf1/qf2
+    // and invflux retain their capacity when the topology is unchanged.
+    static UNsInvFlux uNsInvFlux;
+    uNsInvFlux.CalcFlux();
 }
 
 void NsCalcVisFlux()

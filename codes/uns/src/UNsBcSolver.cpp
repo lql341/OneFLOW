@@ -35,6 +35,9 @@ License
 #include "BcRecord.h"
 #include "Boundary.h"
 #include "HXStd.h"
+#include "StageProfiler.h"
+
+#include <chrono>
 
 BeginNameSpace( ONEFLOW )
 
@@ -92,15 +95,48 @@ void UNsBcSolver::SetId( int bcfId )
 
 void UNsBcSolver::CalcBcRegion()
 {
+    static const bool detailEnabled = StageProfiler::Enabled();
+    double detailMs[ 4 ] = { 0.0, 0.0, 0.0, 0.0 };
+
     for ( int ibc = 0; ibc < ug.nRBFace; ++ ibc )
     {
-        this->SetId( ibc );
+        if ( detailEnabled )
+        {
+            auto start = std::chrono::steady_clock::now();
+            this->SetId( ibc );
+            detailMs[ 0 ] += std::chrono::duration< double, std::milli >(
+                std::chrono::steady_clock::now() - start ).count();
 
-        this->PrepareData();
+            start = std::chrono::steady_clock::now();
+            this->PrepareData();
+            detailMs[ 1 ] += std::chrono::duration< double, std::milli >(
+                std::chrono::steady_clock::now() - start ).count();
 
-        this->CalcFaceBc();
+            start = std::chrono::steady_clock::now();
+            this->CalcFaceBc();
+            detailMs[ 2 ] += std::chrono::duration< double, std::milli >(
+                std::chrono::steady_clock::now() - start ).count();
 
-        this->UpdateBc();
+            start = std::chrono::steady_clock::now();
+            this->UpdateBc();
+            detailMs[ 3 ] += std::chrono::duration< double, std::milli >(
+                std::chrono::steady_clock::now() - start ).count();
+        }
+        else
+        {
+            this->SetId( ibc );
+            this->PrepareData();
+            this->CalcFaceBc();
+            this->UpdateBc();
+        }
+    }
+
+    if ( detailEnabled )
+    {
+        StageProfiler::Record( "boundary_set_id", detailMs[ 0 ] );
+        StageProfiler::Record( "boundary_prepare_data", detailMs[ 1 ] );
+        StageProfiler::Record( "boundary_calc_face_bc", detailMs[ 2 ] );
+        StageProfiler::Record( "boundary_update_bc", detailMs[ 3 ] );
     }
 }
 

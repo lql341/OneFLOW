@@ -189,10 +189,12 @@ UNsInvFlux::UNsInvFlux()
 {
     limiter = new NsLimiter();
     limf = limiter->limf;
+    invflux = nullptr;
 }
 
 UNsInvFlux::~UNsInvFlux()
 {
+    delete invflux;
     delete limiter;
 }
 
@@ -220,43 +222,59 @@ void UNsInvFlux::CalcInvFace()
         UnsGrid * grid = Zone::GetUnsGrid();
         const int nFaces = ug.nFaces;
         const int nEquations = limf->nEqu;
-        std::vector< ReconstructionBoundaryOperation > boundaryOperation(
-            nFaces, ReconstructionBoundaryOperation::Preserve );
-        bool hasSolidBoundary = false;
-        for ( int face = 0; face < ug.nBFaces; ++ face )
+        const bool topologyChanged =
+            hipBoundaryGrid != grid
+            || hipBoundaryRecord != ug.bcRecord
+            || hipBoundaryFaces != nFaces
+            || hipBoundaryBoundaryFaces != ug.nBFaces
+            || hipBoundaryEquations != nEquations
+            || hipBoundaryOperation.size()
+                   != static_cast< std::size_t >( nFaces );
+        if ( topologyChanged )
         {
-            const int bcType = ug.bcRecord->bcType[ face ];
-            if ( bcType == BC::INTERFACE || bcType == BC::PERIODIC )
+            hipBoundaryOperation.assign(
+                nFaces, ReconstructionBoundaryOperation::Preserve );
+            hipBoundaryHasSolid = false;
+            for ( int face = 0; face < ug.nBFaces; ++ face )
             {
-                boundaryOperation[ face ] =
-                    ReconstructionBoundaryOperation::Preserve;
+                const int bcType = ug.bcRecord->bcType[ face ];
+                if ( bcType == BC::INTERFACE || bcType == BC::PERIODIC )
+                {
+                    hipBoundaryOperation[ face ] =
+                        ReconstructionBoundaryOperation::Preserve;
+                }
+                else if ( bcType == BC::SOLID_SURFACE )
+                {
+                    hipBoundaryOperation[ face ] =
+                        ReconstructionBoundaryOperation::SolidOverride;
+                    hipBoundaryHasSolid = true;
+                }
+                else
+                {
+                    hipBoundaryOperation[ face ] =
+                        ReconstructionBoundaryOperation::Average;
+                }
             }
-            else if ( bcType == BC::SOLID_SURFACE )
-            {
-                boundaryOperation[ face ] =
-                    ReconstructionBoundaryOperation::SolidOverride;
-                hasSolidBoundary = true;
-            }
-            else
-            {
-                boundaryOperation[ face ] =
-                    ReconstructionBoundaryOperation::Average;
-            }
+            hipBoundaryGrid = grid;
+            hipBoundaryRecord = ug.bcRecord;
+            hipBoundaryFaces = nFaces;
+            hipBoundaryBoundaryFaces = ug.nBFaces;
+            hipBoundaryEquations = nEquations;
         }
-        std::vector< Real > bcQ;
-        if ( hasSolidBoundary )
+        if ( hipBoundaryHasSolid )
         {
             if ( unsf.bc_q == nullptr )
             {
                 throw std::runtime_error(
                     "HIP reconstruction solid boundary is missing bc_q" );
             }
-            bcQ.resize( nEquations * nFaces, 0.0 );
+            hipBoundaryQ.resize(
+                static_cast< std::size_t >( nEquations ) * nFaces );
             for ( int equation = 0; equation < nEquations; ++ equation )
             {
                 for ( int face = 0; face < ug.nBFaces; ++ face )
                 {
-                    bcQ[ equation * nFaces + face ] =
+                    hipBoundaryQ[ equation * nFaces + face ] =
                         ( * unsf.bc_q )[ equation ][ face ];
                 }
             }
@@ -275,12 +293,12 @@ void UNsInvFlux::CalcInvFace()
         view.zCell = ug.zcc->data();
         view.leftCell = ug.lcf->data();
         view.rightCell = ug.rcf->data();
-        view.boundaryOperation = boundaryOperation.data();
+        view.boundaryOperation = hipBoundaryOperation.data();
         view.limiterMode = ReconstructionLimiterMode::Disabled;
         view.physicality = ReconstructionPhysicalityPolicy::PositiveDensityPressure;
         view.densityComponent = 0;
         view.pressureComponent = nEquations == 5 ? 4 : 2;
-        view.hasSolidBoundary = hasSolidBoundary;
+        view.hasSolidBoundary = hipBoundaryHasSolid;
         view.ownerToken = grid;
         view.cacheKey = grid;
         view.topologyGeneration = 1;
@@ -293,8 +311,9 @@ void UNsInvFlux::CalcInvFace()
             view.dqdz[ equation ] = ( * limf->dqdz )[ equation ].data();
             view.qLeft[ equation ] = ( * limf->qf1 )[ equation ].data();
             view.qRight[ equation ] = ( * limf->qf2 )[ equation ].data();
-            if ( hasSolidBoundary )
-                view.bcQ[ equation ] = bcQ.data() + equation * nFaces;
+            if ( hipBoundaryHasSolid )
+                view.bcQ[ equation ] =
+                    hipBoundaryQ.data() + equation * nFaces;
         }
         const bool needFaceTrace =
             ( std::getenv( "ONEFLOW_UNS_TRACE_FILE" ) != nullptr
@@ -465,6 +484,20 @@ bool UNsInvFlux::UseHipDeviceReconstruction() const
     return true;
 }
 
+bool UNsInvFlux::UseHipDeviceStateUpdate() const
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
+    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    if ( ! this->UseHipDeviceReconstruction() )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1 requires HIP "
+            "device reconstruction" );
+    }
+    return true;
+}
+
 bool UNsInvFlux::UseHipBatchAdapter() const
 {
     const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BATCH" );
@@ -575,7 +608,8 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
         HipFluxBackend & backend = HipFluxBackend::Shared();
         backend.CalcAndAddReconstructedFaceFlux(
             connectivity, residual, 1, nscom.gama_ref,
-            hostFluxPointer, Zone::GetUnsGrid() );
+            hostFluxPointer, Zone::GetUnsGrid(),
+            ! this->UseHipDeviceStateUpdate() || needFlux );
         if ( needFlux )
         {
             for ( int equation = 0; equation < nEquations; ++ equation )
@@ -879,12 +913,23 @@ void UNsInvFlux::AddInvFlux()
 
 void UNsInvFlux::Alloc()
 {
-    invflux = new MRField( nscom.nEqu, ug.nFaces );
+    const bool needsAllocation =
+        invflux == nullptr
+        || invflux->GetNEqu() != nscom.nEqu
+        || nscom.nEqu == 0
+        || ( nscom.nEqu > 0
+             && (*invflux)[ 0 ].size()
+                    != static_cast< HXSize_t >( ug.nFaces ) );
+    if ( needsAllocation )
+    {
+        delete invflux;
+        invflux = new MRField( nscom.nEqu, ug.nFaces );
+    }
 }
 
 void UNsInvFlux::DeAlloc()
 {
-    delete invflux;
+    // Keep the host face-flux buffer for reuse by the next RK stage.
 }
 
 void UNsInvFlux::ReadTmp()
