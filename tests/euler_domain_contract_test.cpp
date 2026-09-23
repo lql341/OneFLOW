@@ -199,7 +199,8 @@ TEST( AccelViewsContract, RejectsStaleOrIncompleteReconstructionContract )
 {
     Real cellValues[ 4 ] = {};
     Real faceValues[ 3 ] = {};
-    int cells[ 3 ] = {};
+    int leftCells[ 3 ] = { 0, 1, 0 };
+    int rightCells[ 3 ] = { 2, 3, 1 };
     ReconstructionBoundaryOperation boundaryOperation[ 3 ] = {};
     int owner = 0;
     CellFaceReconstructionView view;
@@ -214,8 +215,8 @@ TEST( AccelViewsContract, RejectsStaleOrIncompleteReconstructionContract )
     view.xCell = cellValues;
     view.yCell = cellValues;
     view.zCell = cellValues;
-    view.leftCell = cells;
-    view.rightCell = cells;
+    view.leftCell = leftCells;
+    view.rightCell = rightCells;
     view.boundaryOperation = boundaryOperation;
     view.ownerToken = &owner;
     view.topologyGeneration = 1;
@@ -237,6 +238,63 @@ TEST( AccelViewsContract, RejectsStaleOrIncompleteReconstructionContract )
         ValidateCellFaceReconstructionView( view ), std::invalid_argument );
     view.topologyGeneration = 1;
     view.limiterMode = ReconstructionLimiterMode::Cell;
+    EXPECT_THROW(
+        ValidateCellFaceReconstructionView( view ), std::invalid_argument );
+}
+
+TEST( AccelViewsContract, ValidatesReconstructionBoundaryOwnership )
+{
+    Real cellValues[ 4 ] = {};
+    Real faceValues[ 3 ] = {};
+    int left[ 3 ] = { 0, 1, 0 };
+    int right[ 3 ] = { 2, 1, 3 };
+    unsigned char boundaryMask[ 3 ] = { 1, 0, 1 };
+    ReconstructionBoundaryOperation operations[ 3 ] = {};
+    int owner = 0;
+
+    CellFaceReconstructionView view;
+    view.nCells = 2;
+    view.nGhostCells = 2;
+    view.nFaces = 3;
+    view.nBoundaryFaces = 2;
+    view.nEquations = 3;
+    view.xFace = faceValues;
+    view.yFace = faceValues;
+    view.zFace = faceValues;
+    view.xCell = cellValues;
+    view.yCell = cellValues;
+    view.zCell = cellValues;
+    view.leftCell = left;
+    view.rightCell = right;
+    view.boundaryMask = boundaryMask;
+    view.boundaryOperation = operations;
+    view.ownerToken = &owner;
+    view.topologyGeneration = 1;
+    view.fieldGeneration = 1;
+    view.physicality = ReconstructionPhysicalityPolicy::None;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        view.q[ equation ] = cellValues;
+        view.dqdx[ equation ] = cellValues;
+        view.dqdy[ equation ] = cellValues;
+        view.dqdz[ equation ] = cellValues;
+        view.qLeft[ equation ] = faceValues;
+        view.qRight[ equation ] = faceValues;
+    }
+
+    EXPECT_NO_THROW( ValidateCellFaceReconstructionView( view ) );
+
+    right[ 0 ] = 1;
+    EXPECT_THROW(
+        ValidateCellFaceReconstructionView( view ), std::invalid_argument );
+    right[ 0 ] = 2;
+
+    boundaryMask[ 1 ] = 1;
+    EXPECT_THROW(
+        ValidateCellFaceReconstructionView( view ), std::invalid_argument );
+    boundaryMask[ 1 ] = 0;
+
+    left[ 1 ] = 2;
     EXPECT_THROW(
         ValidateCellFaceReconstructionView( view ), std::invalid_argument );
 }

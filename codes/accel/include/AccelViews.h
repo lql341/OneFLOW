@@ -340,6 +340,54 @@ inline void ValidateCellFaceReconstructionView(
                 "cell/face reconstruction view has a missing component" );
         }
     }
+
+    // Face connectivity is part of the reconstruction contract, not merely
+    // metadata for the later flux stage.  Boundary faces may point at their
+    // corresponding ghost cells; internal faces must point at real cells.
+    // Host views can be checked here.  Device views are validated by the
+    // backend that owns the device topology; dereferencing device pointers
+    // from this host-side contract validator would itself be invalid.
+    if ( view.memorySpace == MemorySpace::Host )
+    {
+        int explicitBoundaryFaces = 0;
+        for ( int face = 0; face < view.nFaces; ++ face )
+        {
+            const bool boundary = view.boundaryMask != nullptr
+                ? view.boundaryMask[ face ] != 0
+                : face < view.nBoundaryFaces;
+            if ( boundary ) ++ explicitBoundaryFaces;
+
+            if ( view.leftCell[ face ] < 0
+                 || view.leftCell[ face ] >= view.nCells )
+            {
+                throw std::invalid_argument(
+                    "reconstruction left-cell index is out of range" );
+            }
+
+            const int rightCell = view.rightCell[ face ];
+            if ( boundary )
+            {
+                if ( rightCell < view.nCells
+                     || rightCell >= view.nCells + view.nGhostCells )
+                {
+                    throw std::invalid_argument(
+                        "reconstruction boundary right-cell is not a ghost" );
+                }
+            }
+            else if ( rightCell < 0 || rightCell >= view.nCells )
+            {
+                throw std::invalid_argument(
+                    "reconstruction internal right-cell index is out of range" );
+            }
+        }
+
+        if ( view.boundaryMask != nullptr
+             && explicitBoundaryFaces != view.nBoundaryFaces )
+        {
+            throw std::invalid_argument(
+                "reconstruction boundary mask disagrees with boundary count" );
+        }
+    }
 }
 
 struct ResidualView
