@@ -93,3 +93,13 @@ final state error 0. Kernel events account for 99.56--99.99% of `Advance` wall t
 and only one upload, one final download, and one synchronization occur per repeat.
 This is the execution-structure result; the current multi-core/multi-card comparison is
 recorded in the current performance report, while the full Navier-Stokes solver remains outside.
+
+`oneflow_1d_euler_domain_adapter_benchmark` runs the same persistent
+`HipEulerBackend` through both its direct lifecycle and the shared
+`ONEFLOW::EulerDomainBackend` adapter. The adapter owns no second numerical or
+device state. On Kunshan DTK 26.04 / `gfx906`, an interleaved paired run with
+`nx=1048576`, 100 steps, 5 repeats, and 2 warmups produced identical final
+state/checksum, identical kernel-launch and synchronization counts, and a
+shared/direct `Advance` ratio of `0.999913`. This benchmark validates the thin
+lifecycle seam; it does not replace the CPU oracle or establish application-level
+3D Navier--Stokes performance.

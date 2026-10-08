@@ -68,6 +68,24 @@ target_include_directories(oneflow_euler_domain_contract_test PRIVATE
 target_link_libraries(oneflow_euler_domain_contract_test PRIVATE GTest::gtest_main)
 gtest_discover_tests(oneflow_euler_domain_contract_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(oneflow_euler_domain_backend_adapter_test
+  euler_domain_backend_adapter_test.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDEuler.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDEulerBackend.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDEulerDomainAdapter.cpp
+  ${ONEFLOW_EULER_BACKEND_DIR}/OneDWeno5.cpp)
+target_include_directories(oneflow_euler_domain_backend_adapter_test PRIVATE
+  ${ONEFLOW_EULER_BACKEND_DIR}
+  ${CMAKE_SOURCE_DIR}/codes/accel/include
+  ${CMAKE_SOURCE_DIR}/codes/basic/include
+  ${CMAKE_SOURCE_DIR}/codes/project/include)
+target_compile_options(oneflow_euler_domain_backend_adapter_test PRIVATE
+  -ffp-contract=off)
+target_link_libraries(oneflow_euler_domain_backend_adapter_test PRIVATE
+  GTest::gtest_main)
+gtest_discover_tests(oneflow_euler_domain_backend_adapter_test
+  DISCOVERY_MODE PRE_TEST)
+
 add_executable(oneflow_euler_domain_state_registry_test
   ${CMAKE_SOURCE_DIR}/tests/euler_domain_state_registry_test.cpp
   ${CMAKE_SOURCE_DIR}/codes/accel/src/EulerDomainStateRegistry.cpp)
@@ -171,7 +189,9 @@ if (ONEFLOW_ENABLE_HIP_TESTS)
     ACCEL_DIR ${CMAKE_SOURCE_DIR}/codes/accel
     PROJECT_INC ${CMAKE_SOURCE_DIR}/codes/project/include
     BASIC_INC ${CMAKE_SOURCE_DIR}/codes/basic/include
-    TEST_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/euler_backend_contract_test.cpp)
+    TEST_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/euler_backend_contract_test.cpp
+    ADAPTER_TEST_SOURCE
+      ${CMAKE_CURRENT_SOURCE_DIR}/euler_domain_backend_adapter_test.cpp)
 
   add_test(
     NAME HIP.MainSolverFluxOneCall

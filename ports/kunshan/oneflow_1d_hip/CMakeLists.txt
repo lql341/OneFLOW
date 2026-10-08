@@ -173,7 +173,9 @@ if ( ONEFLOW_1D_ENABLE_HIP )
             ACCEL_DIR ${ONEFLOW_ACCEL_DIR}
             PROJECT_INC ${ONEFLOW_PROJECT_INC}
             BASIC_INC ${ONEFLOW_BASIC_INC}
-            TEST_SOURCE ${ONEFLOW_EULER_CONTRACT_TEST} )
+            TEST_SOURCE ${ONEFLOW_EULER_CONTRACT_TEST}
+            ADAPTER_TEST_SOURCE
+                ${CMAKE_CURRENT_LIST_DIR}/../../../tests/euler/euler_domain_backend_adapter_test.cpp )
     endif()
 
 
@@ -191,6 +193,22 @@ if ( ONEFLOW_1D_ENABLE_HIP )
     target_compile_definitions( oneflow_1d_euler_stateful_benchmark PRIVATE ONEFLOW_1D_USE_HIP=1 )
     target_compile_options( oneflow_1d_euler_stateful_benchmark PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_stateful_benchmark )
+    add_executable(
+        oneflow_1d_euler_domain_adapter_benchmark
+        EulerDomainAdapterBenchmark.cpp
+        OneDEuler.cpp
+        OneDEulerBackend.cpp
+        OneDEulerDomainAdapter.cpp
+        OneDEulerPersistent.hip
+        OneDWeno5.cpp
+        OneDWeno5.hip )
+    target_compile_definitions(
+        oneflow_1d_euler_domain_adapter_benchmark
+        PRIVATE ONEFLOW_1D_USE_HIP=1 )
+    target_compile_options(
+        oneflow_1d_euler_domain_adapter_benchmark
+        PRIVATE -ffp-contract=off )
+    oneflow_accel_attach( oneflow_1d_euler_domain_adapter_benchmark )
     add_executable( oneflow_1d_euler_gpu_only_benchmark EulerGpuOnlyBenchmark.cpp OneDEuler.cpp OneDEulerBackend.cpp OneDEulerPersistent.hip )
     target_compile_definitions( oneflow_1d_euler_gpu_only_benchmark PRIVATE ONEFLOW_1D_USE_HIP=1 )
     target_compile_options( oneflow_1d_euler_gpu_only_benchmark PRIVATE -ffp-contract=off )

@@ -113,12 +113,18 @@ CFL=0.01
 
 ### P1：继续优化 host boundary loop
 
-- [ ] 盘点 `UNsBcSolver::SetId/PrepareData/UpdateBc` 的 face 级字段访问。
-- [ ] 预计算并缓存 region 的 face list、bc type、bc name id、left/right cell、几何量指针。
+- [x] 盘点 `UNsBcSolver::SetId/PrepareData/UpdateBc` 的 face 级字段访问。
+- [x] 2026-09-24：为 `q`、`bc_q`、`tempr`、`gama` 及 boundary face/cell 几何与 connectivity
+      增加当前 zone/grid 生命周期内的连续指针缓存；Kunshan CPU normal/strict 均 `5/5`，
+      DTK 26.04 / `gfx906` / `dcu:1` root HIP build、smoke、GoogleTest `9/9`、
+      hardware CTest `10/10` 与完整 3-step 36-record seam accuracy 均通过。
+- [x] 评估 region face/type/name/data metadata cache；correctness 通过，但同 allocation
+      paired HIP B/A 仅 `1.003041x` 且三次方向不一致，CPU 侧也无稳定收益，已撤销该原型。
 - [ ] 将 boundary operation 按 boundary type 分组，减少每个 face 的重复分支和索引查找。
-- [ ] 评估 `PrepareData()` 中 equation-major field pointer 缓存；保持与 CPU oracle 相同的读取顺序。
+- [x] 评估并实现 `PrepareData()` 中 equation-major field pointer 缓存；保持与 CPU oracle
+      相同的读取顺序；CPU normal/strict 和完整 HIP seam correctness 已通过。
 - [ ] 评估普通 boundary、interface/periodic、solid-surface 分路径；不要改变 boundary-first 和 ghost ownership 语义。
-- [ ] 重新跑 CPU normal/strict 及 3-step accuracy gate。
+- [x] 重新跑 CPU normal/strict 及完整 3-step accuracy gate。
 
 ### P2：评估 device boundary/ghost update
 
@@ -172,4 +178,3 @@ CFL=0.01
 - “下一步 TODO”复选框；
 - `doc/plans/oneflow-development-todo.md` 的日期条目；
 - 若有正式报告资格，再同时更新对应 Markdown 与 HTML。
-

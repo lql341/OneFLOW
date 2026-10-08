@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-23（受限 HIP residual→LHS→primitive state-update seam 已完成 Kunshan DTK、3-step accuracy 与 fixed-CFL 50-step stability 验收；正式 timing 仍待做）
+> 最后更新：2026-09-24（1D direct CPU/HIP backend 已通过共享 EulerDomain adapter 的 correctness、stats、identity、lifecycle 与 paired performance 等价门禁）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -20,6 +20,40 @@
 两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
 
 **当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。这闭合了当前受限 seam 的目标节点验收，但不等同于完整 MPI/halo、多 zone、viscous/turbulence 或 GPU-resident 性能完成。仍保留每次 gradient 的 q H2D 与 gradient D2H CPU oracle，更新后的内部 cell `q` 暂回传 host 供现有 boundary/下一 stage 语义使用；没有做正式 timing，也不更新正式性能报告。
+
+## Big picture：正确性优先的统一 GPU solver 架构
+
+目标不是分别维护“1D GPU solver”和“3D GPU solver”，而是在 CPU oracle 保持可信的
+前提下，由 `codes/accel` 提供一套 1D/3D 共用的 backend、state、view、lifecycle、
+trace/stats 和设备所有权 contract；1D port 是小规模数值与生命周期验证客户端，3D
+主 solver 通过 adapter 使用同一 contract。
+
+- [x] 保留 CPU normal/strict 与 stage trace 作为数值 oracle，不以 build-only 或单一
+      checksum 代替正确性。
+- [x] 在 `codes/accel` 建立 backend-neutral views、`CreateState/Upload/Advance/Download`
+      生命周期、state registry 和 opaque backend-specific ownership seam。
+- [x] 3D 受限 inviscid 路径已接入
+      gradient → reconstruction → flux/residual → state-update 的连续 HIP seam。
+- [x] 建立 `ports/kunshan/oneflow_1d_hip` → `codes/accel::EulerDomainBackend` 的薄
+      lifecycle adapter；CPU direct/adapter 最终 state 完全一致，专项 contract `3/3`，
+      且标准 CPU normal/strict 五算例各 `5/5`。
+- [x] 让 1D HIP/stateful benchmark 也通过 shared adapter 运行，并补齐 FullTrace、
+      stats、device identity 和性能等价；现有 1D CPU/HIP direct path 继续保留为 oracle，
+      暂不切换正式入口。
+- [ ] 在现有 reconstruction/connectivity views 上补齐共用 boundary evaluation 与 ghost
+      update contract，覆盖 ordinary、solid、interface、periodic、ghost ownership 与
+      physicality；先用 1D/小 case 验证，再接 3D，不再创建平行 view 体系。
+- [ ] 让 production NoTrace 路径跨 RK stage 保持 `q`、gradient、reconstruction、
+      residual 和更新后 state 驻留，消除只为 host boundary/oracle 存在的常规 D2H/H2D。
+- [ ] 把 topology/geometry/boundary/halo generation 与 solver/zone/grid/backend/device
+      key 统一到唯一 state owner；禁止再增加 process-wide 或 port-local 的第二套
+      persistent GPU state。
+- [ ] 完成多 zone、MPI halo、单节点多卡/跨节点映射与错误传播；CPU/MPI oracle 和
+      workload exit code 必须同时通过。
+- [ ] 在同一资源口径下完成 accuracy、stability、MPI correctness 和多次 paired timing；
+      只有应用级 wall-clock 重复显示收益，才宣称 GPU 加速并更新正式性能报告。
+- [ ] 在 inviscid contract 闭合后，再扩展 viscous/turbulence；不以 1D microbenchmark
+      的加速比外推完整 3D Navier–Stokes。
 
 ### 2026-09-22 新会话 handoff
 
@@ -208,6 +242,66 @@ gradient D2H + qf H2D 的路径包装成性能优化**。结论如下：
 - 昆山 CPU normal/strict 五算例在带 DTK 运行时的验证作业中均为 `5/5`；strict 最大绝对残差 `1.1072414686508214e-17`。第一次 CPU 队列失败是 HIP 构建缺少 `libamd_comgr` 的环境问题，不计入数值结论。
 - fast path 后的标准 3-step HIP trace 已生成 legacy/CPU batch/HIP batch 三套完整 stage 文件；流式 verifier 在处理约 5 GB trace、sequence 6/12 时为释放计算资源主动取消，因此本轮不把它记为完整 verifier PASS。各 workload 日志已显示 finite/positive state，boundary 无 trace workload 与 CPU normal/strict 门禁均通过。25-step wrapper 因大型 trace runner 未形成完整 `result.txt`，不作为正式 25-step 证据。
 - 后续优化方向：若要覆盖 viscous/FarField，需设计满足 strict oracle 的近似或查表方案；不要直接把 `x*x*sqrt(x)` 扩展到 viscous 路径。对不同 gamma、边界类型和动态热化学模型继续保持原始公式。
+
+## 2026-09-24 boundary field-pointer cache
+
+- `UNsBcSolver::Init()` 现在为当前 zone/grid 缓存 equation-major `q`、`bc_q`、`tempr`
+  和 `gama` 的连续指针，同时缓存边界 face 的 connectivity、几何量和 cell-center
+  指针；`SetId()`、`PrepareData()`、`UpdateBc()` 复用这些指针，未改变边界类型分支、
+  boundary-first 顺序、ghost ownership 或 CPU 数值公式。
+- Kunshan CPU oracle 已通过：normal `1e-8` 五算例 `5/5`，最大绝对残差差
+  `4.970574442764598e-10`；strict `1e-15` 五算例 `5/5`，最大绝对残差差
+  `1.1072414686508214e-17`。
+- Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已通过 root HIP configure/build、smoke、
+  GoogleTest `9/9`、hardware CTest `10/10`。完整
+  gradient → reconstruction → residual → state-update 3-step seam 为 36 records PASS；
+  HIP 对 legacy 最大绝对差 `3.7747582837255322e-13`，metadata 一致，state
+  finite 且 density/pressure 为正。
+- 随后原型实现了 function-local static boundary solver 与 region face/type/name/data
+  metadata cache。该原型也通过同样的 CPU/HIP correctness gate，但同一 Slurm
+  allocation 的 paired timing 没有显示稳定收益，故已撤销：
+  - basis：`steps=3`、`warmup=1`、`repeats=3`、legacy CPU 8 ranks、HIP 1 rank、
+    `dcu:1`；
+  - pointer-cache A：legacy mean `5251.237 ms`，HIP mean `2008.560 ms`；
+  - region-cache B：legacy median `5320.089 ms`，其中一次 `9302.341 ms` 异常值；
+    HIP mean `2002.470 ms`；
+  - HIP 的 B/A 仅 `1.003041x`，三次 paired 方向不一致，不构成可重复收益。
+- 当前工作树保留 pointer cache，三个相关源码文件与已验证 A 版本的 SHA-256 完全
+  一致。下一步转向 1D/3D 共用 boundary/ghost view 与 device ownership contract，
+  不继续为 region metadata 增加 host-only 缓存层。
+
+## 2026-09-24 1D/shared EulerDomain lifecycle adapter
+
+- 新增 `OneDEulerDomainAdapter`，把现有 1D `EulerBackend/EulerState` 包装为
+  `codes/accel::EulerDomainBackend/EulerDomainState`；adapter 不持有第二份数值或设备
+  state，只负责 problem、boundary、state key、run options 和 field view 的契约转换。
+- 当前受限 contract 明确要求 3 方程、无外部 ghost、Periodic/Outflow（映射为 1D
+  Transmissive）、adapter 自己管理内部 RK stages；不把 3D stage callback、5 方程或
+  Wall/Inflow 静默映射到 1D。
+- 新增 CPU contract tests：
+  - shared adapter 与直接 `CpuEulerBackend` 连续 2 steps 的最终 state 逐元素完全一致；
+  - 拒绝不支持的 equation/ghost/boundary/backend-device ownership；
+  - 拒绝外部 RK stage scheduling，避免共享 contract 与 1D 内部 RK 重复推进。
+- Kunshan `kshcnormal` 验证通过：完整 root build 成功，CPU normal `1e-8` 五算例
+  `5/5`，strict `1e-15` 五算例 `5/5`；adapter GoogleTest `3/3`，两个作业的
+  scheduler/workload 均为 `COMPLETED/0:0`。
+- adapter state ownership 现在同时校验 wrapped backend、backend kind 和 device id；
+  不允许同一个 `HipEulerBackend` 的不同 device-id adapter 串用 state，也不允许把 HIP
+  backend 声明成 CUDA/Kokkos。
+- Kunshan DTK 26.04 / `gfx906` / `dcu:1` 验证通过：
+  - standalone HIP GoogleTest/CTest 均为 `15/15`；
+  - root HIP build 与 smoke 通过，GoogleTest `15/15`、hardware CTest `16/16`；
+  - HIP adapter NoTrace 最终 state、FullTrace 的 face state/flux/residual/RK state、
+    stats、连续两次 lifecycle advance 与 direct `HipEulerBackend` 一致；
+  - 三个作业的 scheduler/workload 均为 `COMPLETED/0:0`。
+- 新增 `oneflow_1d_euler_domain_adapter_benchmark`，在同一 allocation 内交错运行 direct
+  HIP 与 shared adapter。basis 为 `nx=1048576`、`steps=100`、`repeats=5`、
+  `warmup=2`：direct/shared `Advance` 总时间分别为 `420.163270/420.126780 ms`，
+  shared/direct=`0.999913`；kernel 时间分别为 `417.611221/417.556526 ms`，
+  launches `3000/3000`、syncs `5/5`，最终最大绝对误差 `0` 且 checksum 完全一致。
+  这是 adapter 薄层等价性证据，不外推为 3D 应用级加速。
+- 下一步转向 1D/3D 共用 boundary evaluation/ghost update contract；保留 direct
+  CPU/HIP oracle，不切换 1D 正式入口，也不新建第二套 boundary view 或 GPU state。
 
 ## 存储约定（长期）
 
@@ -597,6 +691,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-09-24 | 完成 1D `EulerBackend` → shared `EulerDomainBackend` 的 CPU/HIP 薄 adapter，并增加 direct/shared stateful paired benchmark；收紧 backend kind/device identity，adapter 不持有第二份 CPU/GPU state | Kunshan CPU root build、adapter `3/3`、normal/strict 各 `5/5`；standalone HIP GoogleTest/CTest `15/15`；root HIP build/smoke、GoogleTest `15/15`、hardware CTest `16/16`；NoTrace、FullTrace、stats、device identity、lifecycle reuse 全通过。`nx=1048576,steps=100,repeats=5,warmup=2` 的 direct/shared advance 为 `420.163270/420.126780 ms`，ratio `0.999913`，最终误差 `0`、launch/sync 完全一致；所有成功作业均 `COMPLETED/0:0` |
 | 2026-09-23 | host lifecycle/boundary metadata 优化：跨 RK stage 复用 `UNsInvFlux` 的 `qf1/qf2/invflux`；HIP reconstruction 稳定保存 boundary operation host buffer，静态 operation 只在拓扑/host pointer 变化时 H2D；`NsCalcGamaT` 改用连续 field 指针访问 | Kunshan CPU normal/strict 五算例各 `5/5`，最终作业 workload 与 scheduler 均 `COMPLETED/0:0`；m6 同 basis `steps=3,warmup=1,repeats=3` 的 host-reuse HIP mean `2286.562 ms`，boundary-operation cache 版本 `1968.529 ms`，最终源码版本（含 boundary-face extent invalidation）HIP mean `1855.713 ms`、legacy mean `4834.289 ms`、单次作业 ratio `2.6051x`；跨作业 node/启动波动明显，未作为稳定加速结论；3-step HIP breakdown 的 `boundary_gamma_inner` 仍约 `73 ms`，下一步转向 boundary/ghost host loop 或 device update |
 | 2026-09-23 | `CALC_BOUNDARY` 细粒度 profiling 与 inviscid boundary guard 复测：把 `LOAD_Q/CALC_TIME_STEP/LOAD_RESIDUALS/UPDATE_RESIDUALS/CALC_LHS/UPDATE_FLOWFIELD/CALC_BOUNDARY` 及 `NsCalcBoundary` 的 gamma/viscosity/BC 子项纳入 opt-in profiler；`vismodel=0` 跳过无用的 `CalcLaminarViscosity` | Kunshan root OneFLOW 增量 build/smoke、3-step 36-record accuracy、25-step `warmup=1,repeats=2` legacy CPU 8-rank/HIP 1-rank 与 3-step boundary substage profile 均 workload `exit_code=0`；guard 前后 HIP mean `81.288 s→81.247 s`，无可分辨性能收益；HIP `CALC_BOUNDARY` 约 `72.393 s`（`89.1%`），3-step `boundary_bc≈9422 ms` 明显主导；CPU normal/strict 五算例各 `5/5`，最大 absolute difference 分别 `4.970574442764598e-10` 与 `1.1072414686508214e-17`；不更新正式性能报告，下一步转向 device boundary/ghost update |
 | 2026-09-23 | 收紧 backend-neutral HIP reconstruction view contract，并实现受限 residual→LHS→primitive state-update seam：state-owned residual 在 `CALC_LHS` 设备缩放，`UPDATE_FLOWFIELD` 设备完成五方程 primitive↔conserved 更新；NoTrace 不回传 residual，更新后的内部 `q` 暂回传 host 供 boundary/下一 stage 使用 | 本地 Release 增量构建 `oneflow_euler_domain_contract_test`；直接 GoogleTest `11/11`；`ULhs.cpp`、`UNsUpdate.cpp`、`UNsInvFlux.cpp` CPU 语法检查通过。Kunshan DTK 26.04 / `gfx906` / `dcu:1` root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10` 通过；新增 2-cell/2-ghost/3-face/5-equation state-update contract，device primitive update 最大误差 `1.388e-17`，HIP CTest smoke `1/1`（测试本体 `0.14 s`）；3-step stage `36` 条记录通过，legacy→CPU batch 最大绝对差 `2.2826185386293218e-13`、legacy→HIP batch `3.3528735343679728e-13`；fixed-CFL `0.01` 50-step 的 legacy/CPU batch/HIP batch 均 `exit_code=0`、`diagnostic_hits=0`、`PASS`，scheduler 与 workload 均 `COMPLETED/0:0`。未做正式 timing，不更新正式性能报告。 |
