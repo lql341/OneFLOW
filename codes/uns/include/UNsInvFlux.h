@@ -43,6 +43,8 @@ public:
     ~UNsInvFlux();
 public:
     void CalcFlux();
+    void Alloc();
+    void DeAlloc();
     void CalcInvFlux();
     void CalcInvFluxCpuBatch();
     void CalcInvFluxHipBatch();
