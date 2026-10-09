@@ -19,19 +19,21 @@ set -euo pipefail
 : "${ONEFLOW_F2_STABILITY_CASE:?Set ONEFLOW_F2_STABILITY_CASE (relative to source)}"
 
 module purge
-module load compiler/gcc/9.3.0
-module load mpi/openmpi/gcc-9.3.0/4.1.5
+module load gcc/16.2.0
+module load openmpi/5.0.11
+module load cmake/4.4.3
 module load compiler/dtk/26.04
 
 clang_bin="$(command -v clang)"
 llvm_root="$(dirname "$(dirname "$clang_bin")")"
 dtk_root="$(dirname "$llvm_root")"
-mpi_root="/public/software/mpi/openmpi/openmpi-4.1.5"
+mpi_root="$(dirname "$(dirname "$(command -v mpirun)")")"
 metis_root="$HOME/.scnet-hpc/oneflow/deps/metis-install"
 export PATH="$dtk_root/bin:$llvm_root/bin:$PATH"
 export LD_LIBRARY_PATH="$dtk_root/hip/lib:$llvm_root/lib:$dtk_root/lib:$dtk_root/lib64:$dtk_root/dcc/lib64:$dtk_root/dcc/comgr/lib64:$metis_root/lib:$mpi_root/lib:${LD_LIBRARY_PATH:-}"
 export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
 export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
+export OMPI_MCA_coll="^hcoll"
 
 steps="${ONEFLOW_F2_STABILITY_STEPS:-50}"
 timeout_seconds="${ONEFLOW_F2_STABILITY_TIMEOUT_SECONDS:-900}"
@@ -87,6 +89,19 @@ if [ -e "$stability_root" ]; then
     exit 2
 fi
 mkdir -p "$stability_root"
+
+{
+    echo "gcc=$(gcc --version | head -1)"
+    echo "cmake=$(cmake --version | head -1)"
+    echo "mpi=$(mpirun --version | head -1)"
+    echo "mpirun=$(command -v mpirun)"
+    echo "mpi_root=$mpi_root"
+    echo "OMPI_MCA_coll=$OMPI_MCA_coll"
+    echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
+} > "$stability_root/environment.txt"
+grep -q '16\.2\.0' "$stability_root/environment.txt"
+grep -q '4\.4\.3' "$stability_root/environment.txt"
+grep -q '5\.0\.11' "$stability_root/environment.txt"
 
 source_case="$ONEFLOW_F2_STABILITY_SOURCE_DIR/$ONEFLOW_F2_STABILITY_CASE"
 for mode in legacy cpu_batch hip_batch; do

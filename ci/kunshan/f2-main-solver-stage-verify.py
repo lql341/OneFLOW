@@ -198,8 +198,8 @@ def main():
     parser.add_argument("legacy_trace")
     parser.add_argument("cpu_batch_trace")
     parser.add_argument("hip_batch_trace")
-    parser.add_argument("--absolute-tolerance", type=float, default=1.0e-11)
-    parser.add_argument("--relative-tolerance", type=float, default=1.0e-11)
+    parser.add_argument("--absolute-tolerance", type=float, default=1.0e-12)
+    parser.add_argument("--relative-tolerance", type=float, default=1.0e-12)
     args = parser.parse_args()
 
     legacy = read_trace(args.legacy_trace)

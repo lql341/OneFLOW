@@ -17,9 +17,11 @@ set -euo pipefail
 : "${ONEFLOW_E3_ORACLE_BINARY:?Set ONEFLOW_E3_ORACLE_BINARY}"
 
 module purge
-module load compiler/gcc/9.3.0
-module load mpi/openmpi/gcc-9.3.0/4.1.5
+module load gcc/16.2.0
+module load openmpi/5.0.11
+module load cmake/4.4.3
 module load python/3.8.10
+export OMPI_MCA_coll="^hcoll"
 
 source_case="$ONEFLOW_E3_ORACLE_SOURCE_DIR/test/m6wingroe_sa"
 oracle_root="${ONEFLOW_E3_ORACLE_RUN_DIR:-$PWD/e3-cpu-oracle-${SLURM_JOB_ID:-manual}}"
@@ -28,6 +30,12 @@ batch_case="$oracle_root/batch/m6wingroe_sa"
 
 rm -rf "$oracle_root"
 mkdir -p "$oracle_root/legacy" "$oracle_root/batch"
+{
+    echo "gcc=$(gcc --version | head -1)"
+    echo "cmake=$(cmake --version | head -1)"
+    echo "mpi=$(mpirun --version | head -1)"
+    echo "OMPI_MCA_coll=$OMPI_MCA_coll"
+} > "$oracle_root/environment.txt"
 cp -a "$source_case" "$legacy_case"
 cp -a "$source_case" "$batch_case"
 

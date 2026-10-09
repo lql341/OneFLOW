@@ -23,10 +23,12 @@ set -euo pipefail
 : "${ONEFLOW_F2_STAGE_CFL:-}"
 
 module purge
-module load compiler/gcc/9.3.0
-module load mpi/openmpi/gcc-9.3.0/4.1.5
+module load gcc/16.2.0
+module load openmpi/5.0.11
+module load cmake/4.4.3
 module load compiler/dtk/26.04
 module load python/3.8.10
+export OMPI_MCA_coll="^hcoll"
 
 source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/$ONEFLOW_F2_STAGE_CASE"
 trace_root="${ONEFLOW_F2_STAGE_RUN_DIR:-$PWD/f2-main-solver-stage-${SLURM_JOB_ID:-manual}}"
@@ -41,6 +43,17 @@ if [ -e "$trace_root" ]; then
     exit 2
 fi
 mkdir -p "$trace_root"
+{
+    echo "gcc=$(gcc --version | head -1)"
+    echo "cmake=$(cmake --version | head -1)"
+    echo "mpi=$(mpirun --version | head -1)"
+    echo "mpirun=$(command -v mpirun)"
+    echo "OMPI_MCA_coll=$OMPI_MCA_coll"
+    echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
+} > "$trace_root/environment.txt"
+grep -q '16\.2\.0' "$trace_root/environment.txt"
+grep -q '4\.4\.3' "$trace_root/environment.txt"
+grep -q '5\.0\.11' "$trace_root/environment.txt"
 for mode in legacy cpu_batch hip_batch; do
     cp -a "$source_case" "$trace_root/$mode"
     rm -rf "$trace_root/$mode/results" "$trace_root/$mode/restart" \

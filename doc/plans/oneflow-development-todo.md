@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-09-24（1D direct CPU/HIP backend 已通过共享 EulerDomain adapter 的 correctness、stats、identity、lifecycle 与 paired performance 等价门禁）
+> 最后更新：2026-10-09（P0 upstream PR 跟进完成；PR #159/#160 已合并，fork topic 分支已清理。技术路线快照仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -14,12 +14,14 @@
 | 项 | 状态 |
 |---|---|
 | `origin/dev` / 本地 `dev` | 已同步到当前 checkpoint；`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
-| PR #159 `pr/agents-branch-model` | OPEN / MERGEABLE；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端，规则 1 的五算例与 HIP contract 均不适用 |
-| PR #160 `pr/euler-weno5-unified` | OPEN / MERGEABLE；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
+| PR #159 `pr/agents-branch-model` | **MERGED**（2026-09-19，review approved）；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端 |
+| PR #160 `pr/euler-weno5-unified` | **MERGED**（2026-09-19，review approved）；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 
-两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档。**#160 已实跑规则 1 的两个门禁**（昆山 T1 + T2，见 §1）；#159 是 docs-only，按规则 1 的适用范围不需要门禁。
+两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档；均已合并。#160 在 PR 分支实跑规则 1 的两个门禁（昆山 T1 + T2）；#159 为 docs-only。2026-10-09 已确认 origin 上的两个 topic branch 删除，本地也无对应分支。
 
 **当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。这闭合了当前受限 seam 的目标节点验收，但不等同于完整 MPI/halo、多 zone、viscous/turbulence 或 GPU-resident 性能完成。仍保留每次 gradient 的 q H2D 与 gradient D2H CPU oracle，更新后的内部 cell `q` 暂回传 host 供现有 boundary/下一 stage 语义使用；没有做正式 timing，也不更新正式性能报告。
+
+**Kunshan 默认测试依赖（2026-10-09 起）**：所有新 CPU、CPU MPI 与 root main-solver 测试使用 GCC `16.2.0`（`gcc/16.2.0`）、OpenMPI `5.0.11`（`openmpi/5.0.11`）、CMake `4.4.3`（`cmake/4.4.3`），MPI 测试设置 `OMPI_MCA_coll=^hcoll`，并在运行证据中记录实际版本与 MPI 路径。旧 GCC 9/OpenMPI 4/CMake 3.25 记录只作为历史结果；DTK/HIP 测试如确需兼容工具链，必须作为明确的 HIP 专用例外记录，不能用于 CPU/MPI 验证。权威说明见 [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)。
 
 ## Big picture：正确性优先的统一 GPU solver 架构
 
@@ -73,7 +75,7 @@ trace/stats 和设备所有权 contract；1D port 是小规模数值与生命周
 
 **下一步（按优先级）**
 
-1. PR #159 / #160 暂不主动推进；只在收到 review 反馈时处理，并在对应 topic 分支重跑门禁。
+1. PR #159 / #160 已于 2026-09-19 合并并通过 CI；fork topic branches 已于 2026-10-09 清理（见 §2 P0）。
 2. 保持新 reconstruction seam 为显式 opt-in；继续保留 CPU legacy/batch 和旧 host-staged HIP fallback。
 3. 下一刀优先消除 gradient D2H：让 reconstruction view 直接消费 state-owned device gradient，同时保留 MRField 下载作为 CPU oracle/FullTrace fallback。
 4. 再迁移 device residual/state update；先确认 `LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD` 契约，不混入 viscous/turbulence、MPI/halo 或 RK algorithm change。
@@ -103,7 +105,7 @@ ONEFLOW_ARTIFACT_DIR=\$W/runs/<date>/dcu-single-$R/artifacts \
 
 - 产物落在 `runs/<date>/<suite>-<rev>/artifacts/`：`result.txt`、`exitcodes.txt`、`normal.log`、`strict.log`、`gtest.log`、`ctest.log`。
 - 判据：T1 为 `CPU_REGRESSION_STANDARD_PASS` 且两档各 5/5；T2 为 `config=0 build=0 test=0` 且 GoogleTest/CTest 各 9/9。
-- **坑**：upstream 旧版 `euler-dcu-gtest.slurm` 在 `module purge` 之前解析 cmake 且不传 `-Damd_comgr_DIR`，在集群上必失败；本轮用的是 dev 上已修好的副本，PR #160 已把同一修复带入。此外 cmake 模块在部分节点加载不稳定，必要时显式指定 cmake 3.25 路径。
+- **坑**：upstream 旧版 `euler-dcu-gtest.slurm` 在 `module purge` 之前解析 cmake 且不传 `-Damd_comgr_DIR`，在集群上必失败；本轮用的是 dev 上已修好的副本，PR #160 已把同一修复带入。CPU/MPI 与 root main-solver 测试固定使用 Kunshan 默认依赖；HIP 专用流程的 CMake/host compiler 兼容设置见对应脚本和记录，不要把旧模块配置带入 CPU/MPI 测试。
 
 ### 2026-09-22 reconstruction/residency contract 只读盘点
 
@@ -422,14 +424,14 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 项目 | 状态 |
 |---|---|
 | 主分支 | `master` = `origin/master` = `upstream/master` = `063c0a12`（三端 0/0；已合入 dev） |
-| 进行中的 PR | **#159**（`pr/agents-branch-model`）：`AGENTS.md` 的 fork 无关分支模型，1 文件 +23/−0。**#160**（`pr/euler-weno5-unified`）：accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract，64 文件 +4771/−272。两者均 OPEN / MERGEABLE、CI 4/4 绿，都基于 `upstream/master` 分叉且不含 fork-only 文档 |
-| 分支 | 本地 `dev` 将在本轮 fork-only 文档提交后推送到 `origin/dev`；共享 gradient 功能提交与本文档提交保持分离，未创建 upstream PR，也未 rebase。 |
+| upstream PR | #159、#160 均已 MERGED，review approved，CI 4/4 绿；对应 fork topic branches 已删除 |
+| 分支 | `dev` 与 `origin/dev` 当前同为 `665c77c4`；本地另有未提交的 F-stage verifier 容差与本次文档更新。 |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | F 阶段的 host-staged HIP 主路径已包含 primitive face state → HIP inviscid flux → residual face-scatter，并新增首个 HIP Green–Gauss gradient vertical slice。3-step accuracy、fixed-CFL 50-step stability 与同 basis timing 已通过；reconstruction、RK/state update、viscous/turbulence、MPI/interface 仍主要在 host。 |
-| 最新验证 | 2026-09-21：本地 CPU build + CTest `243/243`，五算例 normal/strict 各 `5/5`；Kunshan DTK 26.04 / `gfx906` / `dcu:1` root HIP smoke（gradient oracle 误差 0）、GoogleTest `9/9`、hardware CTest `10/10`；m6 3-step 36 条 trace PASS；fixed-CFL 50-step 三路 PASS；同 basis mean 为 legacy `14927.309397 ms`、CPU batch `15519.090773 ms`、HIP gradient `12866.935637 ms`（`1.160129x`）。单作业结果未写入正式性能报告。 |
+| 当前进度 | 受限的单 zone、finest-grid、5 方程、Lax–Friedrichs、limiter-off、inviscid HIP path 已覆盖 gradient → reconstruction → flux/residual → state update，并完成 3-step 36-record target-node accuracy gate。完整多 zone/MPI halo、viscous/turbulence、跨 stage 全量 device residency 和稳定的重复性能结论仍未完成。 |
+| 最新验证 | 2026-10-09 Kunshan：GCC `16.2.0` / CMake `4.4.3` / OpenMPI `5.0.11` 下 CPU normal/strict 五算例各 `5/5`、CPU backend contract `8/8`，task/database/register/adt GoogleTest `145/145`，CPU MPI 32-rank 运行成功；DCU single 与 4-rank DCU MPI 均通过。root HIP 使用兼容 DTK 的 GCC 9.3 toolchain，smoke 通过、GoogleTest `15/15`、CTest `16/16`；F-stage 36 条 trace PASS，legacy→CPU batch/HIP batch 最大绝对差分别 `2.28e-13` / `3.52e-13`。F-stage 两个 verifier 默认绝对/相对容差已在本地收紧至 `1e-12`，尚未重跑新默认；现有完整 trace 最大缩放误差 `2.44e-13`、守恒误差约 `5.80e-13`。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；CUDA、Kokkos、跨节点 MPI 和完整 Navier–Stokes 主线均未验证。`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；3D 主 solver 当前只在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 条件下验证 HIP inviscid flux/residual 与 opt-in Green–Gauss gradient。q H2D、gradient D2H、reconstruction、RK/state update、viscous/turbulence 和 MPI/interface 仍依赖 host，不能称为完整 stateful/device-resident solver。
 
@@ -473,9 +475,9 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 ### P0 — upstream PR 跟进（2026-09-19 起）
 
-- [ ] **PR #159**（`pr/agents-branch-model`）：跟进 review；如需改动，在该 topic 分支上改并重跑 CI。
-- [ ] **PR #160**（`pr/euler-weno5-unified`）：跟进 review；**任何改动都必须在该 PR 分支上重跑 T1 `cpu-regression` + T2 `dcu-single`**——本轮实测过「dev 绿 ≠ PR 分支绿」（单独 cherry-pick WENO5 会导致 HIP 编译失败），不要拿 dev 的结果顶替。
-- [ ] 两个 PR 合并或关闭后删除对应的 topic 分支（本地 + origin）。
+- [x] **PR #159**（`pr/agents-branch-model`）：已 review approved 并于 2026-09-19 合并；CI 4/4 通过。
+- [x] **PR #160**（`pr/euler-weno5-unified`）：已 review approved 并于 2026-09-19 合并；PR 分支自身 T1 `cpu-regression` + T2 `dcu-single` 门禁通过，CI 4/4 通过。
+- [x] 两个 PR 合并后清理对应 topic 分支：本地无分支，2026-10-09 已删除 origin 上的两个分支。
 
 ### P0 — dev 融合基线
 
@@ -559,7 +561,7 @@ git show dev:doc/plans/oneflow-development-todo.md
     - [x] F3.3：fresh CPU 五 case 门禁于 2026-09-20 在 v5 快照上复验：normal `1e-8` 5/5（最大绝对残差 `4.970574442764598e-10`）、strict `1e-15` 5/5（最大 `1.1072414686508214e-17`）；scheduler `COMPLETED`、workload exit `0:0`。
     - [x] F3.4：2026-09-21 gradient slice 在同一 Kunshan target-node 口径完成 root HIP build/smoke/contract、3-step 36-record accuracy、fixed-CFL 50-step stability 与同 basis timing；三路 workload 与 scheduler 均成功。HIP/legacy 单作业 mean `1.160129x`，但尚无连续多作业重复，因此不更新正式性能报告。
     - [x] F3.5：2026-09-22 对包含 P0 contract 与 HIP gradient ownership wiring 的新 revision 完成 Kunshan CPU normal/strict 五算例各 `5/5`（workload/scheduler `0:0`/`COMPLETED`），以及 root HIP configure/build、smoke、GoogleTest `9/9`、hardware CTest `10/10`；3-step 三路 workload 生成完整 trace/log，但标准 `mpirun -np 1` runner 在 PMIX cleanup 阶段未返回并被取消，因此该 revision 不记 stage verifier/workload exit 为通过，也不产生性能结论。
-- [ ] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件。
+- [x] 昆山回归 eric 的完整 `task/database/register/adt` 测试套件：GCC `16.2.0` / CMake `4.4.3` / OpenMPI `5.0.11`，145 tests 全部通过。
 
 ### P2 — 后续技术工作
 
@@ -691,6 +693,8 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-10-09 | 在 Kunshan 使用 GCC `16.2.0` / CMake `4.4.3` / OpenMPI `5.0.11` 完成 `tests/adt`、`tests/database`、`tests/task`、`tests/register` 全套回归 | CTest `adt 9/9`、`database 49/49`、`task 58/58`、`register 29/29`，合计 `145/145`；Slurm `COMPLETED/0:0` |
+| 2026-10-09 | 完成 P0 upstream PR 跟进：PR #159/#160 均已 review approved、合并且 CI 4/4 通过；核验并删除 fork `origin` 上的两个已合并 topic branch，本地对应分支已不存在 | [PR #159](https://github.com/eric2003/OneFLOW/pull/159)、[PR #160](https://github.com/eric2003/OneFLOW/pull/160)；`git ls-remote --heads origin` 确认两个分支引用均已清除 |
 | 2026-09-24 | 完成 1D `EulerBackend` → shared `EulerDomainBackend` 的 CPU/HIP 薄 adapter，并增加 direct/shared stateful paired benchmark；收紧 backend kind/device identity，adapter 不持有第二份 CPU/GPU state | Kunshan CPU root build、adapter `3/3`、normal/strict 各 `5/5`；standalone HIP GoogleTest/CTest `15/15`；root HIP build/smoke、GoogleTest `15/15`、hardware CTest `16/16`；NoTrace、FullTrace、stats、device identity、lifecycle reuse 全通过。`nx=1048576,steps=100,repeats=5,warmup=2` 的 direct/shared advance 为 `420.163270/420.126780 ms`，ratio `0.999913`，最终误差 `0`、launch/sync 完全一致；所有成功作业均 `COMPLETED/0:0` |
 | 2026-09-23 | host lifecycle/boundary metadata 优化：跨 RK stage 复用 `UNsInvFlux` 的 `qf1/qf2/invflux`；HIP reconstruction 稳定保存 boundary operation host buffer，静态 operation 只在拓扑/host pointer 变化时 H2D；`NsCalcGamaT` 改用连续 field 指针访问 | Kunshan CPU normal/strict 五算例各 `5/5`，最终作业 workload 与 scheduler 均 `COMPLETED/0:0`；m6 同 basis `steps=3,warmup=1,repeats=3` 的 host-reuse HIP mean `2286.562 ms`，boundary-operation cache 版本 `1968.529 ms`，最终源码版本（含 boundary-face extent invalidation）HIP mean `1855.713 ms`、legacy mean `4834.289 ms`、单次作业 ratio `2.6051x`；跨作业 node/启动波动明显，未作为稳定加速结论；3-step HIP breakdown 的 `boundary_gamma_inner` 仍约 `73 ms`，下一步转向 boundary/ghost host loop 或 device update |
 | 2026-09-23 | `CALC_BOUNDARY` 细粒度 profiling 与 inviscid boundary guard 复测：把 `LOAD_Q/CALC_TIME_STEP/LOAD_RESIDUALS/UPDATE_RESIDUALS/CALC_LHS/UPDATE_FLOWFIELD/CALC_BOUNDARY` 及 `NsCalcBoundary` 的 gamma/viscosity/BC 子项纳入 opt-in profiler；`vismodel=0` 跳过无用的 `CalcLaminarViscosity` | Kunshan root OneFLOW 增量 build/smoke、3-step 36-record accuracy、25-step `warmup=1,repeats=2` legacy CPU 8-rank/HIP 1-rank 与 3-step boundary substage profile 均 workload `exit_code=0`；guard 前后 HIP mean `81.288 s→81.247 s`，无可分辨性能收益；HIP `CALC_BOUNDARY` 约 `72.393 s`（`89.1%`），3-step `boundary_bc≈9422 ms` 明显主导；CPU normal/strict 五算例各 `5/5`，最大 absolute difference 分别 `4.970574442764598e-10` 与 `1.1072414686508214e-17`；不更新正式性能报告，下一步转向 device boundary/ghost update |

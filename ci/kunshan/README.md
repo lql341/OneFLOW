@@ -86,7 +86,45 @@ The source checkout, build, work directories, Slurm logs, accounting output,
 and summary remain isolated under that directory. Logs and summaries are also
 uploaded as a GitHub Actions artifact for 14 days. Each normal/strict run writes a machine-readable `backend-<mode>.txt` containing the selected backend, residual profile, tolerance, and exit status. This is the common reporting contract for CPU, HIP, CUDA, and Kokkos runs; an adapter is not considered validated until the report comes from its target compute node.
 
-## Verified CPU regression environment (kshcnormal)
+## Current Kunshan CPU/MPI toolchain (default)
+
+All new Kunshan CPU, CPU-MPI, and root main-solver validation must use this
+toolchain unless a test is explicitly marked as a historical reproduction:
+
+| Component | Required selection | Module |
+|---|---|---|
+| Compiler | GCC 16.2.0 | `gcc/16.2.0` |
+| MPI | OpenMPI 5.0.11 | `openmpi/5.0.11` |
+| CMake | 4.4.3 | `cmake/4.4.3` |
+
+Record `gcc --version`, `mpirun --version`, and `cmake --version` in each
+run's environment evidence. For MPI runs, also record the resolved `mpirun`
+and `libmpi` paths and the relevant `OMPI_MCA_*` variables. HCOLL must be
+disabled for the standard MPI regression runs with
+`OMPI_MCA_coll=^hcoll`; do not assume it is disabled merely because its
+component is unavailable. Verify the effective environment in the run log.
+The F2 stage and stability runners and the checked-in Actions configuration
+template load this toolchain by default. The standalone DCU/HIP build runners
+may retain a separately documented DTK-compatible host compiler/MPI stack;
+that exception applies only to those HIP build/runtime workflows and must be
+stated in the run evidence. Do not use that exception for CPU or CPU-MPI
+results.
+
+The 2026-09-13 results below are historical measurements from GCC 9.3.0 /
+OpenMPI 4.1.5 / CMake 3.25.0. They remain useful as a record of that run but
+are not the current environment specification and must not be used for new
+validation claims.
+
+Some older standalone Slurm runners still encode the former compiler and MPI
+modules for reproducing dated measurements. Treat those as historical until
+they are migrated; for new CPU/MPI runs use the current modules above and
+capture the actual versions in `environment.txt`. In particular,
+`f3-main-solver-benchmark.slurm` is pinned to its archived build/toolchain, and
+`euler-dcu-gtest.slurm`, `euler-dcu-matrix.slurm`, and
+`euler-dcu-mpi4-regression.slurm` are DTK/HIP-specific toolchain exceptions;
+none of these establishes the CPU/MPI default.
+
+## Historical CPU regression environment (kshcnormal, 2026-09-13)
 
 Measured on 2026-09-13, building the full solver (MPI + METIS + CGNS) and
 running the five-case CPU serial suite in both residual profiles.
