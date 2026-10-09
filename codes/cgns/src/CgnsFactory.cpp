@@ -21,12 +21,12 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "CgnsFactory.h"
-#include "GridFactory.h"
+#include <utility>
+#include <memory>
 #include "CgnsGlobal.h"
 #include "CgnsZbc.h"
 #include "CgnsFile.h"
-#include "GridPara.h"
-#include "LogFile.h"
+#include "GridTypes.h"
 #include "Prj.h"
 #include "Fatal.h"
 #include "StringUtils.h"
@@ -53,26 +53,94 @@ License
 #include "GridDef.h"
 #include "CalcGrid.h"
 #include "GridElem.h"
-#include "BgGrid.h"
 
 BeginNameSpace( ONEFLOW )
 #ifdef ENABLE_CGNS
 
+// Constructor uses member initializer list and std::make_unique
 CgnsFactory::CgnsFactory()
-{
-    this->cgnsZbase = new CgnsZbase();
-    this->zgridElem = new ZgridElem( this->cgnsZbase );
-}
+    : cgnsZbase(std::make_unique<CgnsZbase>()),
+      zgridElem(std::make_unique<ZgridElem>( *cgnsZbase ))
+{}
 
+// FIX: Define destructor and move operations here.
+// The compiler can now see the complete types and safely generate the 
+// code to delete the unique_ptr members.
 CgnsFactory::~CgnsFactory()
 {
-    delete this->cgnsZbase;
-    delete this->zgridElem;
+    cgns_global.ClearIfBoundTo( cgnsZbase.get() );
+}
+CgnsFactory::CgnsFactory( CgnsFactory && other ) noexcept
+{
+    const bool globalBoundToOther = cgns_global.IsBoundTo( other.cgnsZbase.get() );
+
+    cgnsZbase = std::move( other.cgnsZbase );
+    zgridElem = std::make_unique<ZgridElem>( *cgnsZbase );
+    other.zgridElem.reset();
+
+    if ( globalBoundToOther )
+    {
+        cgns_global.Bind( cgnsZbase.get() );
+    }
+}
+CgnsFactory& CgnsFactory::operator=( CgnsFactory && other ) noexcept
+{
+    if ( this != &other )
+    {
+        const bool globalBoundToEitherFactory =
+            cgns_global.IsBoundTo( cgnsZbase.get() ) ||
+            cgns_global.IsBoundTo( other.cgnsZbase.get() );
+        cgns_global.ClearIfBoundTo( cgnsZbase.get() );
+
+        cgnsZbase = std::move( other.cgnsZbase );
+        zgridElem = std::make_unique<ZgridElem>( *cgnsZbase );
+        other.zgridElem.reset();
+
+        if ( globalBoundToEitherFactory )
+        {
+            cgns_global.Bind( cgnsZbase.get() );
+        }
+    }
+    return *this;
 }
 
-void CgnsFactory::GenerateGrid()
+// FIX: Exception-safe ownership transfer
+void CgnsFactory::ConvertStrCgns2UnsCgnsGrid()
 {
-    this->ReadCgnsGrid();
+    auto unsCgnsZbase = std::make_unique<CgnsZbase>();
+
+    // If ReadCgnsMultiBase throws, unsCgnsZbase is automatically destroyed.
+    // this->cgnsZbase remains untouched and valid.
+    ONEFLOW::ReadCgnsMultiBase( unsCgnsZbase.get(), this->cgnsZbase.get() );
+
+    // Transfer ownership safely
+    this->cgnsZbase = std::move(unsCgnsZbase);
+
+    // Recreate the view because its referenced CgnsZbase has changed.
+    this->zgridElem = std::make_unique<ZgridElem>( *this->cgnsZbase );
+    cgns_global.Bind( this->cgnsZbase.get() );
+}
+
+void GenerateLocalOneFlowGridFromSu2Grid( Su2Grid & su2Grid, Grids & grids )
+{
+    // Stack allocation instead of new/delete
+    CgnsFactory cgnsFactory;
+    cgnsFactory.CreateSu2CgnsZone( su2Grid );
+
+    Grids local_grids = cgnsFactory.zgridElem->GenerateLocalOneFlowGrids();
+    ONEFLOW::AddOneFlowGrid( grids, std::move( local_grids[ 0 ] ) );
+}
+
+void CgnsFactory::GenerateGrid( const std::string & caseDir )
+{
+    this->GenerateGrid( GridConfig::FromDataBase(), caseDir );
+}
+
+void CgnsFactory::GenerateGrid(
+    const GridConfig & config,
+    const std::string & caseDir )
+{
+    this->ReadCgnsGrid( config, config.ResolveSourceCaseDir( caseDir ) );
 
     int systemZoneType = cgnsZbase->GetSystemZoneType();
     if ( ! ( systemZoneType == CGNS_ENUMV( Unstructured ) ) )
@@ -80,15 +148,14 @@ void CgnsFactory::GenerateGrid()
         this->ConvertStrCgns2UnsCgnsGrid();
     }
 
-    std::string target_filetype = grid_para.target_filetype; 
-    if ( target_filetype == "cgns" )
+    if ( config.targetType == GridFileType::CGNS )
     {
-        this->DumpUnsCgnsGrid();
+        this->DumpUnsCgnsGrid( config, caseDir );
     }
     else
     {
         this->ProcessCgnsBases();
-        this->CgnsToOneFlowGrid();
+        this->CgnsToOneFlowGrid( config );
     }
 }
 
@@ -97,41 +164,56 @@ void CgnsFactory::ProcessCgnsBases()
     this->cgnsZbase->ProcessCgnsBases();
 }
 
-void CgnsFactory::ReadCgnsGrid()
+void CgnsFactory::ReadCgnsGrid( const std::string & caseDir )
 {
-    cgns_global.cgnsbases = cgnsZbase;
-    std::string prjFileName = Prj::GetPrjFileName( grid_para.gridFile );
-    cgnsZbase->ReadCgnsGrid( prjFileName );
+    this->ReadCgnsGrid( GridConfig::FromDataBase(), caseDir );
 }
 
-void CgnsFactory::DumpCgnsGrid( ZgridMediator * zgridMediator )
+void CgnsFactory::ReadCgnsGrid(
+    const GridConfig & config,
+    const std::string & caseDir )
 {
-    cgns_global.cgnsbases = cgnsZbase;
-    ONEFLOW::DumpCgnsGrid( cgnsZbase, zgridMediator );
+    // Use .get() to pass the raw pointer to legacy/global APIs
+    cgns_global.Bind( this->cgnsZbase.get() );
+    const std::string & sourceGridFile = config.sourceFile;
+
+    std::string gridFileName;
+    if ( caseDir.empty() )
+    {
+        gridFileName = Prj::GetPrjFileName( sourceGridFile );
+    }
+    else
+    {
+        gridFileName = Prj::GetCaseFileName( caseDir, sourceGridFile );
+    }
+
+    this->cgnsZbase->ReadCgnsGrid( gridFileName );
 }
 
-void CgnsFactory::ConvertStrCgns2UnsCgnsGrid()
+void CgnsFactory::DumpCgnsGrid( ZgridMediator & zgridMediator )
 {
-    CgnsZbase * unsCgnsZbase = new CgnsZbase();
-
-    ONEFLOW::ReadCgnsMultiBase( unsCgnsZbase, this->cgnsZbase );
-
-    delete this->cgnsZbase;
-
-    this->cgnsZbase = unsCgnsZbase;
-
-    this->zgridElem->cgnsZbase = this->cgnsZbase;
+    cgns_global.Bind( cgnsZbase.get() );
+    ONEFLOW::DumpCgnsGrid( cgnsZbase.get(), & zgridMediator );
 }
+
 
 void CgnsFactory::CommonToOneFlowGrid()
 {
-    if ( ONEFLOW::IsUnsGrid( grid_para.topo ) )
+    this->CommonToOneFlowGrid( GridConfig::FromDataBase() );
+}
+
+void CgnsFactory::CommonToOneFlowGrid( const GridConfig & config )
+{
+    switch ( config.topology )
     {
-        this->CommonToUnsGridTEST();
-    }
-    else if ( ONEFLOW::IsStrGrid( grid_para.topo ) )
-    {
-        this->CommonToStrGrid();
+        case GridTopology::Unstructured:
+            this->CommonToUnsGridTEST( config );
+            break;
+        case GridTopology::Structured:
+            this->CommonToStrGrid();
+            break;
+        default:
+            return;
     }
 }
 
@@ -139,53 +221,81 @@ void CgnsFactory::CommonToStrGrid()
 {
 }
 
-void CgnsFactory::DumpUnsCgnsGrid()
+void CgnsFactory::DumpUnsCgnsGrid( const std::string & caseDir )
 {
-    std::string targetFile = Prj::GetPrjFileName( grid_para.targetFile );
+    this->DumpUnsCgnsGrid( GridConfig::FromDataBase(), caseDir );
+}
+
+void CgnsFactory::DumpUnsCgnsGrid(
+    const GridConfig & config,
+    const std::string & caseDir )
+{
+    const std::string & targetGridFile = config.targetFile;
+
+    std::string targetFile;
+    if ( caseDir.empty() )
+    {
+        targetFile = Prj::GetPrjFileName( targetGridFile );
+    }
+    else
+    {
+        targetFile = Prj::GetCaseFileName( caseDir, targetGridFile );
+    }
+
     cgnsZbase->OpenCgnsFile( targetFile, CG_MODE_WRITE );
     cgnsZbase->DumpCgnsMultiBase();
     cgnsZbase->CloseCgnsFile();
 }
 
-void CgnsFactory::CreateCgnsZone( ZgridMediator * zgridMediator )
+void CgnsFactory::CreateCgnsZone( ZgridMediator & zgridMediator )
 {
-    ONEFLOW::CreateDefaultCgnsZones( cgnsZbase, zgridMediator );
+    ONEFLOW::CreateDefaultCgnsZones( cgnsZbase.get(), & zgridMediator );
 }
 
-void CgnsFactory::PrepareCgnsZone( ZgridMediator * zgridMediator )
+void CgnsFactory::PrepareCgnsZone( ZgridMediator & zgridMediator )
 {
-    ONEFLOW::PrepareCgnsZone( cgnsZbase, zgridMediator );
+    ONEFLOW::PrepareCgnsZone( cgnsZbase.get(), & zgridMediator );
 }
 
 void CgnsFactory::ReadGridAndConvertToUnsCgnsZone()
 {
+    this->ReadGridAndConvertToUnsCgnsZone( GridConfig::FromDataBase() );
+}
+
+void CgnsFactory::ReadGridAndConvertToUnsCgnsZone( const GridConfig & config )
+{
     ZgridMediator zgridMediator;
-    zgridMediator.ReadGrid();
+    zgridMediator.ReadGrid( config );
 
     //create multi cgns zone
-    this->CreateCgnsZone( & zgridMediator );
-    this->PrepareCgnsZone( & zgridMediator );
+    this->CreateCgnsZone( zgridMediator );
+    this->PrepareCgnsZone( zgridMediator );
 }
 
 void CgnsFactory::CommonToUnsGridTEST()
 {
-    this->ReadGridAndConvertToUnsCgnsZone();
-
-    this->CgnsToOneFlowGrid();
+    this->CommonToUnsGridTEST( GridConfig::FromDataBase() );
 }
 
-CgnsZone * CgnsFactory::CreateSu2CgnsZone( Su2Grid* su2Grid )
+void CgnsFactory::CommonToUnsGridTEST( const GridConfig & config )
+{
+    this->ReadGridAndConvertToUnsCgnsZone( config );
+
+    this->CgnsToOneFlowGrid( config );
+}
+
+CgnsZone * CgnsFactory::CreateSu2CgnsZone( Su2Grid & su2Grid )
 {
     CgnsZone * cgnsZone = this->cgnsZbase->CreateCgnsZone();
 
-    su2Grid->FillSU2CgnsZone( cgnsZone );
+    su2Grid.FillSU2CgnsZone( *cgnsZone );
 
     return cgnsZone;
 }
 
-void CgnsFactory::Su2ToOneFlowGrid( Su2Grid* su2Grid )
+void CgnsFactory::Su2ToOneFlowGrid( Su2Grid & su2Grid )
 {
-    int nZones = su2Grid->nZone;
+    int nZones = su2Grid.nZone;
     Grids grids;
 
     for ( int iZone = 0; iZone < nZones; ++ iZone )
@@ -193,42 +303,31 @@ void CgnsFactory::Su2ToOneFlowGrid( Su2Grid* su2Grid )
         ONEFLOW::GenerateLocalOneFlowGridFromSu2Grid( su2Grid, grids );
     }
 
-    ONEFLOW::GenerateMultiZoneCalcGrids( grids );
+    ONEFLOW::GenerateMultiZoneCalcGrids( std::move( grids ) );
 }
 
 void CgnsFactory::CgnsToOneFlowGrid()
 {
-    if ( ! ONEFLOW::IsUnsGrid( grid_para.topo ) ) return;
-
-    Grids grids;
-
-    this->zgridElem->GenerateLocalOneFlowGrid( grids );
-
-    //The grid is processed and the grid file used for calculation is output
-    ONEFLOW::GenerateMultiZoneCalcGrids( grids );
+    this->CgnsToOneFlowGrid( GridConfig::FromDataBase() );
 }
 
-void AddOneFlowGrid( Grids & grids, Grid * grid )
+void CgnsFactory::CgnsToOneFlowGrid( const GridConfig & config )
 {
-    int iZone = grids.size() - 1;
-    grids.push_back( grid );
+    if ( config.topology != GridTopology::Unstructured ) return;
+
+    Grids grids = this->zgridElem->GenerateLocalOneFlowGrids( config );
+
+    // Keep the explicit grid configuration through the calculation-grid stage.
+    ONEFLOW::GenerateMultiZoneCalcGrids( std::move( grids ), config );
+}
+
+void AddOneFlowGrid( Grids & grids, std::unique_ptr< Grid > grid )
+{
+    if ( ! grid ) return;
+    const int iZone = static_cast< int >( grids.size() );
     grid->id = iZone;
+    grids.push_back( std::move( grid ) );
 }
-
-void GenerateLocalOneFlowGridFromSu2Grid( Su2Grid* su2Grid, Grids & grids )
-{
-    CgnsFactory * cgnsFactory = new CgnsFactory();
-
-    cgnsFactory->CreateSu2CgnsZone( su2Grid );
-
-    Grids local_grids;
-    cgnsFactory->zgridElem->GenerateLocalOneFlowGrid( local_grids );
-
-    ONEFLOW::AddOneFlowGrid( grids, local_grids[ 0 ] );
-
-    delete cgnsFactory;
-}
-
 
 #endif
 EndNameSpace

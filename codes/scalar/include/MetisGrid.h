@@ -27,6 +27,7 @@ License
 #include "HXDefine.h"
 #include "ScalarGrid.h"
 #include "metis.h"
+#include <memory>
 #include <vector>
 #include <set>
 #include <map>
@@ -40,17 +41,11 @@ class ScalarGrid;
 class MetisSplit
 {
 public:
-    MetisSplit();
-    ~MetisSplit();
-public:
-    MetisIntList xadj;
-    MetisIntList adjncy;
-public:
-    void MetisPartition( ScalarGrid * ggrid, int nPart, MetisIntList & cellzone );
-    void ManualPartition( ScalarGrid * ggrid, int nPart, MetisIntList & cellzone );
+    static MetisIntList MetisPartition( const ScalarGrid & ggrid, int nPart );
+    static MetisIntList ManualPartition( const ScalarGrid & ggrid );
 private:
-    void ScalarGetXadjAdjncy( ScalarGrid * ggrid, MetisIntList & xadj, MetisIntList & adjncy );
-    void ScalarPartitionByMetis( idx_t nCells, MetisIntList & xadj, MetisIntList & adjncy, int nPart, MetisIntList & cellzone );
+    static std::pair< MetisIntList, MetisIntList > ScalarGetXadjAdjncy( const ScalarGrid & ggrid );
+    static MetisIntList ScalarPartitionByMetis( idx_t nCells, const MetisIntList & xadj, const MetisIntList & adjncy, int nPart );
 
 };
 
@@ -59,21 +54,14 @@ class ScalarIFace;
 class GridPartition
 {
 public:
-    GridPartition();
-    ~GridPartition();
-public:
-    ScalarGrid * ggrid;
-    int nPart;
-    std::vector< ScalarGrid * > * grids;
-public:
-    int GetNZones();
-    void AllocateGrid( int nZones );
-    void PartitionGrid( ScalarGrid * ggrid, int nPart, std::vector< ScalarGrid * > * grids );
-    void ReconstructGridFaceTopo();
-    void ReconstructInterfaceTopo();
-    void ReconstructNode();
-    void ReconstructNeighbor();
-    void CalcInterfaceToBcFace();
+    static std::vector< std::unique_ptr< ScalarGrid > > PartitionGrid( const ScalarGrid & ggrid, int nPart );
+private:
+    static std::vector< std::unique_ptr< ScalarGrid > > AllocateGrid( int nZones );
+    static std::vector< std::unique_ptr< ScalarGrid > > ReconstructGridFaceTopo( const ScalarGrid & ggrid, int nPart );
+    static void ReconstructInterfaceTopo( std::vector< std::unique_ptr< ScalarGrid > > & grids );
+    static void ReconstructNode( const ScalarGrid & ggrid, std::vector< std::unique_ptr< ScalarGrid > > & grids );
+    static void ReconstructNeighbor( std::vector< std::unique_ptr< ScalarGrid > > & grids );
+    static void CalcInterfaceToBcFace( std::vector< std::unique_ptr< ScalarGrid > > & grids );
 };
 
 

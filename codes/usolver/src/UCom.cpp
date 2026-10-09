@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "UCom.h"
+#include <memory>
 #include "FaceTopo.h"
 #include "BcRecord.h"
 #include "UnsGrid.h"
@@ -63,41 +64,41 @@ void UGeom::Init()
     this->SetStEd( F_TOTAL );
     this->CreateBcTypeRegion();
 
-    FaceTopo * faceTopo = grid->faceTopo;
-    ug.lcf = & faceTopo->lCells;
-    ug.rcf = & faceTopo->rCells;
+    FaceTopo & faceTopo = grid->GetFaceTopo();
+    ug.lcf = & faceTopo.GetLeftCells();
+    ug.rcf = & faceTopo.GetRightCells();
 
-    FaceMesh * faceMesh = grid->faceMesh;
-    CellMesh * cellMesh = grid->cellMesh;
-    CellTopo * cellTopo = grid->cellMesh->cellTopo;
+    FaceMesh & faceMesh = grid->GetFaceMesh();
+    CellMesh & cellMesh = grid->GetCellMesh();
+    CellTopo & cellTopo = cellMesh.GetCellTopo();
 
-    ug.xfn = & faceMesh->xfn;
-    ug.yfn = & faceMesh->yfn;
-    ug.zfn = & faceMesh->zfn;
-    ug.vfn = & faceMesh->vfn;
-    ug.farea = & faceMesh->area;
+    ug.xfn = & faceMesh.xfn;
+    ug.yfn = & faceMesh.yfn;
+    ug.zfn = & faceMesh.zfn;
+    ug.vfn = & faceMesh.vfn;
+    ug.farea = & faceMesh.area;
 
-    ug.vfx = & faceMesh->vfx;
-    ug.vfy = & faceMesh->vfy;
-    ug.vfz = & faceMesh->vfz;
+    ug.vfx = & faceMesh.vfx;
+    ug.vfy = & faceMesh.vfy;
+    ug.vfz = & faceMesh.vfz;
 
-    ug.xfc = & faceMesh->xfc;
-    ug.yfc = & faceMesh->yfc;
-    ug.zfc = & faceMesh->zfc;
+    ug.xfc = & faceMesh.xfc;
+    ug.yfc = & faceMesh.yfc;
+    ug.zfc = & faceMesh.zfc;
 
-    ug.xcc = & cellMesh->xcc;
-    ug.ycc = & cellMesh->ycc;
-    ug.zcc = & cellMesh->zcc;
+    ug.xcc = & cellMesh.xcc;
+    ug.ycc = & cellMesh.ycc;
+    ug.zcc = & cellMesh.zcc;
 
-    ug.cvol  = & cellMesh->vol;
-    ug.cvol1 = & cellMesh->vol;
-    ug.cvol2 = & cellMesh->vol;
+    ug.cvol  = & cellMesh.vol;
+    ug.cvol1 = & cellMesh.vol;
+    ug.cvol2 = & cellMesh.vol;
 
-    ug.blankf = & cellTopo->blank;
+    ug.blankf = & cellTopo.blank;
 
-    cellTopo->CalcC2f( faceTopo );
+    cellTopo.CalcC2f( faceTopo );
 
-    ug.c2f = & cellTopo->c2f;
+    ug.c2f = & cellTopo.c2f;
 
     //ug.ireconface = 0;
     ug.ireconface = 1;
@@ -106,10 +107,10 @@ void UGeom::Init()
 void UGeom::CreateBcTypeRegion()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    BcRecord * bcRecord = grid->faceTopo->bcManager->bcRecord;
-    bcRecord->CreateBcTypeRegion();
+    BcRecord & bcRecord = grid->GetFaceTopo().GetBcRecord();
+    bcRecord.CreateBcTypeRegion();
 
-    ug.bcRecord = bcRecord;
+    ug.bcRecord = &bcRecord;
 }
 
 void UGeom::SetStEd( int flag )
@@ -232,7 +233,7 @@ void AddF2CFieldDebug( MRField * cellField, MRField * faceField )
         int cc = 9;
         std::cout << ( * cellField )[ iEqu ][ cc ] << "\n";
     }
-    int kkk = 1;
+
 }
 
 std::string HXDebug::fileName1;
@@ -302,7 +303,7 @@ void HXDebug::DumpField( const std::string & fileName, MRField * field )
     PIO::CloseFile( file );
 }
 
-MRField * HXDebug::ReadField( const std::string & fileName )
+std::unique_ptr<MRField> HXDebug::ReadField( const std::string & fileName )
 {
     std::fstream file;
 
@@ -314,7 +315,7 @@ MRField * HXDebug::ReadField( const std::string & fileName )
 
     std::cout << " nEqu = " << nEqu << " nCells = " << nCells << "\n";
 
-    MRField * field = new MRField( nEqu, nCells );
+    auto field = std::make_unique<MRField>( nEqu, nCells );
 
     for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
     {
@@ -332,8 +333,8 @@ void HXDebug::CompareFile( Real mindiff, int idump )
     if ( startStrategy != 1 ) return;
 
     UnsGrid * grid = Zone::GetUnsGrid();
-    MRField * field1 = HXDebug::ReadField( HXDebug::fileName1 );
-    MRField * field2 = HXDebug::ReadField( HXDebug::fileName2 );
+    std::unique_ptr<MRField> field1 = HXDebug::ReadField( HXDebug::fileName1 );
+    std::unique_ptr<MRField> field2 = HXDebug::ReadField( HXDebug::fileName2 );
     int nEqu = field1->GetNEqu();
     for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
     {
@@ -357,8 +358,6 @@ void HXDebug::CompareFile( Real mindiff, int idump )
         }
     }
 
-    delete field1;
-    delete field2;
 }
 
 void HXDebug::DumpCellInfo( int iCell )

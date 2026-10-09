@@ -25,7 +25,8 @@ License
 #include "HXDefine.h"
 #include "HXCgns.h"
 #include "HXArray.h"
-#include "GridDef.h"
+#include "GridHandles.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -43,9 +44,9 @@ void GetIJKRegion( Range & I, Range & J, Range & K, int & ist, int & ied, int & 
 
 class PointLocator;
 class BcRegion;
-void PrepareCgnsZoneSub( Grids & grids, CgnsZone * cgnsZone );
-void MergeToSingleZone( Grids & grids, HXVector< Int3D * > & unsIdList, NodeMesh * nodeMesh, int & nNodes, int & nCells );
-void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgnsZone );
+void PrepareCgnsZoneSub( GridViews & grids, CgnsZone * cgnsZone );
+void MergeToSingleZone( GridViews & grids, HXVector< std::unique_ptr< Int3D > > & unsIdList, NodeMesh * nodeMesh, int & nNodes, int & nCells );
+void FillSection( GridViews & grids, HXVector< std::unique_ptr< Int3D > > & unsIdList, CgnsZone * cgnsZone );
 void CalcUnsId( StrGrid * grid, PointLocator * pointSearch, Int3D * unsId );
 void SetUnsBcConn( BcRegion * bcRegion, CgIntField& conn, int & pos, Int3D & unsId );
 
@@ -66,9 +67,9 @@ void FillISize( CgInt *isize, int ni, int nj, int nk, int dimension );
 void FillISize( CgnsZone * myZone, Grid * gridIn );
 void DumpCgnsZoneNameAndGeneralizedDimension( CgnsZone * myZone, Grid * gridIn );
 void DumpCgnsZoneAttribute( CgnsZone * myZone, Grid * grid );
-void DumpCgnsGridBoundary( CgnsZone * myZone, Grid * grid );
+void DumpCgnsGridBoundary( CgnsZone * myZone, Grid * grid, const Grids & grids );
 void DumpCgnsGridCoordinates( CgnsZone * myZone, Grid * grid );
-void DumpCgnsZone( CgnsZone * myZone, Grid * grid );
+void DumpCgnsZone( CgnsZone * myZone, Grid * grid, const Grids & grids );
 void PrepareCgnsZone( CgnsZone * myZone, Grid * grid );
 
 #endif

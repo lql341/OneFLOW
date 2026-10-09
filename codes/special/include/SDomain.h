@@ -28,6 +28,7 @@ License
 #include <set>
 #include <map>
 #include <fstream>
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -42,20 +43,20 @@ class MLine;
 class SDomain : public DomData
 {
 public:
-    SDomain( MDomain * mDomain = 0 );
+    explicit SDomain( CoorMap * coorMap = nullptr );
     ~SDomain();
 public:
     int domain_id;
-    HXVector< MLine * > mLineList;
-    CoorMap * localCoorMap;
+    HXVector< std::unique_ptr< MLine > > mLineList;
+    std::unique_ptr< CoorMap > localCoorMap;
+    std::unique_ptr< CoorMap > ownedCoorMap;
     CoorMap * coorMap;
     RealField2D x2d, y2d, z2d;
-    int freecoorMap;
 public:
     void Alloc();
     void SetDomain( int fid, IntField & lineList, IntField & posList );
     void ConstructSDomainCtrlPoint();
-    void GetCommonPoint( MLine * mLine1, MLine * mLine2, int & pt );
+    void GetCommonPoint( const MLine * mLine1, const MLine * mLine2, int & pt ) const;
     bool CalcSingleDomainCoor();
     void SetRemainingCtrlPoint( IntField & idxList );
 public:
@@ -68,7 +69,7 @@ public:
 
     void ConstructPointToLineMap( std::map< int, IntSet > & pointToLineMap );
     void ConstructDomainTopo();
-    void GetPointIdLink( IntField & lineList, LinkField & pointIdLink );
+    void GetPointIdLink( const IntField & lineList, LinkField & pointIdLink ) const;
 public:
     void Add( IntField &iList, IntField &jList, IntField &kList, int i, int j, int k );
     void ConstructLocalTopoAsBlk2D();
@@ -78,8 +79,8 @@ public:
     void GenerateSDomainMesh();
     void GenerateSDomainMesh( std::fstream & file );
 public:
-    void CreateInpFaceList( HXVector< Face2D * > &facelist );
-    void CreateInpFaceList1D( HXVector< Face2D * > &facelist );
+    void CreateInpFaceList( HXVector< std::unique_ptr<Face2D> > &facelist );
+    void CreateInpFaceList1D( HXVector< std::unique_ptr<Face2D> > &facelist );
 };
 
 

@@ -21,6 +21,13 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "ParaFile.h"
+#include <memory>
+#include "TextFileParser.h"
+#include "DataBase.h"
+#include "DataBook.h"
+#include "ConfigLoader.h"
+#include "ConfigDatabaseAdapter.h"
+#include "LegacyParameterSyntax.h"
 #include "DataBase.h"
 #include "Parallel.h"
 #include "LogFile.h"
@@ -29,7 +36,6 @@ License
 #include "Prj.h"
 #include "FileUtils.h"
 #include "PIO.h"
-#include "json/json.h"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -40,53 +46,30 @@ BeginNameSpace( ONEFLOW )
 
 bool IsArrayParameter( const std::string & lineOfName )
 {
-    const std::string::size_type npos = - 1;
+    return ONEFLOW::IsLegacyArrayParameter( lineOfName );
+}
 
-    if ( lineOfName.find_first_of( "[" ) == npos )
+int GetParameterArraySize( const std::string & word )
+{
+    if ( Word::IsDigit( word ) )
     {
-        return false;
+        return StringToDigit< int >( word );
     }
-
-    if ( lineOfName.find_first_of( "]" ) == npos )
-    {
-        return false;
-    }
-
-    return true;
+    return GetDataValue< int >( word );
 }
 
 void ReadOneFLOWScriptFile( TextFileParser & textFileParser )
 {
-    //string name, word;
+    ConfigLoader loader( GetParameterArraySize );
+    loader.ParseFromParser( textFileParser );
+    ConfigDatabaseAdapter::Commit( loader.Document() );
+}
 
-    //\t is the tab key
-    std::string keyWordSeparator = " =\r\n\t#$,;\"";
-
-    textFileParser.SetDefaultSeparator( keyWordSeparator );
-
-    DataBaseType::Init();
-
-    while ( ! textFileParser.ReachTheEndOfFile() )
-    {
-        bool resultFlag = textFileParser.ReadNextMeaningfulLine();
-        if ( ! resultFlag ) break;
-
-        std::string keyWord = textFileParser.ReadNextWord();
-
-        if ( keyWord == "" ) continue;
-
-        //int keyWordIndex = keyWordMap[ keyWord ];
-        int keyWordIndex = DataBaseType::GetIndex( keyWord );
-
-        if ( ONEFLOW::IsArrayParameter( textFileParser.GetCurrentLine() ) )
-        {
-            ONEFLOW::AnalysisArrayParameter( textFileParser, keyWordIndex );
-        }
-        else
-        {
-            ONEFLOW::AnalysisScalarParameter( textFileParser, keyWordIndex );
-        }
-    }
+void ReadOneFLOWScriptFile( const std::string & fileName )
+{
+    ConfigLoader loader( GetParameterArraySize );
+    loader.ParseFile( fileName );
+    ConfigDatabaseAdapter::Commit( loader.Document() );
 }
 
 void AnalysisArrayParameter( TextFileParser & textFileParser, int keyWordIndex )
@@ -105,7 +88,7 @@ void AnalysisArrayParameter( TextFileParser & textFileParser, int keyWordIndex )
 
     int arraySize = ONEFLOW::GetParameterArraySize( arraySizeName );
 
-    std::string * valueContainer = new std::string[ arraySize ];
+    std::vector<std::string> valueContainer( static_cast<std::size_t>( arraySize ) );
 
     for ( int i = 0; i < arraySize; ++ i )
     {
@@ -121,9 +104,8 @@ void AnalysisArrayParameter( TextFileParser & textFileParser, int keyWordIndex )
             }
         }
     }
-    ONEFLOW::ProcessData( arrayName, valueContainer, keyWordIndex, arraySize );
+    ONEFLOW::ProcessData( arrayName, valueContainer.data(), keyWordIndex, arraySize );
 
-    delete[] valueContainer;
 }
 
 int AnalysisScalarParameter( TextFileParser & textFileParser, int keyWordIndex )
@@ -134,43 +116,14 @@ int AnalysisScalarParameter( TextFileParser & textFileParser, int keyWordIndex )
     std::string name = textFileParser.ReadNextWord( separator );
 
     int arraySize = 1;
-    std::string * value = new std::string[ arraySize ];
+    std::vector<std::string> value( static_cast<std::size_t>( arraySize ) );
 
     value[ 0 ] = textFileParser.ReadNextWord( separator );
 
-    ONEFLOW::ProcessData( name, value, keyWordIndex, arraySize );
-
-    delete[] value;
+    ONEFLOW::ProcessData( name, value.data(), keyWordIndex, arraySize );
 
     return arraySize;
 }
-
-int GetParameterArraySize( const std::string & word )
-{
-    int arraySize = - 1;
-    if ( Word::IsDigit( word ) )
-    {
-        arraySize = StringToDigit< int >( word );
-    }
-    else
-    {
-        arraySize = GetDataValue< int >( word );
-    }
-    return arraySize;
-}
-
-void ReadOneFLOWScriptFile( const std::string & fileName )
-{
-    TextFileParser textFileParser;
-
-    textFileParser.OpenFile( fileName, std::ios_base::in );
-
-    ONEFLOW::ReadOneFLOWScriptFile( textFileParser );
-
-    textFileParser.CloseFile();
-}
-
-void mytestjson();
 
 std::string GetJsonFileName( const std::string & fileName )
 {
@@ -245,10 +198,6 @@ void GetParaInfoArray( TextFileParser & textFileParser, std::string & varName, s
     }
 }
 
-void mytestjson()
-{
-}
-
 void ReadControlInfo()
 {
     if ( Parallel::IsServer() )
@@ -261,13 +210,34 @@ void ReadControlInfo()
     ONEFLOW::DumpDataBase();
 }
 
+void ReadControlInfo( const std::string & caseDir )
+{
+    if ( Parallel::IsServer() )
+    {
+        ONEFLOW::ReadPrjScript( caseDir );
+    }
+
+    Parallel::TestSayHelloFromEveryProcess();
+    ONEFLOW::BroadcastControlParameterToAllProcessors();
+    ONEFLOW::DumpDataBase( caseDir );
+}
+
 void DumpDataBase()
 {
-    DataBase * dataBase = ONEFLOW::GetGlobalDataBase();
+    DataBase & dataBase = ONEFLOW::RequireGlobalDataBase();
     std::fstream file;
     std::string fileName = "/log/database.log";
     PIO::OpenPrjFile( file, fileName, std::ios_base::out );
-    dataBase->dataPara->DumpData( file );
+    dataBase.RequireDataPara().DumpData( file );
+    PIO::CloseFile( file );
+}
+
+void DumpDataBase( const std::string & caseDir )
+{
+    DataBase * dataBase = ONEFLOW::GetGlobalDataBase();
+    std::fstream file;
+    Prj::OpenCaseFile( file, caseDir, "log/database.log", std::ios_base::out );
+    dataBase->GetDataPara()->DumpData( file );
     PIO::CloseFile( file );
 }
 
@@ -275,6 +245,13 @@ void ReadPrjScript()
 {
     std::vector< std::string > scriptFileNameList;
     ONEFLOW::ReadScriptFileNameList( scriptFileNameList );
+    ONEFLOW::ReadMultiScriptFiles( scriptFileNameList );
+}
+
+void ReadPrjScript( const std::string & caseDir )
+{
+    std::vector< std::string > scriptFileNameList;
+    ONEFLOW::ReadScriptFileNameList( caseDir, scriptFileNameList );
     ONEFLOW::ReadMultiScriptFiles( scriptFileNameList );
 }
 
@@ -308,6 +285,39 @@ void ReadScriptFileNameList( std::vector< std::string > & scriptFileNameList )
     textFileParser.CloseFile();
 }
 
+void ReadScriptFileNameList(
+    const std::string & caseDir,
+    std::vector< std::string > & scriptFileNameList )
+{
+    TextFileParser textFileParser;
+    textFileParser.OpenCaseFile(
+        caseDir,
+        "script/control.txt",
+        std::ios_base::in );
+
+    // Tab is a separator.
+    std::string keyWordSeparator = " ()\r\n\t#$,;\"";
+    textFileParser.SetDefaultSeparator( keyWordSeparator );
+
+    while ( ! textFileParser.ReachTheEndOfFile() )
+    {
+        bool flag = textFileParser.ReadNextNonEmptyLine();
+        if ( ! flag ) break;
+
+        std::string scriptFileName =
+            textFileParser.ReadNextWord();
+
+        std::string fullScriptFileName =
+            Prj::GetCaseFileName(
+                caseDir,
+                "script/" + scriptFileName );
+
+        scriptFileNameList.push_back( fullScriptFileName );
+    }
+
+    textFileParser.CloseFile();
+}
+
 void ReadMultiScriptFiles( std::vector< std::string > & scriptFileNameList )
 {
     int numberOfParameterFiles = scriptFileNameList.size();
@@ -327,31 +337,31 @@ void BroadcastControlParameterToAllProcessors()
     ONEFLOW::HXBcast( ONEFLOW::CompressData, ONEFLOW::DecompressData, Parallel::GetServerid() );
 }
 
-void CompressData( DataBook *& dataBook )
+void CompressData( DataBook * dataBook )
 {
-    DataBase * globalDataBase = ONEFLOW::GetGlobalDataBase();
+    DataBase & globalDataBase = ONEFLOW::RequireGlobalDataBase();
 
-    ONEFLOW::CompressData( globalDataBase, dataBook );
+    ONEFLOW::CompressData( &globalDataBase, dataBook );
 }
 
 void DecompressData( DataBook * dataBook )
 {
-    DataBase * globalDataBase = ONEFLOW::GetGlobalDataBase();
-    ONEFLOW::DecompressData( globalDataBase, dataBook );
+    DataBase & globalDataBase = ONEFLOW::RequireGlobalDataBase();
+    ONEFLOW::DecompressData( &globalDataBase, dataBook );
 }
 
-void CompressData( DataBase * dataBase, DataBook *& dataBook )
+void CompressData( DataBase * dataBase, DataBook * dataBook )
 {
     // Use the new type alias
-    DataPara::DataMap * dataMap = dataBase->dataPara->GetDataMap();
+    const DataPara::DataMap & dataMap = dataBase->GetDataPara()->GetDataMap();
 
-    int ndata = static_cast<int>( dataMap->size() );
+    int ndata = static_cast<int>( dataMap.size() );
     ONEFLOW::HXWrite( dataBook, ndata );
 
     // Range-based for is cleaner with unordered_map
-    for ( const auto & pair : *dataMap )
+    for ( const auto & pair : dataMap )
     {
-        DataEntry * dataEntry = pair.second;          // pair.first is the key (name), pair.second is DataV*
+        const DataEntry * dataEntry = pair.second.get();  // pair.first is the key (name), pair.second owns DataEntry
         ONEFLOW::HXWriteDataEntry( dataBook, dataEntry );
     }
 }
@@ -366,9 +376,8 @@ void DecompressData( DataBase * dataBase, DataBook * dataBook )
 
     for ( int i = 0; i < ndata; ++ i )
     {
-        DataEntry * dataEntry = new DataEntry();
-        ONEFLOW::HXReadDataEntry( dataBook, dataEntry );
-        dataBase->dataPara->UpdateDataPointer( dataEntry );
+        auto dataEntry = ONEFLOW::HXReadDataEntry( dataBook );
+        dataBase->GetDataPara()->SetDataEntry( std::move( dataEntry ) );
     }
 }
 

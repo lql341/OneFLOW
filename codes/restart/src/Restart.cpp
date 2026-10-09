@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Restart.h"
+#include <memory>
 #include "NsRestart.h"
 #include "TurbRestart.h"
 #include "ActionState.h"
@@ -34,16 +35,40 @@ License
 #include "DataBaseIO.h"
 #include "DataStorage.h"
 #include "Iteration.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 #include "FieldWrap.h"
-#include "FieldAlloc.h"
-#include "UsdPara.h"
+#include "UnsteadyFieldView.h"
+#include "Fatal.h"
 #include "RegisterUtils.h"
 #include "INsRestart.h"
 
 BeginNameSpace( ONEFLOW )
 
-Restart * CreateRestart( int solverType )
+namespace
+{
+    void BindUnsteadyFields(
+        UnsteadyFieldView & fieldView,
+        int solverType )
+    {
+        FieldManager * fieldManager =
+            FieldManagerRegistry::GetFieldManager(
+                solverType );
+
+        if ( fieldManager == nullptr )
+        {
+            Fatal(
+                "FieldManager is not registered for solverType" );
+        }
+
+        UnsGrid * grid = Zone::GetUnsGrid();
+
+        fieldView.BindFields(
+            grid,
+            fieldManager->GetUnsteadyFieldNames() );
+    }
+}
+
+std::unique_ptr<Restart> CreateRestart( int solverType )
 {
     if ( solverType == NS_SOLVER )
     {
@@ -58,7 +83,7 @@ Restart * CreateRestart( int solverType )
         return CreateTurbRestart();
     }
 
-    return 0;
+    return nullptr;
 }
 
 Restart::Restart()
@@ -73,72 +98,99 @@ Restart::~Restart()
 
 void Restart::ReadUnsteady( int solverType )
 {
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
+    UnsteadyFieldView fieldView;
+    BindUnsteadyFields( fieldView, solverType );
 
-    UsdPara * usdPara = fieldManager->usdPara.get();
+    // The current level is reconstructed from the first stored history level.
+    HXRead(
+        ActionState::dataBook,
+        fieldView.GetFlow( 1 ) );
 
-    Grid * grid = Zone::GetGrid();
+    SetField(
+        fieldView.GetFlow( 0 ),
+        fieldView.GetFlow( 1 ) );
 
-    MRField * q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    MRField * q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    MRField * q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
+    for ( std::size_t level = 2;
+        level < fieldView.GetFlowCount();
+        ++ level )
+    {
+        HXRead(
+            ActionState::dataBook,
+            fieldView.GetFlow( level ) );
+    }
 
-    HXRead( ActionState::dataBook, q1 );
-    HXRead( ActionState::dataBook, q2 );
-    SetField( q, q1 );
+    // Residual history follows the same restart layout as flow history.
+    HXRead(
+        ActionState::dataBook,
+        fieldView.GetResidual( 1 ) );
 
-    MRField * res  = GetFieldPointer< MRField > ( grid, usdPara->residual[ 0 ] );
-    MRField * res1 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 1 ] );
-    MRField * res2 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 2 ] );
+    SetField(
+        fieldView.GetResidual( 0 ),
+        fieldView.GetResidual( 1 ) );
 
-    HXRead( ActionState::dataBook, res1 );
-    HXRead( ActionState::dataBook, res2 );
-    SetField( res, res1 );
+    for ( std::size_t level = 2;
+        level < fieldView.GetResidualCount();
+        ++ level )
+    {
+        HXRead(
+            ActionState::dataBook,
+            fieldView.GetResidual( level ) );
+    }
 }
 
 void Restart::DumpUnsteady( int solverType )
 {
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
+    UnsteadyFieldView fieldView;
+    BindUnsteadyFields( fieldView, solverType );
 
-    UsdPara * usdPara = fieldManager->usdPara.get();
+    // Keep the current level out of the restart stream.
+    // It is reconstructed from the first stored history level on read.
+    for ( std::size_t level = 1;
+        level < fieldView.GetFlowCount();
+        ++ level )
+    {
+        HXWrite(
+            ActionState::dataBook,
+            fieldView.GetFlow( level ) );
+    }
 
-    Grid * grid = Zone::GetGrid();
-
-    MRField * q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    MRField * q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    MRField * q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
-
-    HXWrite( ActionState::dataBook, q1 );
-    HXWrite( ActionState::dataBook, q2 );
-
-    MRField * res  = GetFieldPointer< MRField > ( grid, usdPara->residual[ 0 ] );
-    MRField * res1 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 1 ] );
-    MRField * res2 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 2 ] );
-
-    HXWrite( ActionState::dataBook, res1 );
-    HXWrite( ActionState::dataBook, res2 );
+    for ( std::size_t level = 1;
+        level < fieldView.GetResidualCount();
+        ++ level )
+    {
+        HXWrite(
+            ActionState::dataBook,
+            fieldView.GetResidual( level ) );
+    }
 }
 
 void Restart::InitUnsteady( int solverType )
 {
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
-    UsdPara * usdPara = fieldManager->usdPara.get();
-    Grid * grid = Zone::GetGrid();
+    UnsteadyFieldView fieldView;
+    BindUnsteadyFields( fieldView, solverType );
 
-    MRField * q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    MRField * q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    MRField * q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
+    // Initialize every configured history level from the current field.
+    for ( std::size_t level = 1;
+        level < fieldView.GetFlowCount();
+        ++ level )
+    {
+        SetField(
+            fieldView.GetFlow( level ),
+            fieldView.GetFlow( 0 ) );
+    }
 
-    SetField( q1, q );
-    SetField( q2, q );
+    SetField(
+        fieldView.GetResidual( 0 ),
+        0.0 );
 
-    MRField * res  = GetFieldPointer< MRField > ( grid, usdPara->residual[ 0 ] );
-    MRField * res1 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 1 ] );
-    MRField * res2 = GetFieldPointer< MRField > ( grid, usdPara->residual[ 2 ] );
-
-    SetField( res , 0.0 );
-    SetField( res1, res );
-    SetField( res2, res );
+    for ( std::size_t level = 1;
+        level < fieldView.GetResidualCount();
+        ++ level )
+    {
+        SetField(
+            fieldView.GetResidual( level ),
+            fieldView.GetResidual( 0 ) );
+    }
 }
 
 void Restart::Read( int solverType )
@@ -195,8 +247,8 @@ void DumpRestartHeader()
 
 void RwInterface( int solverType, int readOrWrite )
 {
-    Grid * grid = Zone::GetGrid();
-    InterFace * interFace = grid->interFace;
+    Grid & grid = Zone::GetGridReference();
+    InterFace * interFace = grid.interFace.get();
 
     if ( ! IsValid( interFace ) ) return;
 
@@ -205,12 +257,12 @@ void RwInterface( int solverType, int readOrWrite )
 
     for ( int ghostId = MAX_GHOST_LEVELS - 1; ghostId >= 0; -- ghostId )
     {
-        RwInterfaceRecord( interFace->dataSend[ ghostId ], fieldNameList, readOrWrite );
+        RwInterfaceRecord( &interFace->GetSendStorage( ghostId ), fieldNameList, readOrWrite );
     }
 
     for ( int ghostId = MAX_GHOST_LEVELS - 1; ghostId >= 0; -- ghostId )
     {
-        RwInterfaceRecord( interFace->dataRecv[ ghostId ], fieldNameList, readOrWrite );
+        RwInterfaceRecord( &interFace->GetRecvStorage( ghostId ), fieldNameList, readOrWrite );
     }
 }
 

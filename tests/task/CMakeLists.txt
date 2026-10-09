@@ -70,9 +70,6 @@ set(DATABASE_TEST_SOURCES
 	${GLOBAL_SRC_DIR}/FileMap.cpp
 	${PARALLEL_SRC_DIR}/BasicParallel.cpp
 	${PARALLEL_SRC_DIR}/Parallel.cpp
-	
-	
-	
 )
 
 add_executable(task_test
@@ -93,6 +90,7 @@ target_include_directories(task_test
 	${PARALLEL_INCLUDE_DIR}
 	${CMAKE_SOURCE_DIR}/codes/accel/include
 	${ARRAY_INCLUDE_DIR}
+	${CMAKE_SOURCE_DIR}/codes/implicit/include
 	
 )
 

@@ -28,6 +28,7 @@ License
 #include <vector>
 #include <set>
 #include <map>
+#include <memory>
 
 
 BeginNameSpace( ONEFLOW )
@@ -43,11 +44,15 @@ public:
     ~FaceSolver();
 public:
     HXLookup<int> faceLookup;
-    IntField * faceBcKey;
-    IntField * faceBcType;
-    LinkField * childFid;
+    // [Refactored] Changed from raw pointers to value types.
+    // They are now automatically managed by the compiler (stack allocation).
+    IntField faceBcKey;
+    IntField faceBcType;
+    LinkField childFid;
 public:
-    FaceTopo * faceTopo;
+    FaceTopo & GetFaceTopo();
+    const FaceTopo & GetFaceTopo() const;
+    [[nodiscard]] std::unique_ptr< FaceTopo > ReleaseFaceTopo() noexcept;
 public:
     bool CheckBcFace( IntSet & bcVertex, IntField & nodeId );
     void ScanElementFace( CgIntField & eNodeId, int eType, int eId );
@@ -57,8 +62,10 @@ public:
     int GetNSimpleFace();
 public:
     void ResizeAll();
-    void ScanPolygonFace( CgnsSection * cgnsSection );
-    void ScanPolyhedronElement( CgnsSection * cgnsSection );
+    void ScanPolygonFace( CgnsSection & cgnsSection );
+    void ScanPolyhedronElement( CgnsSection & cgnsSection );
+private:
+    std::unique_ptr< FaceTopo > faceTopo;
 };
 
 EndNameSpace

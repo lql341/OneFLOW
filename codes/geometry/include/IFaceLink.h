@@ -1,4 +1,4 @@
-/*---------------------------------------------------------------------------*\
+/*---------------------------------------------------------------------------*\\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
 -------------------------------------------------------------------------------
@@ -18,12 +18,13 @@ License
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\\*---------------------------------------------------------------------------*/
 
 #pragma once
 #include "HXDefine.h"
 #include "HXLookup.h"
-#include "GridDef.h"
+#include "GridHandles.h"
+#include <memory>
 #include <set>
 
 BeginNameSpace( ONEFLOW )
@@ -36,13 +37,10 @@ class NodeMesh;
 class IFaceLink
 {
 public:
-    IFaceLink( Grids & grids );
+    explicit IFaceLink( Grids & gridsIn );
     ~IFaceLink();
 public:
-    // HXLookup automatically sorts the node list as key
     HXLookup<int> faceLookup;
-    //In general, each interface is made up of two different blocks of surface.
-    //This requires each surface to have a block number and the serial number of the surface in this block
     LinkField gI2Zid;
     LinkField g2l;
     LinkField l2g;
@@ -53,18 +51,19 @@ public:
 
     LinkField nChild;
 
-    FaceSearch * face_search;
+    std::unique_ptr< FaceSearch > face_search;
+    std::unique_ptr< PointLocator > point_search;
 
-    PointLocator * point_search;
+private:
+    Grids & grids;
 
-    Grids grids;
 public:
-    void Init( Grid * grid );
-    Grid * GetGrid( int zoneIndex ) { return grids[ zoneIndex ]; }
+    [[nodiscard]] Grid & GetGrid( int zoneIndex );
+    void Init( Grid & grid );
 public:
     void CreateLink( IntField & faceNode, int zid, int lCount );
-    void MatchInterfaceTopology( Grid * grid );
-    void MatchPeoridicInterface( Grid * grid );
+    void MatchInterfaceTopology( Grid & grid );
+    void MatchPeriodicInterface( Grid & grid );
     void ReconstructInterFace();
 protected:
     void AddFace( const IntField & facePointIndexes );
@@ -73,7 +72,7 @@ public:
     void InitNewLgMapping();
 };
 
-void GetFaceCoorList( IntField & faceNode, RealField & xList, RealField & yList, RealField & zList, NodeMesh * nodeMesh );
-void GetCoorIdList( IFaceLink * iFaceLink, RealField & xList, RealField & yList, RealField & zList, int nPoint, IntField & pointId );
+void GetFaceCoorList( const IntField & faceNode, RealField & xList, RealField & yList, RealField & zList, const NodeMesh & nodeMesh );
+void GetCoorIdList( IFaceLink & iFaceLink, RealField & xList, RealField & yList, RealField & zList, int nPoint, IntField & pointId );
 
 EndNameSpace

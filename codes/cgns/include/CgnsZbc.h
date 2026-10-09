@@ -23,6 +23,8 @@ License
 
 #pragma once
 #include "HXCgns.h"
+#include "GridHandles.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -45,16 +47,16 @@ class CgnsZbcBoco;
 class CgnsZbc
 {
 public:
-    CgnsZbc( CgnsZone * cgnsZone );
+    explicit CgnsZbc( CgnsZone & cgnsZone );
     ~CgnsZbc();
 public:
-    CgnsZbcConn * cgnsZbcConn;
-    CgnsZbc1to1 * cgnsZbc1to1;
-    CgnsZbcBoco * cgnsZbcBoco;
+    std::unique_ptr< CgnsZbcConn > cgnsZbcConn;
+    std::unique_ptr< CgnsZbc1to1 > cgnsZbc1to1;
+    std::unique_ptr< CgnsZbcBoco > cgnsZbcBoco;
 
-    CgnsZone * cgnsZone;
+    CgnsZone & cgnsZone;
 public:
-    void ScanBcFace( FaceSolver * face_solver );
+    void ScanBcFace( FaceSolver & faceSolver );
 public:
     void ConvertToInnerDataStandard();
     void ReadCgnsGridBoundary();
@@ -64,7 +66,7 @@ public:
     void FillBcPoints3D( int * start, int * end, cgsize_t * bcpnts );
     void FillInterface( BcRegion * bcRegion, cgsize_t * ipnts, cgsize_t * ipntsdonor, int * itranfrm, int dimension );
     void FillRegion( TestRegion * r, cgsize_t * ipnts, int dimension );
-    void DumpCgnsGridBoundary( Grid * gridIn );
+    void DumpCgnsGridBoundary( Grid * gridIn, const Grids & grids );
 public:
     void CreateCgnsZbc( CgnsZbc * cgnsZbcIn );
 public:

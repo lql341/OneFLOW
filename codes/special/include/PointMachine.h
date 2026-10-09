@@ -24,7 +24,7 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "Point.h"
-#include "PointManager.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -36,11 +36,14 @@ public:
     PointMachine();
     ~PointMachine();
 public:
-    HXVector< PointType * > ptList;
-    PointManager ptBasic;
-public:
+    void Reset();
     void AddPoint( Real x, Real y, Real z, int id = 0 );
-    PointType * GetPoint( int id );
+    PointType & GetPoint( int id );
+    const PointType & GetPoint( int id ) const;
+    int GetNPoint() const { return static_cast< int >( this->ptList.size() ); };
+private:
+    // PointMachine owns the layout points; callers receive non-owning views.
+    HXVector< std::unique_ptr< PointType > > ptList;
 };
 
 extern PointMachine point_Machine;

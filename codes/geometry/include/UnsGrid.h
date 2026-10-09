@@ -23,6 +23,7 @@ License
 
 #pragma once
 #include "Grid.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -42,9 +43,17 @@ public:
     ~UnsGrid() override;
 public:
     void Init() override;
-    FaceTopo * faceTopo;
-    FaceMesh * faceMesh;
-    CellMesh * cellMesh;
+    FaceTopo & GetFaceTopo();
+    const FaceTopo & GetFaceTopo() const;
+    FaceMesh & GetFaceMesh();
+    const FaceMesh & GetFaceMesh() const;
+    CellMesh & GetCellMesh();
+    const CellMesh & GetCellMesh() const;
+    void SetFaceTopo( std::unique_ptr< FaceTopo > faceTopo );
+private:
+    std::unique_ptr< FaceTopo > faceTopo;
+    std::unique_ptr< FaceMesh > faceMesh;
+    std::unique_ptr< CellMesh > cellMesh;
 public:
     void Decode( DataBook * databook ) override;
     void Encode( DataBook * databook ) override;
@@ -60,9 +69,9 @@ public:
     void WriteGridFaceTopology1D( DataBook * databook );
 public:
     void ModifyBcType( int bcType1, int bcType2 ) override;
-    void GenerateLgMapping( IFaceLink * iFaceLink ) override;
-    void ReGenerateLgMapping( IFaceLink * iFaceLink ) override;
-    void UpdateOtherTopologyTerm( IFaceLink * iFaceLink ) override;
+    void GenerateLgMapping( IFaceLink & iFaceLink ) override;
+    void ReGenerateLgMapping( IFaceLink & iFaceLink ) override;
+    void UpdateOtherTopologyTerm( IFaceLink & iFaceLink ) override;
     void NormalizeBc();
 public:
     void GetMinMaxDistance( Real & dismin, Real & dismax ) override;

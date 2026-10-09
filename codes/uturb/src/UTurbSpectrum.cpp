@@ -38,7 +38,7 @@ License
 #include "DataBase.h"
 #include "FieldBase.h"
 #include "Unsteady.h"
-#include "UsdData.h"
+#include "TimeIntegration.h"
 #include "Ctrl.h"
 #include "NsIdx.h"
 #include <iostream>
@@ -55,91 +55,12 @@ UTurbSpectrum::~UTurbSpectrum()
 {
 }
 
-void UTurbSpectrum::ReadTmp()
-{
-    static int iii = 0;
-    if ( iii ) return;
-    iii = 1;
-    std::fstream file;
-    file.open( "turbflowsrc.dat", std::ios_base::in | std::ios_base::binary );
-    if ( ! file )
-    {
-        Fatal( "Failed to open file: turbflowsrc.dat" );
-    }
-
-    uturbf.Init();
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        for ( int iEqu = 0; iEqu < 5; ++ iEqu )
-        {
-            //Real tmp1;
-            //file.read( reinterpret_cast< char * >( & tmp1 ), sizeof( double ) );
-            //( * uturbf.q_ns )[ iEqu ][ cId ] = tmp1;
-            file.read( reinterpret_cast< char * >( & ( * uturbf.q_ns )[ iEqu ][ cId ] ), sizeof( double ) );
-        }
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.visl )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.vist )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-    std::vector< Real > tmp1( ug.nTCell ), tmp2( ug.nTCell );
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        tmp1[ cId ] = ( * uturbf.timestep )[ 0 ][ cId ];
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.timestep )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        tmp2[ cId ] = ( * uturbf.timestep )[ 0 ][ cId ];
-    }
-
-
-    for ( int iCell = 0; iCell < ug.nTCell; ++ iCell )
-    {
-        for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * uturbf.q )[ iEqu ][ iCell ] ), sizeof( double ) );
-        }
-    }
-    file.close();
-    file.clear();
-}
-
-
 void UTurbSpectrum::CalcSpectrum()
 {
     ug.Init();
     turblu.Init();
     turbsp.Init();
     uturbf.Init();
-    //ReadTmp();
     this->ZeroSpectrum();
     if ( turbcom.nEqu == 1 )
     {
@@ -196,13 +117,13 @@ void UTurbSpectrum::CalcSpectrum2Equ()
 
 void UTurbSpectrum::CalcUnsteadySpectrum()
 {
-    if ( ctrl.idualtime == 0 )//Single time step, note: Yes usd.sp2 !
+    if ( ctrl.idualtime == 0 )//Single time step, note: Yes timeIntegration.sp2 !
     {
         for ( int cId = 0; cId < ug.nCells; ++ cId )
         {
             Real vol = ( * ug.cvol )[ cId ];
             Real ts  = ( * uturbf.timestep )[ 0 ][ cId ] * turbcom.turb_cfl_ratio;
-            Real unsteadyTerm = (  usd.sp2 / ts ) * vol;
+            Real unsteadyTerm = (  timeIntegration.sp2 / ts ) * vol;
 
             for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
             {
@@ -216,7 +137,7 @@ void UTurbSpectrum::CalcUnsteadySpectrum()
         {
             Real vol = ( * ug.cvol )[ cId ];
             Real ts  = ( * unsf.timestep )[ 0 ][ cId ] * turbcom.turb_cfl_ratio;
-            Real unsteadyTerm = (  usd.sp1 / ts + usd.sp2 / ctrl.pdt1 ) * vol;
+            Real unsteadyTerm = (  timeIntegration.sp1 / ts + timeIntegration.sp2 / ctrl.pdt1 ) * vol;
 
             for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
             {

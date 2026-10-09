@@ -23,6 +23,7 @@ License
 
 #pragma once
 #include "HXDefine.h"
+#include "CellTopo.h" 
 
 BeginNameSpace( ONEFLOW )
 class CellTopo;
@@ -34,22 +35,27 @@ class CellMesh
 public:
     CellMesh();
     ~CellMesh();
+
+private:
+    CellTopo cellTopo;
+
 public:
-    CellTopo * cellTopo;
     RealField xcc, ycc, zcc;
     RealField vol;
     RealField dist;
     RealField span;
 public:
     HXSize_t GetNumberOfCells();
+    CellTopo & GetCellTopo();
+    const CellTopo & GetCellTopo() const;
     HXSize_t GetNumberOfTotalCells() { return vol.size(); }
-    void AllocateMetrics( FaceMesh * faceMesh );
+    void AllocateMetrics( FaceMesh & faceMesh );
     void AllocDist();
     void ReadDist();
     void DumpDist();
-    void CalcCellSpan( UnsGrid * grid );
+    void CalcCellSpan( UnsGrid & grid );
 };
 
-void CalcCellSpan( UnsGrid * grid );
+void CalcCellSpan( UnsGrid & grid );
 
 EndNameSpace

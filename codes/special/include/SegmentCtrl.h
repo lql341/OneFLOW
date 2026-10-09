@@ -24,6 +24,7 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "PointMachine.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -36,12 +37,21 @@ public:
     SegmentCtrl();
     ~SegmentCtrl();
 public:
+    enum class DistributionType
+    {
+        Ratio,
+        Distance,
+        Copy,
+        Exponential,
+        Tanh
+    };
+
     int id;
     int nPoint;
     Real ds1, ds2, lenth;
-    int distribution;
+    DistributionType distribution = DistributionType::Distance;
     int c1, c2;
-    SegmentCopy * segmentCopy;
+    std::unique_ptr< SegmentCopy > segmentCopy;
 public:
     Real cA1, cA2, cA3, cA4;
     Real cB; //tanh function coef

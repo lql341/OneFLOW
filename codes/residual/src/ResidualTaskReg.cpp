@@ -20,6 +20,7 @@ License
 
 \*---------------------------------------------------------------------------*/
 #include "ResidualTaskReg.h"
+#include <memory>
 #include "ResidualTask.h"
 #include "SolverState.h"
 #include "UResidual.h"
@@ -38,17 +39,15 @@ void RegisterRedisualTask()
 
 void CreateResidualTask( StringField & data )
 {
-    ResidualTask * task = new ResidualTask();
-    TaskState::createdTask = task;
+    TaskState::createdTask = std::make_unique<ResidualTask>();
 }
 
 void DumpResidual( StringField & data )
 {
     int solverType = SolverState::solverType;
 
-    Residual * residual = new UResidual();
-    residual->Dump( solverType );
-    delete residual;
+    UResidual residual;
+    residual.Dump( solverType );
 }
 
 EndNameSpace

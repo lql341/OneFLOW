@@ -21,7 +21,9 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "InterfaceTaskReg.h"
+#include <memory>
 #include "InterField.h"
+#include "Fatal.h"
 #include "ActionState.h"
 #include "HXMath.h"
 #include "SolverDef.h"
@@ -31,16 +33,16 @@ License
 #include "UnsteadyImp.h"
 #include "Update.h"
 #include "FieldWrap.h"
-#include "FieldAlloc.h"
 #include "CmxTask.h"
 #include "DataBase.h"
 #include "DataBook.h"
 #include "Lusgs.h"
 #include "Lhs.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 #include "SolverState.h"
 #include "Zone.h"
 #include "Grid.h"
+#include "GridState.h"
 #include "UnsGrid.h"
 #include "InterFace.h"
 #include "RegisterUtils.h"
@@ -69,41 +71,117 @@ void CalcInterfaceGrad( StringField & data )
     ;
 }
 
+//void UploadInterfaceData( StringField & data )
+//{
+//    int solverType = SolverState::solverType;
+//
+//    FieldManager * fieldManager = FieldManagerRegistry::GetFieldManager( solverType );
+//
+//    fieldManager->GetInterfaceFieldProperty().UploadInterfaceValue();
+//
+//}
+
+//void DownloadInterfaceData( StringField & data )
+//{
+//    int solverType = SolverState::solverType;
+//
+//    FieldManager * fieldManager = FieldManagerRegistry::GetFieldManager( solverType );
+//    fieldManager->GetInterfaceFieldProperty().DownloadInterfaceValue();
+//}
+
 void UploadInterfaceData( StringField & data )
 {
+    Grid & baseGrid = Zone::GetGridReference();
+    if ( ! ONEFLOW::IsUnsGrid( baseGrid.type ) )
+    {
+        return;
+    }
+
+    UnsGrid * grid = ONEFLOW::UnsGridCast( &baseGrid );
+
     int solverType = SolverState::solverType;
+    FieldManager * fieldManager =
+        FieldManagerRegistry::GetFieldManager( solverType );
 
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
+    const auto & fieldData =
+        fieldManager->GetInterfaceFieldProperty().GetData();
 
-    fieldManager->iFieldProperty->UploadInterfaceValue();
+    for ( const auto & [ fieldName, nEqu ] : fieldData )
+    {
+        MRField * field =
+            ONEFLOW::GetFieldPointer< MRField >(
+                grid,
+                fieldName );
 
+        if ( field == nullptr )
+        {
+            Fatal(
+                "Grid field is not allocated for interface upload: "
+                + fieldName );
+        }
+
+        ONEFLOW::UploadInterfaceValue(
+            grid,
+            field,
+            fieldName,
+            nEqu );
+    }
 }
 
 void DownloadInterfaceData( StringField & data )
 {
-    int solverType = SolverState::solverType;
+    Grid & baseGrid = Zone::GetGridReference();
+    if ( ! ONEFLOW::IsUnsGrid( baseGrid.type ) )
+    {
+        return;
+    }
 
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
-    fieldManager->iFieldProperty->DownloadInterfaceValue();
+    UnsGrid * grid = ONEFLOW::UnsGridCast( &baseGrid );
+
+    int solverType = SolverState::solverType;
+    FieldManager * fieldManager =
+        FieldManagerRegistry::GetFieldManager( solverType );
+
+    const auto & fieldData =
+        fieldManager->GetInterfaceFieldProperty().GetData();
+
+    for ( const auto & [ fieldName, nEqu ] : fieldData )
+    {
+        MRField * field =
+            ONEFLOW::GetFieldPointer< MRField >(
+                grid,
+                fieldName );
+
+        if ( field == nullptr )
+        {
+            Fatal(
+                "Grid field is not allocated for interface download: "
+                + fieldName );
+        }
+
+        ONEFLOW::DownloadInterfaceValue(
+            grid,
+            field,
+            fieldName,
+            nEqu );
+    }
 }
 
 void PrepareInterfaceField( StringField & data )
 {
-    Grid * grid = Zone::GetGrid();
-    InterFace * interFace = grid->interFace;
+    Grid & grid = Zone::GetGridReference();
+    InterFace * interFace = grid.interFace.get();
     if ( ! ONEFLOW::IsValid( interFace ) ) return;
 
     int solverType = SolverState::solverType;
     int iFk  = ( * interfaceMap )[ data[ 0 ] ];
     int iSr  = ( * sendRecvMap )[ data[ 1 ] ];
 
-    FieldRecord * fieldRecord = new FieldRecord();
+    auto fieldRecord = std::make_unique<FieldRecord>();
 
-    PrepareInterfaceFieldRecord( solverType, iFk, iSr, fieldRecord );
+    PrepareInterfaceFieldRecord( solverType, iFk, iSr, fieldRecord.get() );
 
-    SetInterfaceFieldData( iSr, fieldRecord );
-
-    delete fieldRecord;
+    SetInterfaceFieldData( iSr, fieldRecord.get() );
 }
 
 void PrepareOversetInterfaceField( StringField & data )

@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Plate.h"
+#include <memory>
 #include "NodeField.h"
 #include "Zone.h"
 #include "UnsGrid.h"
@@ -237,12 +238,9 @@ LamData::LamData()
 
 LamData::~LamData()
 {
-    int nField = data.size();
-    for ( int i = 0; i < nField; ++ i )
-    {
-        delete data[ i ];
-    }
+    // std::unique_ptr automatically cleans up PlaneData objects
 }
+
 
 void LamData::Init()
 {
@@ -310,12 +308,9 @@ CuttingClass::CuttingClass()
 
 CuttingClass::~CuttingClass()
 {
-    int nSlice = sliceData.size();
-    for ( int i = 0; i < nSlice; ++ i )
-    {
-        delete sliceData[ i ];
-    }
+    // std::unique_ptr automatically cleans up LamData objects
 }
+
 
 void CuttingClass::Init()
 {
@@ -323,15 +318,17 @@ void CuttingClass::Init()
     sliceData.resize( nSlice );
     for ( int i = 0; i < nSlice; ++ i )
     {
-        sliceData[ i ] = new LamData();
+        // FIX: Use std::make_unique
+        sliceData[ i ] = std::make_unique<LamData>();
     }
 }
 
 void CuttingClass::Slice()
 {
     int nField = nameList.size();
-    HXVector< MRField * > fields( nField );
 
+    // FIX: Use std::unique_ptr array to prevent memory leaks if an exception occurs
+    HXVector< std::unique_ptr<MRField> > fields( nField );
     for ( int i = 0; i < nField; ++ i )
     {
         fields[ i ] = InterpolateCellToNode( nameList[ i ] );
@@ -340,25 +337,19 @@ void CuttingClass::Slice()
     int nSlice = sliceData.size();
     for ( int iSlice = 0; iSlice < nSlice; ++ iSlice )
     {
-        LamData * lam = sliceData[ iSlice ];
-
+        LamData * lam = sliceData[ iSlice ].get();
         for ( int j = 0; j < nField; ++ j )
         {
-            PlaneData * pd = new PlaneData();
-            pd->nodedata = fields[ j ];
-            lam->data.push_back( pd );
+            auto pd = std::make_unique<PlaneData>();
+            pd->nodedata = fields[ j ].get(); // Non-owning observer pointer
+            lam->data.push_back( std::move(pd) );
         }
         lam->Init();
     }
 
     for ( int iSlice = 0; iSlice < nSlice; ++ iSlice )
     {
-        this->CutPlane( sliceInfo.slicepos[ iSlice ], sliceInfo.dir1[ iSlice ], this->sliceData[ iSlice ] );
-    }
-
-    for ( int i = 0; i < nField; ++ i )
-    {
-        delete fields[ i ];
+        this->CutPlane( sliceInfo.slicepos[ iSlice ], sliceInfo.dir1[ iSlice ], this->sliceData[ iSlice ].get() );
     }
 }
 
@@ -373,7 +364,7 @@ void CuttingClass::Write( DataBook * dataBook )
         HXWrite( dataBook, sliceInfo.dir1[ i ] );
         HXWrite( dataBook, sliceInfo.dir2[ i ] );
 
-        LamData * lamData = sliceData[ i ];
+        LamData * lamData = sliceData[ i ].get();
         lamData->Write( dataBook );
     }
 }
@@ -391,7 +382,7 @@ void CuttingClass::Read( DataBook * dataBook )
         HXRead( dataBook, dir1 );
         HXRead( dataBook, dir2 );
 
-        LamData * lamData = sliceData[ i ];
+        LamData * lamData = sliceData[ i ].get();
         lamData->Read( dataBook );
     }
 }
@@ -401,20 +392,18 @@ void CuttingClass::Swap()
     int tag = 0;
     if ( Parallel::pid != Parallel::serverid )
     {
-        DataBook * dataBook = new DataBook();
-        this->Write( dataBook );
+        auto dataBook = std::make_unique<DataBook>();
+        this->Write( dataBook.get() );
         dataBook->Send( Parallel::serverid, tag );
-        delete dataBook;
     }
     else
     {
         for ( int pid = 0; pid < Parallel::nProc; ++ pid )
         {
             if ( pid == Parallel::serverid ) continue;
-            DataBook * dataBook = new DataBook();
+            auto dataBook = std::make_unique<DataBook>();
             dataBook->Recv( pid, tag );
-            this->Read( dataBook );
-            delete dataBook;
+            this->Read( dataBook.get() );
         }
     }
 }
@@ -444,15 +433,15 @@ void CuttingClass::CutPlane( Real cutPosition, int cutAxis, LamData * lamData )
     RealField & y = grid->nodeMesh->yN;
     RealField & z = grid->nodeMesh->zN;
 
-    PointLocator * point_search = new PointLocator();
-    point_search->InitializeSpecial( grid, 1.0e-8 );
+    PointLocator pointSearch;
+    pointSearch.InitializeSpecial( grid, 1.0e-8 );
 
-    Real eps = half * point_search->GetTol();
+    Real eps = half * pointSearch.GetTol();
 
     RealField & xyz = this->GetCoor( grid, cutAxis );
 
     int nFaces = grid->nFaces;
-    LinkField & f2n = grid->faceTopo->faces;
+    LinkField & f2n = grid->GetFaceTopo().faces;
 
     RealField point( 3 );
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
@@ -512,14 +501,14 @@ void CuttingClass::CutPlane( Real cutPosition, int cutAxis, LamData * lamData )
             point[ 1 ] = ym;
             point[ 2 ] = zm;
 
-            if ( point_search->FindPoint( xm, ym, zm ) == INVALID_INDEX )
+            if ( pointSearch.FindPoint( xm, ym, zm ) == INVALID_INDEX )
             {
-                int ptId = point_search->AddPoint( xm, ym, zm );
+                int ptId = pointSearch.AddPoint( xm, ym, zm );
                 lamData->AddVar( point, p1, p2, cl, cr );
             }
         }
     }
-    delete point_search;
+
 }
 
 EndNameSpace

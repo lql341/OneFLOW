@@ -25,7 +25,6 @@ License
 #include "DataStorage.h"
 #include "DataBaseIO.h"
 #include "DataBook.h"
-#include "SolverDef.h"
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -64,16 +63,12 @@ void ScalarIFaceIJ::ReadInterfaceTopology( DataBook * databook )
 }
 
 ScalarIFace::ScalarIFace()
+    : dataSend( std::make_unique< DataStorage >() ),
+      dataRecv( std::make_unique< DataStorage >() )
 {
-    this->dataSend = new DataStorage();
-    this->dataRecv = new DataStorage();
 }
 
-ScalarIFace::~ScalarIFace()
-{
-    delete this->dataSend;
-    delete this->dataRecv;
-}
+ScalarIFace::~ScalarIFace() = default;
 
 void ScalarIFace::AddInterface( int global_interface_id, int neighbor_zoneid, int neighbor_cellid )
 {
@@ -171,22 +166,6 @@ void ScalarIFace::ReconstructNeighbor()
             }
         }
         this->data.push_back( sij );
-    }
-}
-
-DataStorage * ScalarIFace::GetDataStorage( int iSendRecv )
-{
-    if ( iSendRecv == SEND_STORAGE )
-    {
-        return this->dataSend;
-    }
-    else if ( iSendRecv == RECV_STORAGE )
-    {
-        return this->dataRecv;
-    }
-    else
-    {
-        return 0;
     }
 }
 

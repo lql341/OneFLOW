@@ -26,65 +26,52 @@ License
 #include "StrGrid.h"
 #include "StringUtils.h"
 #include "BcRecord.h"
-#include "GridPara.h"
-
-
-
+#include "GridTypes.h"
+#include "DataBase.h"
+#include <utility>
 
 BeginNameSpace( ONEFLOW )
 
-
-GridMediator::GridMediator()
-{
-    ;
-}
-
-GridMediator::~GridMediator()
-{
-    ;
-}
-
 void GridMediator::ReadGrid()
 {
-    if ( this->gridType == "gridgen" )
+    // Dispatch by typed format (case-insensitive via ParseGridFileType).
+    switch ( ParseGridFileType( this->gridType ) )
     {
-        this->ReadGridgen();
-    }
-    else if ( this->gridType == "plot3d" )
-    {
-        this->ReadPlot3D();
+        case GridFileType::Gridgen:
+            this->ReadGridgen();
+            break;
+        case GridFileType::Plot3D:
+            this->ReadPlot3D();
+            break;
+        default:
+            // Unsupported or empty type: no-op (historical behavior).
+            break;
     }
 }
 
 void GridMediator::AddDefaultName()
 {
-    int numberOfZones = this->numberOfZones;
+    const int numberOfZones = this->numberOfZones;
 
     for ( int iZone = 0; iZone < numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( this->gridVector[ iZone ] );
-
-        int ni = grid->ni;
-        int nj = grid->nj;
-        int nk = grid->nk;
+        StrGrid * grid = ONEFLOW::StrGridCast( &GridAt( this->gridVector, iZone ) );
 
         grid->name = AddString( "Zone", iZone + 1 );
 
-        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
-        int nBcRegions = bcRegionGroup->regions->size();
+        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
+        const int nBcRegions = static_cast< int >( bcRegionGroup->regions.size() );
         int icount = 0;
         for ( int ir = 0; ir < nBcRegions; ++ ir )
         {
             BcRegion * bcRegion = bcRegionGroup->GetBcRegion( ir );
             bcRegion->regionName = AddString( "R", ir + 1 );
 
-            int bcType = bcRegion->bcType;
+            const int bcType = bcRegion->bcType;
             if ( bcType < 0 )
             {
-                int sz = iZone + 1;
-                int tz = bcRegion->t->zid + 1;
                 bcRegion->regionName = AddString( "I", icount + 1 );
-                icount ++;
+                ++ icount;
             }
         }
     }
@@ -104,89 +91,66 @@ void GridMediator::ReadGridgen()
 {
 }
 
-ZgridMediator::ZgridMediator()
+void ZgridMediator::add( std::unique_ptr< GridMediator > mediator )
 {
-    this->flag = false;
-}
-
-ZgridMediator::~ZgridMediator()
-{
-    if ( this->flag )
+    if ( ! mediator )
     {
-        for ( int i = 0; i < this->gm.size(); ++ i )
-        {
-            delete this->gm[ i ];
-        }
+        throw std::invalid_argument( "ZgridMediator cannot own a null GridMediator" );
     }
+
+    this->mediators_.push_back( std::move( mediator ) );
 }
 
-void ZgridMediator::AddGridMediator( GridMediator * gridMediator )
+GridMediator & ZgridMediator::at( int index )
 {
-    this->gm.push_back( gridMediator );
+    return *this->mediators_.at( static_cast< size_t >( index ) );
 }
 
-GridMediator * ZgridMediator::GetGridMediator( int iGridMediator )
+const GridMediator & ZgridMediator::at( int index ) const
 {
-    return this->gm[ iGridMediator ];
+    return *this->mediators_.at( static_cast< size_t >( index ) );
 }
 
-int ZgridMediator::GetSize()
+int ZgridMediator::size() const noexcept
 {
-    return this->gm.size();
+    return static_cast< int >( this->mediators_.size() );
+}
+
+bool ZgridMediator::empty() const noexcept
+{
+    return this->mediators_.empty();
+}
+
+std::string ZgridMediator::targetFile() const
+{
+    return this->mediators_.at( 0 )->targetFile;
 }
 
 void ZgridMediator::CreateSimple( int nZone )
 {
-    GridMediator * gridMediator = new GridMediator();
+    auto gridMediator = std::make_unique< GridMediator >();
     gridMediator->numberOfZones = nZone;
-    this->AddGridMediator( gridMediator );
-    this->flag = true;
+    this->add( std::move( gridMediator ) );
 }
 
 void ZgridMediator::ReadGrid()
 {
-    GridMediator * gridMediator = new GridMediator();
-    gridMediator->gridFile = grid_para.gridFile;
-    gridMediator->bcFile = grid_para.bcFile;
+    this->ReadGrid( GridConfig::FromDataBase() );
+}
 
-    gridMediator->gridType = grid_para.filetype;
+void ZgridMediator::ReadGrid( const GridConfig & config )
+{
+    auto gridMediator = std::make_unique< GridMediator >();
+    gridMediator->gridFile = config.sourceFile;
+    gridMediator->bcFile   = config.bcFile;
+    gridMediator->gridType = std::string( ToString( config.sourceType ) );
+
+    // sourceCaseDir identifies where the input grid and its boundary file live.
+    // An empty value keeps the historical current-project behavior.
+    gridMediator->caseDir = config.sourceCaseDir;
+
     gridMediator->ReadGrid();
-    this->AddGridMediator( gridMediator );
-    this->flag = true;
-}
-
-std::string ZgridMediator::GetTargetFile()
-{
-    int index = 0;
-    GridMediator * gridMediator = this->gm[ index ];
-    return gridMediator->targetFile;
-}
-
-void ZgridMediator::SetDeleteFlag( bool flag )
-{
-    this->flag = flag;
-}
-
-GridMediator * GlobalGrid::gridMediator = 0;
-
-GlobalGrid::GlobalGrid()
-{
-    ;
-}
-
-GlobalGrid::~GlobalGrid()
-{
-    ;
-}
-
-void GlobalGrid::SetCurrentGridMediator( GridMediator * gridMediatorIn )
-{
-    GlobalGrid::gridMediator = gridMediatorIn;
-}
-
-Grid * GlobalGrid::GetGrid( int zoneId )
-{
-    return GlobalGrid::gridMediator->gridVector[ zoneId ];
+    this->add( std::move( gridMediator ) );
 }
 
 EndNameSpace

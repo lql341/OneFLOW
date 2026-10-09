@@ -20,68 +20,98 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-
 #pragma once
 #include "HXDefine.h"
-#include "GridDef.h"
-#include <vector>
+#include "GridHandles.h"
+#include <memory>
+#include <stdexcept>
 #include <string>
-#include <fstream>
-
+#include <utility>
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
 class Grid;
+struct GridConfig;
+
+// Holds one zone-group of grids plus the paths / format used to load them.
+// Historical name "Mediator" is kept for source compatibility; think of it as
+// a GridBundle / GridDocument.
 class GridMediator
 {
 public:
-    GridMediator ();
-    ~GridMediator();
+    GridMediator() = default;
+    ~GridMediator() = default;
+
 public:
-    Grids gridVector;
-    int numberOfZones;
-    int readGridType;
-    std::string gridFile;
-    std::string bcFile;
-    std::string targetFile;
-    std::string gridType;
+    Grids gridVector;                 // owned grids (one entry per zone)
+    int numberOfZones{ 0 };           // usually equals gridVector.size()
+    int readGridType{ 0 };            // legacy flag; prefer gridType string / GridFileType
+    std::string gridFile;             // source mesh path
+    std::string bcFile;               // boundary condition path
+    std::string targetFile;           // conversion output path
+    std::string gridType;             // format token: plot3d, gridgen, ...
+    std::string caseDir;              // explicit case root for grid file IO
+
 public:
     void ReadGrid();
     void ReadGridgen();
     void ReadPlot3D();
     void ReadPlot3DCoor();
-public:
     void AddDefaultName();
 };
 
+// Owns a list of GridMediator instances (RAII).
+// Name kept as ZgridMediator for compatibility; preferred mental model:
+// "ZoneGridMediators" - a container of per-zone-group mediators.
 class ZgridMediator
 {
 public:
-    ZgridMediator();
-    ~ZgridMediator();
+    ZgridMediator() = default;
+    ~ZgridMediator() = default;
+
+    ZgridMediator( const ZgridMediator & ) = delete;
+    ZgridMediator & operator=( const ZgridMediator & ) = delete;
+    ZgridMediator( ZgridMediator && ) noexcept = default;
+    ZgridMediator & operator=( ZgridMediator && ) noexcept = default;
+
 public:
-    HXVector< GridMediator * > gm;
-    bool flag;
-public:
-    void AddGridMediator( GridMediator * gridMediator );
-    GridMediator * GetGridMediator( int iGridMediator );
-    int GetSize();
-    std::string GetTargetFile();
-    void SetDeleteFlag( bool flag );
+    // --- modern container-style API (prefer these in new code) ---
+    void add( std::unique_ptr< GridMediator > mediator );
+
+    [[nodiscard]] GridMediator & at( int index );
+    [[nodiscard]] const GridMediator & at( int index ) const;
+    [[nodiscard]] int size() const noexcept;
+    [[nodiscard]] bool empty() const noexcept;
+    [[nodiscard]] std::string targetFile() const;
+
+    // --- historical names (thin wrappers; keep call sites compiling) ---
+    void AddGridMediator( std::unique_ptr< GridMediator > gridMediator )
+    {
+        add( std::move( gridMediator ) );
+    }
+
+    [[nodiscard]] GridMediator & GetGridMediator( int iGridMediator )
+    {
+        return at( iGridMediator );
+    }
+
+    [[nodiscard]] const GridMediator & GetGridMediator( int iGridMediator ) const
+    {
+        return at( iGridMediator );
+    }
+
+    [[nodiscard]] int GetSize() const noexcept { return size(); }
+
+    [[nodiscard]] std::string GetTargetFile() const { return targetFile(); }
+
 public:
     void CreateSimple( int nZone );
     void ReadGrid();
-};
+    void ReadGrid( const GridConfig & config );
 
-class GlobalGrid
-{
-public:
-    GlobalGrid();
-    ~GlobalGrid();
-public:
-    static GridMediator * gridMediator;
-    static Grid * GetGrid( int zoneId );
-    static void SetCurrentGridMediator( GridMediator * gridMediatorIn );
+private:
+    std::vector< std::unique_ptr< GridMediator > > mediators_;
 };
 
 EndNameSpace

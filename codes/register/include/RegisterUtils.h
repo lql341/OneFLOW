@@ -22,13 +22,17 @@ License
 
 
 #pragma once
+#include <memory>
 #include "HXDefine.h"
 #include <map>
 #include <string>
-
+#include <ostream>
 
 BeginNameSpace( ONEFLOW )
 
+// Communication field-name list for one (solverType, interface group) pair.
+// Populated from system/<solver>/alloc/inter*.txt (names only; nEqu comes
+// from FieldManager inner definitions). Used by interface send/recv packing.
 class VarNameSolver
 {
 public:
@@ -42,21 +46,36 @@ public:
 
 class MapIntInt;
 
+// Registry of VarNameSolver keyed by (solverType, interface group).
+// AddVarNameSolver: create empty slot (called at solver registration).
+// GetVarNameSolver: required lookup (Fatal if missing).
+// FindVarNameSolver: optional lookup (nullptr if missing).
 class VarNameFactory
 {
 public:
     VarNameFactory();
     ~VarNameFactory();
+
 public:
-    static std::map< int, VarNameSolver * > * data;
-    static MapIntInt * mapData;
+    static std::unique_ptr< std::map< int, std::unique_ptr<VarNameSolver> > > data;
+    static std::unique_ptr< MapIntInt > mapData;
+
 public:
     static void Init();
     static void AddVarNameSolver( int a, int b );
     static VarNameSolver * GetVarNameSolver( int a, int b );
     static void FreeVarNameSolver();
+
+    static VarNameSolver * FindVarNameSolver(
+        int a,
+        int b );
+
+    static void Dump(
+        std::ostream & output,
+        int solverType );
 };
 
+// Composite key: a = solverType, b = interface group (INTERFACE_*).
 class DataAB
 {
 public:
@@ -72,6 +91,8 @@ public:
     bool operator()( const DataAB & k1, const DataAB & k2 ) const;
 };
 
+// Maps DataAB -> dense id used as index into VarNameFactory::data.
+// GetId requires a prior AddData (Fatal if key is missing).
 class MapIntInt
 {
 public:

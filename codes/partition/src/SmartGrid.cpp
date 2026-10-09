@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "SmartGrid.h"
+#include <memory>
 #include "HXCgns.h"
 #include "ElementHome.h"
 #include "PrintDevice.h"
@@ -85,7 +86,7 @@ int PointAction::DeletePoint( PointAction::PointType & point )
         pid = iter->second;
         this->pointMap.erase( point );
         this->ModifyPointIndexAfterDelete( pid );
-        int kkk = 1;
+
     }
 
     return pid;
@@ -191,16 +192,16 @@ void TopoSort::AddNewFace( int iCell, int face_pos, int faceType )
 
 void TopoSort::AddElementFaces( std::vector< int > & element, int eType, int iCell )
 {
-    UnitElement * unitElement = ElementHome::GetUnitElement( eType );
+    UnitElement & unitElement = ElementHome::GetUnitElement( eType );
 
-    int numberOfFaceInElement = unitElement->GetElementFaceNumber();
+    int numberOfFaceInElement = unitElement.GetElementFaceNumber();
 
     for ( int iLocalFace = 0; iLocalFace < numberOfFaceInElement; ++ iLocalFace )
     {
-        IntField & face = unitElement->GetElementFace( iLocalFace );
-        int faceType = unitElement->GetFaceType( iLocalFace );
+        IntField & face = unitElement.GetElementFace( iLocalFace );
+        int faceType = unitElement.GetFaceType( iLocalFace );
 
-        this->AddSingleFace( unitElement, element, iLocalFace, iCell );
+        this->AddSingleFace( &unitElement, element, iLocalFace, iCell );
     }
 }
 
@@ -386,12 +387,11 @@ void IdTool::ModifyDataIndex( const Ids & var, int new_id )
 
 TopoAction::TopoAction()
 {
-    this->topo_sort = new TopoSort();
+    this->topo_sort = std::make_unique< TopoSort >();
 }
 
 TopoAction::~TopoAction()
 {
-    delete this->topo_sort;
 }
 
 void TopoAction::AddElement( int p1, int p2, int eType )
@@ -413,14 +413,13 @@ void TopoAction::CalcTopology()
 
 SmartGrid::SmartGrid()
 {
-    this->point_action = new PointAction();
-    this->topo_action = new TopoAction();
+    this->point_action = std::make_unique< PointAction >();
+    this->topo_action = std::make_unique< TopoAction >();
 }
 
 SmartGrid::~SmartGrid()
 {
-    delete this->point_action;
-    delete this->topo_action;
+    
 }
 
 int SmartGrid::AddPoint( Real x, Real y, Real z )
@@ -442,7 +441,7 @@ void SmartGrid::TestAddDeletePoints()
     std::cout << "id3 = " << id3 << "\n";
     std::cout << "id4 = " << id4 << "\n";
 
-    int kkk = 1;
+
 }
 
 void SmartGrid::Run()
@@ -500,7 +499,6 @@ void SmartGrid::GenerateGrid( int ni, Real xmin, Real xmax )
 
     this->TopoPostprocess();
 
-    int kkk = 1;
 
 }
 

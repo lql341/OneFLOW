@@ -22,7 +22,9 @@ License
 
 
 #pragma once
+#include <memory>
 #include "HXDefine.h"
+#include <ostream>
 
 BeginNameSpace( ONEFLOW )
 
@@ -69,7 +71,7 @@ void AddCmdToList( int operationId, int solverType );
 // Task construction
 // ============================================================
 class Task;
-Task * CreateTask( int operationId, int solverType );
+std::unique_ptr<Task> CreateTask( int operationId, int solverType );
 
 // ============================================================
 // Resource preparation
@@ -86,6 +88,9 @@ void SetTaskAction( Task * task );
 void CmdBasicAction( int funcType );
 void CmdAction();
 void CmdActionNext();
+
+void DumpTaskDispatch(
+    std::ostream & output );
 
 // ============================================================
 // Operation execution entry

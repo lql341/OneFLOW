@@ -24,6 +24,8 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "HXCgns.h"
+#include <memory>
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -35,7 +37,7 @@ class NodeMesh;
 class CgnsCoor
 {
 public:
-    CgnsCoor( CgnsZone * cgnsZone );
+    explicit CgnsCoor( CgnsZone & cgnsZone );
     ~CgnsCoor();
 public:
     int ndim;
@@ -44,11 +46,17 @@ public:
     HXVector< DataType_t > typeList;
     HXVector< void * > coor;
     StringField coorNameList;
-    CgnsZone * cgnsZone;
-    NodeMesh * nodeMesh;
+    CgnsZone & cgnsZone;
+    std::unique_ptr< NodeMesh > nodeMesh;
 public:
     CgInt irmin[ 3 ], irmax[ 3 ], cellSize[ 3 ];
 protected:
+    struct CoordinateBuffer
+    {
+        std::unique_ptr< float[] > singlePrecision;
+        std::unique_ptr< double[] > doublePrecision;
+    };
+    std::vector< CoordinateBuffer > coordinateBuffers;
     CgInt nNodes, nCells;
 public:
     CgInt GetNNode();

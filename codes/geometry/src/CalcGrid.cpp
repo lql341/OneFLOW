@@ -8,11 +8,12 @@ License
     OneFLOW is free software: you can redistribute it and/or modify it
     under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+    (at your option) under the terms of the GNU General Public License
+    as published by the Free Software Foundation.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
     You should have received a copy of the GNU General Public License
@@ -23,8 +24,8 @@ License
 #include "CalcGrid.h"
 #include "UnsGrid.h"
 #include "Grid.h"
-#include "GridPara.h"
 #include "NodeMesh.h"
+#include "GridTypes.h"
 #include "LogFile.h"
 #include "HXMath.h"
 #include "IFaceLink.h"
@@ -40,44 +41,41 @@ License
 #include "Fatal.h"
 #include "Prj.h"
 #include <iostream>
+#include <utility>
 
 
 BeginNameSpace( ONEFLOW )
 
-CalcGrid::CalcGrid()
+CalcGrid::CalcGrid() = default;
+
+CalcGrid::~CalcGrid() = default;
+
+void CalcGrid::Init( Grids grids )
 {
-    iFaceLink = 0;
+    this->Init( std::move( grids ), GridConfig::FromDataBase() );
 }
 
-CalcGrid::~CalcGrid()
+void CalcGrid::Init( Grids grids, const GridConfig & config )
 {
-    delete iFaceLink;
-}
+    this->grids = std::move( grids );
+    this->config = config;
 
-void CalcGrid::Init( Grids & grids )
-{
-    this->grids = grids;
-    this->grids.SetDeleteFlag( true );
-    int gridObj = GetDataValue< int >( "gridObj" );
-    if ( gridObj == 3 )
+    if ( this->config.objective == GridObjective::Partition )
     {
-        std::string part_uns_file = GetDataValue< std::string >( "part_uns_file" );
-        this->gridFileName = part_uns_file;
+        this->gridFileName = this->config.partitionFile;
     }
     else
     {
-        this->gridFileName = ONEFLOW::GetTargetGridFileName();
+        this->gridFileName = this->config.targetFile;
     }
 }
 
 void CalcGrid::BuildInterfaceLink()
 {
-    int gridObj = GetDataValue< int >( "gridObj" );
-
-    if ( gridObj == 3 )
+    if ( this->config.objective == GridObjective::Partition )
     {
-        int partition_type = GetDataValue< int >( "partition_type" );
-        if ( partition_type == 1 )
+        const int partitionType = this->config.partitionType;
+        if ( partitionType == 1 )
         {
             this->ReconstructLink();
         }
@@ -94,10 +92,9 @@ void CalcGrid::BuildInterfaceLink()
 
 void CalcGrid::Dump()
 {
-    //std::cout << __FUNCTION__ << std::endl;
     std::fstream file;
     Prj::OpenPrjFile( file, gridFileName, std::ios_base::out|std::ios_base::binary|std::ios_base::trunc );
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
 
     ZoneState::pid.resize( nZone );
     ZoneState::zoneType.resize( nZone );
@@ -105,7 +102,7 @@ void CalcGrid::Dump()
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
         ZoneState::pid[ iZone ] = iZone;
-        ZoneState::zoneType[ iZone ] = grids[ iZone ]->type;
+        ZoneState::zoneType[ iZone ] = GridAt( grids, iZone ).type;
     }
 
     ONEFLOW::HXWrite( & file, nZone );
@@ -115,7 +112,7 @@ void CalcGrid::Dump()
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
         std::cout << "iZone = " << iZone << " nZone = " << nZone << "\n";
-        grids[ iZone ]->WriteGrid( file );
+        GridAt( grids, iZone ).WriteGrid( file );
     }
 
     Prj::CloseFile( file );
@@ -138,7 +135,7 @@ void CalcGrid::GenerateOverset()
 
 void CalcGrid::ReconstructLink()
 {
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
         this->ReconstructLink( iZone );
@@ -147,19 +144,20 @@ void CalcGrid::ReconstructLink()
 
 void CalcGrid::ReconstructLink( int iZone )
 {
-    UnsGrid * grid = UnsGridCast( grids[ iZone ] );
+    UnsGrid & grid = static_cast< UnsGrid & >( GridAt( grids, iZone ) );
 
-    InterFace * interFace = grid->interFace;
-    grid->nIFaces = grid->interFace->nIFaces;
+    InterFace * interFace = grid.interFace.get();
 
     if ( ! ONEFLOW::IsValid( interFace ) ) return;
 
-    int nBFaces = grid->nBFaces;
+    grid.nIFaces = interFace->nIFaces;
+
+    int nBFaces = grid.nBFaces;
     int nIFaces = interFace->nIFaces;
     int nPBFace = nBFaces - nIFaces;
 
-    IntField & lCell = grid->faceTopo->lCells;
-    IntField & rCell = grid->faceTopo->rCells;
+    IntField & lCell = grid.GetFaceTopo().GetLeftCells();
+    IntField & rCell = grid.GetFaceTopo().GetRightCells();
 
     FacePair facePair;
     for ( int iFace = 0; iFace < nIFaces; ++ iFace )
@@ -177,9 +175,9 @@ void CalcGrid::ReconstructLink( int iZone )
 
         if ( nei_zone_id >= iZone )
         {
-            UnsGrid * nei_Grid = UnsGridCast( grids[ nei_zone_id ] );
+            UnsGrid & neiGrid = static_cast< UnsGrid & >( GridAt( grids, nei_zone_id ) );
 
-            if ( FindMatch( nei_Grid, & facePair ) )
+            if ( FindMatch( neiGrid, facePair ) )
             {
                 interFace->localInterfaceId[ iFace ] = facePair.rf.face_id;
             }
@@ -198,17 +196,17 @@ void CalcGrid::ReconstructInterFace()
 
 void CalcGrid::ResetGridScaleAndTranslate()
 {
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
-        ONEFLOW::ResetGridScaleAndTranslate( grid->nodeMesh );
+        Grid & grid = GridAt( grids, iZone );
+        ONEFLOW::ResetGridScaleAndTranslate( *grid.nodeMesh, this->config );
     }
 }
 
 void CalcGrid::GenerateLink()
 {
-    this->iFaceLink = new IFaceLink( grids );
+    this->iFaceLink = std::make_unique< IFaceLink >( grids );
 
     this->ModifyBcType();
 
@@ -223,26 +221,23 @@ void CalcGrid::GenerateLink()
 
 void CalcGrid::ModifyBcType()
 {
-    int ignoreNoBc = ONEFLOW::GetIgnoreNoBc();
+    if ( this->config.ignoreNoBoundary ) return;
 
-    if ( ignoreNoBc ) return;
-
-    //change NO_BOUNDARY to INTERFACE
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
-        grid->ModifyBcType( BC::NO_BOUNDARY, BC::INTERFACE );
+        Grid & grid = GridAt( grids, iZone );
+        grid.ModifyBcType( BC::NO_BOUNDARY, BC::INTERFACE );
     }
 }
 
 void CalcGrid::GenerateLgMapping()
 {
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
-        grid->GenerateLgMapping( this->iFaceLink );
+        Grid & grid = GridAt( grids, iZone );
+        grid.GenerateLgMapping( *this->iFaceLink );
     }
 }
 
@@ -250,11 +245,11 @@ void CalcGrid::ReGenerateLgMapping()
 {
     this->iFaceLink->InitNewLgMapping();
 
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
-        grid->ReGenerateLgMapping( this->iFaceLink );
+        Grid & grid = GridAt( grids, iZone );
+        grid.ReGenerateLgMapping( *this->iFaceLink );
     }
 
     this->UpdateLgMapping();
@@ -268,78 +263,102 @@ void CalcGrid::UpdateLgMapping()
 
 void CalcGrid::UpdateOtherTopologyTerm()
 {
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
-        grid->UpdateOtherTopologyTerm( this->iFaceLink );
+        Grid & grid = GridAt( grids, iZone );
+        grid.UpdateOtherTopologyTerm( *this->iFaceLink );
     }
 }
 
 void CalcGrid::MatchInterfaceTopology()
 {
-    int nZone = static_cast<int>(grids.size());
+    const int nZone = GridsSize( grids );
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        Grid * grid = grids[ iZone ];
+        Grid & grid = GridAt( grids, iZone );
         this->iFaceLink->MatchInterfaceTopology( grid );
     }
 }
 
-void CalcGrid::GenerateMultiZoneCalcGrids( Grids & grids )
+void CalcGrid::GenerateMultiZoneCalcGrids( Grids grids )
+{
+    this->GenerateMultiZoneCalcGrids(
+        std::move( grids ), GridConfig::FromDataBase() );
+}
+
+void CalcGrid::GenerateMultiZoneCalcGrids(
+    Grids grids,
+    const GridConfig & config )
 {
     RegionNameMap::DumpRegion();
 
-    this->Init( grids );
+    this->Init( std::move( grids ), config );
     this->Post();
     this->Dump();
 }
 
 int GetIgnoreNoBc()
 {
-    return ONEFLOW::GetDataValue< int >( "ignoreNoBc" );
+    return GridConfig::FromDataBase().ignoreNoBoundary ? 1 : 0;
 }
 
 std::string GetTargetGridFileName()
 {
-    return ONEFLOW::GetDataValue< std::string >( "targetGridFileName" );
+    return GridConfig::FromDataBase().targetFile;
 }
 
-void GenerateMultiZoneCalcGrids( Grids & grids )
+void GenerateMultiZoneCalcGrids(
+    Grids grids,
+    const GridConfig & config )
 {
-    CalcGrid * calcGrid = new CalcGrid();
-    calcGrid->GenerateMultiZoneCalcGrids( grids );
-    delete calcGrid;
+    CalcGrid calcGrid;
+    calcGrid.GenerateMultiZoneCalcGrids( std::move( grids ), config );
 }
 
-void ResetGridScaleAndTranslate( NodeMesh * nodeMesh )
+void GenerateMultiZoneCalcGrids( Grids grids )
 {
-    size_t nNodes = nodeMesh->GetNumberOfNodes();
+    GenerateMultiZoneCalcGrids(
+        std::move( grids ), GridConfig::FromDataBase() );
+}
 
-    for ( int iNode = 0; iNode < nNodes; ++ iNode )
+
+void ResetGridScaleAndTranslate( NodeMesh & nodeMesh, const GridConfig & config )
+{
+    const Real scale = config.scale;
+    const auto & translate = config.translate;
+
+    const size_t nNodes = nodeMesh.GetNumberOfNodes();
+
+    for ( size_t iNode = 0; iNode < nNodes; ++ iNode )
     {
-        nodeMesh->xN[ iNode ] *= grid_para.gridScale;
-        nodeMesh->yN[ iNode ] *= grid_para.gridScale;
-        nodeMesh->zN[ iNode ] *= grid_para.gridScale;
+        nodeMesh.xN[ iNode ] *= scale;
+        nodeMesh.yN[ iNode ] *= scale;
+        nodeMesh.zN[ iNode ] *= scale;
 
-        nodeMesh->xN[ iNode ] += grid_para.gridTrans[ 0 ];
-        nodeMesh->yN[ iNode ] += grid_para.gridTrans[ 1 ];
-        nodeMesh->zN[ iNode ] += grid_para.gridTrans[ 2 ];
+        nodeMesh.xN[ iNode ] += translate[ 0 ];
+        nodeMesh.yN[ iNode ] += translate[ 1 ];
+        nodeMesh.zN[ iNode ] += translate[ 2 ];
     }
 
-    if ( grid_para.axis_dir == 1 )
+    if ( config.axisDirection == GridAxisDirection::ZToY )
     {
         TurnZAxisToYAxis( nodeMesh );
     }
 }
 
-void TurnZAxisToYAxis( NodeMesh * nodeMesh )
+void ResetGridScaleAndTranslate( NodeMesh & nodeMesh )
 {
-    size_t nNodes = nodeMesh->GetNumberOfNodes();
+    ResetGridScaleAndTranslate( nodeMesh, GridConfig::FromDataBase() );
+}
 
-    RealField & xN = nodeMesh->xN;
-    RealField & yN = nodeMesh->yN;
-    RealField & zN = nodeMesh->zN;
+void TurnZAxisToYAxis( NodeMesh & nodeMesh )
+{
+    size_t nNodes = nodeMesh.GetNumberOfNodes();
+
+    RealField & xN = nodeMesh.xN;
+    RealField & yN = nodeMesh.yN;
+    RealField & zN = nodeMesh.zN;
 
     Real tmp;
     for ( int iNode = 0; iNode < nNodes; ++ iNode )

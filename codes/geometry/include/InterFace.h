@@ -26,6 +26,7 @@ License
 #include <vector>
 #include <string>
 #include <map>
+#include <memory>
 
 
 BeginNameSpace( ONEFLOW )
@@ -60,12 +61,11 @@ public:
     Grid * parent;
     std::map< int, int > z2n;
 public:
-    HXVector< DataStorage * > dataSend;
-    HXVector< DataStorage * > dataRecv;
-    HXVector< InterfacePair * > interFacePairs;
+    HXVector< std::unique_ptr< DataStorage > > dataSend;
+    HXVector< std::unique_ptr< DataStorage > > dataRecv;
+    HXVector< std::unique_ptr< InterfacePair > > interFacePairs;
 public:
     void AllocSendRecv();
-    void DeAllocSendRecv();
     void Resize( int nIFaces );
     void InitNeighborFlag( IntField & flags );
     void InitNeighborZoneInfo();
@@ -75,6 +75,12 @@ public:
     void SetSendId( int zid, IntField & idsend );
     void AllocateNeighbor();
     int CalcNIFace( int iNei );
+    InterfacePair & GetInterfacePair( int iNei );
+    const InterfacePair & GetInterfacePair( int iNei ) const;
+    DataStorage & GetSendStorage( int ghostId );
+    const DataStorage & GetSendStorage( int ghostId ) const;
+    DataStorage & GetRecvStorage( int ghostId );
+    const DataStorage & GetRecvStorage( int ghostId ) const;
     IntField & GetInterfaceId( int neiId, int iSr );
 };
 
@@ -90,9 +96,6 @@ public:
     int nIFaces;
     IntField idrecv; // using in receiving, interface number in the current zone
     IntField idsend; // using in sending,   interface number in the tagret  zone
-protected:
-    DataStorage * dataSend;
-    DataStorage * dataRecv;
 };
 
 class InterFaceTopo
@@ -115,17 +118,5 @@ public:
     void SwapNeighborZoneInfo();
 };
 
-void InitInterfaceTopo();
-
-class InterFaceState
-{
-public:
-    InterFaceState();
-    ~InterFaceState();
-public:
-    static InterFace * interFace;
-};
-
-extern InterFaceTopo interFaceTopo;
 
 EndNameSpace

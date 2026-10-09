@@ -31,13 +31,12 @@ License
 #include "UnsteadyImp.h"
 #include "Update.h"
 #include "FieldWrap.h"
-#include "FieldAlloc.h"
 #include "CmxTask.h"
 #include "DataBase.h"
 #include "DataBook.h"
 #include "Lusgs.h"
 #include "Lhs.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 #include "FieldWrap.h"
 #include "SolverState.h"
 #include "Zone.h"
@@ -65,11 +64,9 @@ void RegisterVisualTask()
 
 void Visualization( StringField & data )
 {
-    Visualize * visualize = new UVisualize();
+    UVisualize visualize;
 
-    visualize->Visual();
-
-    delete visualize;
+    visualize.Visual();
 }
 
 EndNameSpace

@@ -22,8 +22,10 @@ License
 
 
 #pragma once
-#include "GridDef.h"
+#include "GridHandles.h"
 #include "HXCgns.h"
+#include <memory> // Required for std::unique_ptr
+#include <string>
 
 BeginNameSpace( ONEFLOW )
 
@@ -37,6 +39,7 @@ class GridElem;
 class ZgridElem;
 class GridMediator;
 class ZgridMediator;
+struct GridConfig;
 
 #ifdef ENABLE_CGNS
 
@@ -45,32 +48,50 @@ class CgnsFactory
 public:
     CgnsFactory();
     ~CgnsFactory();
+
+    // Rule of 5: Disable copying to prevent double-free
+    CgnsFactory(const CgnsFactory&) = delete;
+    CgnsFactory& operator=(const CgnsFactory&) = delete;
+
+    // FIX: Declare move semantics here, but DO NOT use = default.
+    // The implementation must be in the .cpp file where types are complete.
+    CgnsFactory(CgnsFactory&&) noexcept;
+    CgnsFactory& operator=(CgnsFactory&&) noexcept;
+
 public:
-    CgnsZbase * cgnsZbase;
-    ZgridElem * zgridElem;
+    std::unique_ptr<CgnsZbase> cgnsZbase;
+    std::unique_ptr<ZgridElem> zgridElem;
+
 public:
-    void GenerateGrid();
-    void ReadCgnsGrid();
-    void DumpCgnsGrid( ZgridMediator * zgridMediator );
-    void DumpUnsCgnsGrid();
+    void GenerateGrid( const std::string & caseDir );
+    void GenerateGrid( const GridConfig & config, const std::string & caseDir );
+    void ReadCgnsGrid( const std::string & caseDir );
+    void ReadCgnsGrid( const GridConfig & config, const std::string & caseDir );
+    void DumpCgnsGrid( ZgridMediator & zgridMediator );
+    void DumpUnsCgnsGrid( const std::string & caseDir );
+    void DumpUnsCgnsGrid( const GridConfig & config, const std::string & caseDir );
 public:
     void CommonToOneFlowGrid();
+    void CommonToOneFlowGrid( const GridConfig & config );
     void CommonToStrGrid();
     void CommonToUnsGridTEST();
+    void CommonToUnsGridTEST( const GridConfig & config );
     void ReadGridAndConvertToUnsCgnsZone();
+    void ReadGridAndConvertToUnsCgnsZone( const GridConfig & config );
     void ProcessCgnsBases();
 public:
-    void CreateCgnsZone( ZgridMediator * zgridMediator );
-    void PrepareCgnsZone( ZgridMediator * zgridMediator );
-    CgnsZone * CreateSu2CgnsZone( Su2Grid* su2Grid );
-    void Su2ToOneFlowGrid( Su2Grid* su2Grid );
+    void CreateCgnsZone( ZgridMediator & zgridMediator );
+    void PrepareCgnsZone( ZgridMediator & zgridMediator );
+    CgnsZone * CreateSu2CgnsZone( Su2Grid & su2Grid );
+    void Su2ToOneFlowGrid( Su2Grid & su2Grid );
 public:
     void CgnsToOneFlowGrid();
+    void CgnsToOneFlowGrid( const GridConfig & config );
     void ConvertStrCgns2UnsCgnsGrid();
 };
 
-void AddOneFlowGrid( Grids & grids, Grid * grid );
-void GenerateLocalOneFlowGridFromSu2Grid( Su2Grid* su2Grid, Grids & grids );
+void AddOneFlowGrid( Grids & grids, std::unique_ptr< Grid > grid );
+void GenerateLocalOneFlowGridFromSu2Grid( Su2Grid & su2Grid, Grids & grids );
 
 #endif
 

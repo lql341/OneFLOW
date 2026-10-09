@@ -21,14 +21,14 @@ License
 \*---------------------------------------------------------------------------*/
 
 #pragma once
-#include "TextFileParser.h"
-#include "DataBase.h"
-#include "DataBook.h"
 #include <vector>
 #include <string>
 
+namespace ONEFLOW {
 
-BeginNameSpace( ONEFLOW )
+class DataBase;
+class DataBook;
+class TextFileParser;
 
 bool IsArrayParameter( const std::string & lineOfName );
 void ReadOneFLOWScriptFile( TextFileParser & textFileParser );
@@ -43,16 +43,20 @@ int AnalysisScalarParameter( TextFileParser & textFileParser, int keyWordIndex )
 int GetParameterArraySize( const std::string & word );
 
 void ReadControlInfo();
+void ReadControlInfo( const std::string & caseDir );
 void ReadPrjScript();
+void ReadPrjScript( const std::string & caseDir );
 void ReadScriptFileNameList( std::vector< std::string > & scriptFileNameList );
+void ReadScriptFileNameList( const std::string & caseDir, std::vector< std::string > & scriptFileNameList );
 void ReadMultiScriptFiles( std::vector< std::string > & scriptFileNameList );
 void BroadcastControlParameterToAllProcessors();
 void DumpDataBase();
+void DumpDataBase( const std::string & caseDir );
 
-void CompressData( DataBase * dataBase, DataBook *& dataBook );
+void CompressData( DataBase * dataBase, DataBook * dataBook );
 void DecompressData( DataBase * dataBase, DataBook * dataBook );
 
-void CompressData( DataBook *& dataBook );
+void CompressData( DataBook * dataBook );
 void DecompressData( DataBook * dataBook );
 
-EndNameSpace
+} // namespace ONEFLOW

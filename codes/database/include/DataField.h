@@ -22,6 +22,7 @@ License
 
 #pragma once
 #include "NamespaceMacros.h"
+#include <memory>
 #include <unordered_map>
 #include <string>
 
@@ -33,32 +34,36 @@ class FieldEntry
 {
 public:
     FieldEntry();
-    FieldEntry( const std::string & name, PointerWrap * data );
+    FieldEntry( const std::string & name, std::unique_ptr<PointerWrap> data );
     ~FieldEntry();
-public:
-    std::string   name;
-    PointerWrap * data;
+private:
+    std::string name;
+    std::unique_ptr<PointerWrap> data;
 public:
     std::string & GetName() { return name; }
-    PointerWrap * GetPointerWrap() { return data; }
+    const std::string & GetName() const { return name; }
+    PointerWrap * GetPointerWrap() { return data.get(); }
+    const PointerWrap * GetPointerWrap() const { return data.get(); }
 };
 
 class DataField
 {
 public:
-    // Use unordered_map for O(1) average lookup
-    using DataMap = std::unordered_map<std::string, FieldEntry*>;
+    using DataMap = std::unordered_map<std::string, std::unique_ptr<FieldEntry>>;
 public:
     DataField();
     ~DataField();
 protected:
-    DataMap * dataMap;
+    DataMap dataMap;
 public:
-    void UpdateFieldEntry( FieldEntry * fieldEntry );
+    // Takes ownership of fieldEntry.
+    void UpdateFieldEntry( std::unique_ptr<FieldEntry> fieldEntry );
     FieldEntry * GetFieldEntry( const std::string & name );
+    const FieldEntry * GetFieldEntry( const std::string & name ) const;
     void DeleteFieldEntry( const std::string & name );
+    void Clear();
 
-    DataMap * GetDataMap() { return dataMap; }
+    const DataMap & GetDataMap() const { return dataMap; }
 };
 
 EndNameSpace

@@ -51,23 +51,13 @@ UTurbVisFlux::~UTurbVisFlux()
 
 }
 
-void UTurbVisFlux::Alloc()
-{
-    visflux = new MRField( turbcom.nEqu, ug.nFaces );
-}
-
-void UTurbVisFlux::DeAlloc()
-{
-    delete visflux;
-}
-
 void UTurbVisFlux::CalcVisFlux()
 {
     ug.Init();
     uturbf.Init();
     visTurb.Init( turbcom.nEqu );
     this->SetVisPointer();
-    Alloc();
+    visflux = std::make_unique<MRField>( turbcom.nEqu, ug.nFaces );
     if ( turbcom.nEqu == 1 )
     {
         this->CalcVisFlux1Equ();
@@ -76,7 +66,7 @@ void UTurbVisFlux::CalcVisFlux()
     {
         this->CalcVisFlux2Equ();
     }
-    DeAlloc();
+    visflux.reset();
 }
 
 void UTurbVisFlux::SetVisPointer()
@@ -250,11 +240,6 @@ void UTurbVisFlux::CalcVisFlux1Equ()
     {
         ug.fId = fId;
 
-        if ( fId == 866 )
-        {
-            int kkk = 1;
-        }
-
         ug.lc = ( * ug.lcf )[ ug.fId ];
         ug.rc = ( * ug.rcf )[ ug.fId ];
 
@@ -290,7 +275,7 @@ void UTurbVisFlux::AddVisFlux()
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * res = GetFieldPointer< MRField >( grid, "turbres" );
 
-    ONEFLOW::AddF2CField( res, visflux );
+    ONEFLOW::AddF2CField( res, visflux.get() );
 }
 
 void UTurbVisFlux::PrepareFaceValue()
@@ -360,10 +345,6 @@ void UTurbVisFlux::CalcFaceVisFlux1Equ()
 
     for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
     {
-        if ( ABS( visTurb.dqdn[ iEqu ] ) > 1.0e-10 )
-        {
-            int kkk = 1;
-        }
         turbcom.flux[ iEqu ] = - turbcom.oreynolds * turbcom.comVis[ iEqu ] * visTurb.dqdn[ iEqu ] * gcom.farea;
     }
 }

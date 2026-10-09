@@ -21,7 +21,6 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "PointMachine.h"
-#include <iostream>
 
 
 BeginNameSpace( ONEFLOW )
@@ -33,28 +32,30 @@ PointMachine::PointMachine()
     ;
 }
 
-PointMachine::~PointMachine()
+PointMachine::~PointMachine() = default;
+
+void PointMachine::Reset()
 {
-    for ( int i = 0; i < ptList.size(); ++ i )
-    {
-        delete ptList[ i ];
-    }
+    ptList.clear();
 }
 
 void PointMachine::AddPoint( Real x, Real y, Real z, int id )
 {
-    PointType * pt = new PointType( x, y, z, id );
-    this->ptList.push_back( pt );
-    int idd = ptBasic.AddPoint( x, y, z );
-    //int idd1 = ptBasic.DeletePoint( x, y, z );
-    int kkk = 1;
+    auto pt = std::make_unique< PointType >( x, y, z, id );
+    this->ptList.push_back( std::move( pt ) );
+
 }
 
-PointType * PointMachine::GetPoint( int id )
+PointType & PointMachine::GetPoint( int id )
 {
-    int ida = id - 1;
-    PointType * pt = this->ptList[ ida ];
-    return pt;
+    const int index = id - 1;
+    return * this->ptList[ index ];
+}
+
+const PointType & PointMachine::GetPoint( int id ) const
+{
+    const int index = id - 1;
+    return * this->ptList[ index ];
 }
 
 EndNameSpace

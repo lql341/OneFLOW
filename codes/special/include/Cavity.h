@@ -23,20 +23,10 @@ License
 
 #pragma once
 #include "HXDefine.h"
-
 BeginNameSpace( ONEFLOW )
 
-class GridMediator;
-class Cavity
-{
-public:
-    Cavity();
-    ~Cavity();
-public:
-    void Run();
-    void DumpPlot3DGrid( GridMediator * gridMediator );
-    void DumpCgnsGrid( GridMediator * gridMediator );
-};
+// Generate the built-in lid-driven cavity grid.
+void GenerateCavityGrid();
 
 
 EndNameSpace

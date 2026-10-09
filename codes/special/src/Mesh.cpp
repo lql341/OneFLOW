@@ -32,7 +32,6 @@ License
 #include "HXCgns.h"
 #include "Visual.h"
 #include "Dimension.h"
-#include "DataBase.h"
 #include "HXLookup.h"
 #include <algorithm>
 #include <iostream>
@@ -227,7 +226,7 @@ void SimpleMesh2D::ConstructElement()
 
             int elementType = ONEFLOW::QUAD_4;
 
-            mesh->cellMesh->cellTopo->PushElement( p1, p2, p3, p4, elementType );
+            mesh->cellMesh->GetCellTopo().PushElement(p1, p2, p3, p4, elementType);
         }
     }
 }
@@ -243,8 +242,8 @@ void SimpleMesh2D::PushElement( IntField & nodeArray1, IntField & nodeArray2, in
         int p2 = nodeArray1[ iNode2 ];
         int p3 = nodeArray2[ iNode1 ];
         int p4 = nodeArray2[ iNode2 ];
-        this->mesh->cellMesh->cellTopo->PushElement( p1, p2, p3, ONEFLOW::TRI_3 );
-        this->mesh->cellMesh->cellTopo->PushElement( p2, p4, p3, ONEFLOW::TRI_3 );
+        this->mesh->cellMesh->GetCellTopo().PushElement(p1, p2, p3, ONEFLOW::TRI_3);
+        this->mesh->cellMesh->GetCellTopo().PushElement( p2, p4, p3, ONEFLOW::TRI_3 );
     }
 }
 
@@ -341,35 +340,37 @@ void SimpleMesh2D::PushCircleNode( RealField & xArray, RealField & yArray, IntFi
     }
 }
 
+// =====================================================================
+// Mesh Implementation (Refactored)
+// =====================================================================
+
 Mesh::Mesh()
 {
-    nodeMesh = 0;
-    faceMesh = 0;
-    cellMesh = 0;
-    dataBase = new DataBase();
 }
 
 Mesh::~Mesh()
 {
-    delete nodeMesh;
-    delete faceMesh;
-    delete cellMesh;
-    delete dataBase;
 }
 
 void Mesh::CreateMesh()
 {
     std::cout << "Mesh::CreateMesh()\n";
-    nodeMesh = new NodeMesh();
-    faceMesh = new FaceMesh();
-    cellMesh = new CellMesh();
+
+    // FIX: Use std::make_unique for exception-safe allocation.
+    // If CreateMesh is called multiple times, the old resources are 
+    // automatically released before reassignment, preventing leaks.
+    nodeMesh = std::make_unique<NodeMesh>();
+    faceTopo = std::make_unique<FaceTopo>();
+    faceMesh = std::make_unique<FaceMesh>();
+    faceMesh->BindFaceTopo( *faceTopo );
+    cellMesh = std::make_unique<CellMesh>();
 
     SimpleMesh2D simpleMesh2D;
     simpleMesh2D.SetMesh( this );
     simpleMesh2D.GenerateMesh();
+
     this->ConstructTopology();
     ONEFLOW::Visual::Show( this );
-
     this->CalcMetrics();
 }
 
@@ -378,17 +379,17 @@ void Mesh::ConstructTopology()
     HXSize_t numberOfNodes = this->nodeMesh->GetNumberOfNodes();
     HXSize_t numberOfCells = this->cellMesh->GetNumberOfCells();
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     // Estimate the number of faces and reserve space
     HXSize_t estimatedFaces = numberOfCells * 2;  // Rough estimate
-    faceTopo->lCells.reserve(estimatedFaces);
-    faceTopo->rCells.reserve(estimatedFaces);
+    faceTopo->GetLeftCells().reserve(estimatedFaces);
+    faceTopo->GetRightCells().reserve(estimatedFaces);
     faceTopo->lPosition.reserve(estimatedFaces);
     faceTopo->rPosition.reserve(estimatedFaces);
-    faceTopo->fTypes.reserve(estimatedFaces);
-    faceTopo->faces.reserve(estimatedFaces);
+    faceTopo->GetFaceTypes().reserve(estimatedFaces);
+    faceTopo->GetFaces().reserve(estimatedFaces);
 
     HXLookup<int> faceLookup;
 
@@ -396,13 +397,13 @@ void Mesh::ConstructTopology()
     {
         const IntField& element = cellTopo->elements[iCell];
         int elementType = cellTopo->eTypes[iCell];
-        UnitElement* unitElement = ONEFLOW::ElementHome::GetUnitElement(elementType);
-        int numberOfFaceInElement = unitElement->GetElementFaceNumber();
+        UnitElement & unitElement = ONEFLOW::ElementHome::GetUnitElement(elementType);
+        int numberOfFaceInElement = unitElement.GetElementFaceNumber();
 
         for (int iLocalFace = 0; iLocalFace < numberOfFaceInElement; ++iLocalFace)
         {
-            const IntField& localFaceNodeIndexArray = unitElement->GetElementFace(iLocalFace);
-            int faceType = unitElement->GetFaceType(iLocalFace);
+            const IntField& localFaceNodeIndexArray = unitElement.GetElementFace(iLocalFace);
+            int faceType = unitElement.GetFaceType(iLocalFace);
 
             // Build the global node array for the current face
             IntField faceNodeIndexArray;
@@ -416,16 +417,16 @@ void Mesh::ConstructTopology()
             if ( isNew )
             {
                 // Add face data
-                faceTopo->lCells.push_back(iCell);
-                faceTopo->rCells.push_back(ONEFLOW::INVALID_INDEX);
+                faceTopo->GetLeftCells().push_back(iCell);
+                faceTopo->GetRightCells().push_back(ONEFLOW::INVALID_INDEX);
                 faceTopo->lPosition.push_back(iLocalFace);
                 faceTopo->rPosition.push_back(ONEFLOW::INVALID_INDEX);
-                faceTopo->fTypes.push_back(faceType);
-                faceTopo->faces.push_back(std::move(faceNodeIndexArray));
+                faceTopo->GetFaceTypes().push_back(faceType);
+                faceTopo->GetFaces().push_back(std::move(faceNodeIndexArray));
             }
             else
             {
-                faceTopo->rCells[faceIndex] = iCell;
+                faceTopo->GetRightCells()[faceIndex] = iCell;
                 faceTopo->rPosition[faceIndex] = iLocalFace;
             }
         }
@@ -440,14 +441,14 @@ void Mesh::SwapBoundary()
 
     IntField orderMapping( nFaces );
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     int iBoundaryFaceCount = 0;
     int iCount = 0;
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        int rc = faceTopo->rCells[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
         if ( rc == ONEFLOW::INVALID_INDEX )
         {
             orderMapping[ iCount ++ ] = iFace;
@@ -460,28 +461,28 @@ void Mesh::SwapBoundary()
 
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        int rc = faceTopo->rCells[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
         if ( rc != ONEFLOW::INVALID_INDEX )
         {
             orderMapping[ iCount ++ ] = iFace;
         }
     }
 
-    IntField lCellIndexSwap = faceTopo->lCells;
-    IntField rCellIndexSwap = faceTopo->rCells;
+    IntField lCellIndexSwap = faceTopo->GetLeftCells();
+    IntField rCellIndexSwap = faceTopo->GetRightCells();
 
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
         int oldFaceIndex = orderMapping[ iFace ];
-        faceTopo->lCells[ iFace ] = lCellIndexSwap[ oldFaceIndex ];
-        faceTopo->rCells[ iFace ] = rCellIndexSwap[ oldFaceIndex ];
+        faceTopo->GetLeftCells()[ iFace ] = lCellIndexSwap[ oldFaceIndex ];
+        faceTopo->GetRightCells()[ iFace ] = rCellIndexSwap[ oldFaceIndex ];
     }
 
     HXSize_t numberOfCells = this->cellMesh->GetNumberOfCells();
 
     for ( int iFace = 0; iFace < nBFaces; ++ iFace )
     {
-        faceTopo->rCells[ iFace ] = iFace + numberOfCells;
+        faceTopo->GetRightCells()[ iFace ] = iFace + numberOfCells;
     }
 
     IntField lPositionSwap = faceTopo->lPosition;
@@ -494,26 +495,26 @@ void Mesh::SwapBoundary()
         faceTopo->rPosition[ iFace ] = rPositionSwap[ oldFaceIndex ];
     }
 
-    LinkField faceToNodeSwap = faceTopo->faces;
+    LinkField faceToNodeSwap = faceTopo->GetFaces();
 
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
         int oldFaceIndex = orderMapping[ iFace ];
-        faceTopo->faces[ iFace ] = faceToNodeSwap[ oldFaceIndex ];
+        faceTopo->GetFaces()[ iFace ] = faceToNodeSwap[ oldFaceIndex ];
     }
 
-    IntField faceTypeSwap = faceTopo->fTypes;
+    IntField faceTypeSwap = faceTopo->GetFaceTypes();
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
         int oldFaceIndex = orderMapping[ iFace ];
-        faceTopo->fTypes[ iFace ] = faceTypeSwap[ oldFaceIndex ];
+        faceTopo->GetFaceTypes()[ iFace ] = faceTypeSwap[ oldFaceIndex ];
     }
 }
 
 void Mesh::AllocateMetrics()
 {
     this->faceMesh->AllocateMetrics();
-    this->cellMesh->AllocateMetrics( this->faceMesh );
+    this->cellMesh->AllocateMetrics( *this->faceMesh );
 }
 
 void Mesh::CalcMetrics()
@@ -558,22 +559,22 @@ void Mesh::CalcMetrics3D()
 
 void Mesh::CalcFaceNormal2D()
 {
-    this->faceMesh->CalcFaceNormal2D( this->nodeMesh );
+    this->faceMesh->CalcFaceNormal2D( *this->nodeMesh.get() );
 }
 
 void Mesh::CalcFaceCenter2D()
 {
-    this->faceMesh->CalcFaceCenter2D( this->nodeMesh );
+    this->faceMesh->CalcFaceCenter2D( *this->nodeMesh.get() );
 }
 
 void Mesh::CalcFaceCenter1D()
 {
-    this->faceMesh->CalcFaceCenter1D( this->nodeMesh );
+    this->faceMesh->CalcFaceCenter1D( *this->nodeMesh.get() );
 }
 
 void Mesh::CalcFaceNormal1D()
 {
-    this->faceMesh->CalcFaceNormal1D( this->nodeMesh, this->cellMesh );
+    this->faceMesh->CalcFaceNormal1D( *this->nodeMesh.get(), *this->cellMesh.get() );
 }
 
 void Mesh::CalcCellCenterVol1D()
@@ -591,8 +592,8 @@ void Mesh::CalcCellCenterVol1D()
     RealField & yN = nodeMesh->yN;
     RealField & zN = nodeMesh->zN;
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     for ( HXSize_t iCell = 0; iCell < numberOfCells; ++ iCell )
     {
@@ -630,13 +631,13 @@ void Mesh::CalcGhostCellCenterVol1D()
 
     RealField & area = this->faceMesh->area;
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     // For ghost cells
     for ( HXSize_t iFace = 0; iFace < nBFaces; ++ iFace )
     {
-        int lc  = faceTopo->lCells[ iFace ];
+        int lc  = faceTopo->GetLeftCells()[ iFace ];
         int rc = iFace + numberOfCells;
         if ( area[ iFace ] > SMALL )
         {
@@ -679,8 +680,8 @@ void Mesh::CalcCellCenterVol2D()
 
     RealField & area = this->faceMesh->area;
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     xcc  = 0;
     ycc  = 0;
@@ -689,7 +690,7 @@ void Mesh::CalcCellCenterVol2D()
 
     for ( HXSize_t iFace = 0; iFace < nBFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
         Real dot = ( xfc[ iFace ] * xfn[ iFace ] +
                      yfc[ iFace ] * yfn[ iFace ] +
                      zfc[ iFace ] * zfn[ iFace ] ) * area[ iFace ];
@@ -702,8 +703,8 @@ void Mesh::CalcCellCenterVol2D()
     // For interior cell faces
     for ( HXSize_t iFace = nBFaces; iFace < nFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
         Real dot = ( xfc[ iFace ] * xfn[ iFace ] +
                      yfc[ iFace ] * yfn[ iFace ] +
                      zfc[ iFace ] * zfn[ iFace ] ) * area[ iFace ];
@@ -749,7 +750,7 @@ void Mesh::CalcCellCenterVol2D()
     // For ghost cells
     for ( HXSize_t iFace = 0; iFace < nBFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
         int rc = iFace + numberOfCells;
         if ( area[ iFace ] > SMALL )
         {
@@ -792,8 +793,8 @@ void Mesh::CalcCellCenterVol3D()
 
     RealField & area = this->faceMesh->area;
 
-    CellTopo * cellTopo = this->cellMesh->cellTopo;
-    FaceTopo * faceTopo = this->faceMesh->faceTopo;
+    CellTopo * cellTopo = &this->cellMesh->GetCellTopo();
+    FaceTopo * faceTopo = &this->faceMesh->GetFaceTopo();
 
     RealField & xN = nodeMesh->xN;
     RealField & yN = nodeMesh->yN;
@@ -806,10 +807,10 @@ void Mesh::CalcCellCenterVol3D()
 
     for ( HXSize_t iFace = 0; iFace < nFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
 
-        IntField & faceIndex = faceTopo->faces[ iFace ];
+        IntField & faceIndex = faceTopo->GetFaces()[ iFace ];
 
         HXSize_t faceNodeNumber = faceIndex.size();
         for ( HXSize_t iNode = 0; iNode < faceNodeNumber; ++ iNode )
@@ -887,7 +888,7 @@ void Mesh::CalcCellCenterVol3D()
     // For ghost cells
     for ( int iFace = 0; iFace < nBFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
         int rc = iFace + numberOfCells;
 
         if ( area[ iFace ] > SMALL )
@@ -913,12 +914,12 @@ void Mesh::CalcCellCenterVol3D()
 
 void Mesh::CalcFaceNormal3D()
 {
-    this->faceMesh->CalcFaceNormal3D( this->nodeMesh );
+    this->faceMesh->CalcFaceNormal3D( *this->nodeMesh.get() );
 }
 
 void Mesh::CalcFaceCenter3D()
 {
-    this->faceMesh->CalcFaceCenter3D( this->nodeMesh );
+    this->faceMesh->CalcFaceCenter3D( *this->nodeMesh.get() );
 }
 
 

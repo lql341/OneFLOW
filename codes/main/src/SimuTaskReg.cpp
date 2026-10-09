@@ -28,7 +28,7 @@ License
 #include "SimuTaskRequire.h"
 #include "EulerDomainStateSync.h"
 #include "FieldSimu.h"
-#include "GridFactory.h"
+#include "GridGeneration.h"
 #include "MultiBlock.h"
 #include "Test.h"
 #include "Theory.h"
@@ -57,7 +57,11 @@ class CreateGridTask : public ISimuTask
 {
 public:
     bool NeedsSystemMap() const override { return true; }
-    void Execute( SimuContext& /*ctx*/ ) override { GenerateGrid(); }
+
+    void Execute( SimuContext& ctx ) override
+    {
+        GenerateGrid( ctx.CaseDir() );
+    }
 };
 
 class WallDistTask : public ISimuTask

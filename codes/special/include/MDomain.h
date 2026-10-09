@@ -28,6 +28,7 @@ License
 #include <set>
 #include <map>
 #include <fstream>
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -47,7 +48,7 @@ public:
     ~MDomain();
 public:
     int pos;
-    HXVector< SDomain * > sDomainList;
+    HXVector< std::unique_ptr< SDomain > > sDomainList;
     CoorMap * coorMap;
 public:
     SDomain * FindSDomain( int fid );
@@ -60,8 +61,8 @@ public:
     void ConstructMultiPointToDomainMap();
     void ConstructMultiPointToPointMap();
     void ConstructPointToLineMap();
-    void CreateInpFaceList( HXVector< Face2D * > &facelist );
-    void CreateInpFaceList1D( HXVector< Face2D * > &facelist );
+    void CreateInpFaceList( HXVector< std::unique_ptr<Face2D> > &facelist );
+    void CreateInpFaceList1D( HXVector< std::unique_ptr<Face2D> > &facelist );
     void SetBlkBcMesh( Block3D * blk3d );
     void SetBlkBcMesh( Block2D * blk2d );
 };

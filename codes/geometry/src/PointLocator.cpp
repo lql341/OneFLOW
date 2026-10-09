@@ -21,8 +21,11 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "PointLocator.h"
+#include <memory>
+#include "GridHandles.h"
 #include "Grid.h"
 #include "NodeMesh.h"
+#include "Constant.h"
 #include "HXMath.h"
 #include "Fatal.h"
 #include <iostream>
@@ -41,19 +44,20 @@ static inline Real CalcSquaredDistance(Real x1, Real y1, Real z1, Real x2, Real 
 
 PointLocator::PointLocator()
 {
-    this->coorTree = nullptr;
-    this->tolerance = 1.0e-6; // Provide a safe default tolerance
+    this->id = 0;
+    this->tolerance = 1.0e-6;
+    // [Refactored] coorTree is automatically nullptr via std::unique_ptr default constructor.
+    // No explicit initialization needed.
 }
 
-PointLocator::~PointLocator()
-{
-    delete this->coorTree;
-}
+// [Refactored] unique_ptr automatically deletes the owned AdtTree.
+PointLocator::~PointLocator() = default;
+
 
 void PointLocator::Initialize( RealField & pmin, RealField & pmax, Real toleranceIn )
 {
     this->tolerance = toleranceIn;
-    ONEFLOW::CreateStandardADT( pmin, pmax, this->coorTree, this->tolerance );
+    ONEFLOW::CreateStandardADT( pmin, pmax, this->coorTree, this->tolerance);
 }
 
 void PointLocator::Initialize( Grid * grid )
@@ -68,6 +72,12 @@ void PointLocator::InitializeSpecial( Grid * grid, Real toleranceIn )
 }
 
 void PointLocator::Initialize( Grids & grids )
+{
+    GridViews views = AsGridViews( grids );
+    this->Initialize( views );
+}
+
+void PointLocator::Initialize( const GridViews & grids )
 {
     ONEFLOW::CreateStandardADT( grids, this->coorTree, tolerance );
 }
@@ -158,8 +168,7 @@ int PointLocator::AddPoint( RealField & coor )
     int newId = static_cast<int>( this->xCoor.size() );
 
     // The tree now safely manages the memory of this node (as verified in Step 1)
-    AdtNode * node = new AdtNode( 3, &coor[0], newId );
-    this->coorTree->AddNode( node );
+    this->coorTree->AddNode( std::make_unique<AdtNode>( 3, &coor[0], newId ) );
 
     this->xCoor.push_back( coor[0] );
     this->yCoor.push_back( coor[1] );
@@ -180,17 +189,17 @@ void PointLocator::GetFaceCoorList( const IntField & nodeId, RealField &xList, R
     }
 }
 
-void CreateStandardADT( RealField & ptmin, RealField & ptmax, AdtTree *& adtTree, Real & tolerance )
+void CreateStandardADT( RealField & ptmin, RealField & ptmax, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
 {
     RealField pmin = ptmin;
     RealField pmax = ptmax;
 
     ONEFLOW::ShiftMinMaxBox( pmin, pmax, two * tolerance );
 
-    adtTree = new AdtTree( 3, pmin, pmax );
+    adtTree = std::make_unique<AdtTree>( 3, pmin, pmax );
 }
 
-void CreateStandardADT( Grid * grid, AdtTree *& adtTree, Real & tolerance )
+void CreateStandardADT( Grid * grid, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
 {
     grid->nodeMesh->CalcMinMaxBox();
     RealField & ptmin = grid->nodeMesh->pmin;
@@ -206,10 +215,16 @@ void CreateStandardADT( Grid * grid, AdtTree *& adtTree, Real & tolerance )
 
     ONEFLOW::ShiftMinMaxBox( pmin, pmax, two * tolerance );
 
-    adtTree = new AdtTree( 3, pmin, pmax );
+    adtTree = std::make_unique<AdtTree>( 3, pmin, pmax );
 }
 
-void CreateStandardADT( Grids & grids, AdtTree *& adtTree, Real & tolerance )
+void CreateStandardADT( Grids & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
+{
+    GridViews views = AsGridViews( grids );
+    CreateStandardADT( views, adtTree, tolerance );
+}
+
+void CreateStandardADT( const GridViews & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
 {
     RealField pmin( 3 ), pmax( 3 );
     ONEFLOW::GetBoundingBoxOfMultiZoneGrids( grids, pmin, pmax );
@@ -222,18 +237,24 @@ void CreateStandardADT( Grids & grids, AdtTree *& adtTree, Real & tolerance )
 
     ONEFLOW::ShiftMinMaxBox( pmin, pmax, two * tolerance );
 
-    adtTree = new AdtTree( 3, pmin, pmax );
+    adtTree = std::make_unique<AdtTree>( 3, pmin, pmax );
 }
 
 
-void CreateStandardADTByTolerance( Grids & grids, AdtTree *& adtTree, Real & tolerance )
+void CreateStandardADTByTolerance( Grids & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
+{
+    GridViews views = AsGridViews( grids );
+    CreateStandardADTByTolerance( views, adtTree, tolerance );
+}
+
+void CreateStandardADTByTolerance( const GridViews & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance )
 {
     RealField pmin( 3 ), pmax( 3 );
     ONEFLOW::GetBoundingBoxOfMultiZoneGrids( grids, pmin, pmax );
 
     ONEFLOW::ShiftMinMaxBox( pmin, pmax, two * tolerance );
 
-    adtTree = new AdtTree( 3, pmin, pmax );
+    adtTree = std::make_unique<AdtTree>( 3, pmin, pmax );
 }
 
 void ShiftMinMaxBox( RealField & pmin, RealField & pmax, Real tolerance )
@@ -249,15 +270,21 @@ void ShiftMinMaxBox( RealField & pmin, RealField & pmax, Real tolerance )
 
 void GetGridsMinMaxDistance( Grids & grids, Real & mindis, Real & maxdis )
 {
+    GridViews views = AsGridViews( grids );
+    GetGridsMinMaxDistance( views, mindis, maxdis );
+}
+
+void GetGridsMinMaxDistance( const GridViews & grids, Real & mindis, Real & maxdis )
+{
     mindis =   LARGE;
     maxdis = - LARGE;
 
-    int numberOfZones = grids.size();
+    int numberOfZones = static_cast< int >( grids.size() );
 
     for ( int iZone = 0; iZone < numberOfZones; ++ iZone )
     {
         Real dismin, dismax;
-        grids[ iZone ]->GetMinMaxDistance( dismin, dismax );
+        GridAt( grids, iZone )->GetMinMaxDistance( dismin, dismax );
 
         mindis = ONEFLOW::MIN( mindis, dismin );
         maxdis = ONEFLOW::MAX( maxdis, dismax );
@@ -265,6 +292,12 @@ void GetGridsMinMaxDistance( Grids & grids, Real & mindis, Real & maxdis )
 }
 
 Real CalcGridTolerance( Grids & grids )
+{
+    GridViews views = AsGridViews( grids );
+    return CalcGridTolerance( views );
+}
+
+Real CalcGridTolerance( const GridViews & grids )
 {
     Real mindis =   LARGE;
     Real maxdis = - LARGE;
@@ -278,6 +311,12 @@ Real CalcGridTolerance( Grids & grids )
 
 void GetBoundingBoxOfMultiZoneGrids( Grids & grids, RealField & pmin, RealField & pmax )
 {
+    GridViews views = AsGridViews( grids );
+    GetBoundingBoxOfMultiZoneGrids( views, pmin, pmax );
+}
+
+void GetBoundingBoxOfMultiZoneGrids( const GridViews & grids, RealField & pmin, RealField & pmax )
+{
     pmin[ 0 ] = LARGE;
     pmin[ 1 ] = LARGE;
     pmin[ 2 ] = LARGE;
@@ -286,13 +325,13 @@ void GetBoundingBoxOfMultiZoneGrids( Grids & grids, RealField & pmin, RealField 
     pmax[ 1 ] = - LARGE;
     pmax[ 2 ] = - LARGE;
 
-    int numberOfZones = grids.size();
+    int numberOfZones = static_cast< int >( grids.size() );
 
     for ( int iZone = 0; iZone < numberOfZones; ++ iZone )
     {
-        grids[ iZone ]->nodeMesh->CalcMinMaxBox();
-        RealField & localPmin = grids[ iZone ]->nodeMesh->pmin;
-        RealField & localPmax = grids[ iZone ]->nodeMesh->pmax;
+        GridAt( grids, iZone )->nodeMesh->CalcMinMaxBox();
+        RealField & localPmin = GridAt( grids, iZone )->nodeMesh->pmin;
+        RealField & localPmax = GridAt( grids, iZone )->nodeMesh->pmax;
 
         pmin[ 0 ] = ONEFLOW::MIN( pmin[ 0 ], localPmin[ 0 ] );
         pmin[ 1 ] = ONEFLOW::MIN( pmin[ 1 ], localPmin[ 1 ] );

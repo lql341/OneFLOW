@@ -38,7 +38,7 @@ License
 #include "Boundary.h"
 #include "BcRecord.h"
 #include "ULimiter.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 #include "Iteration.h"
 #include "StageProfiler.h"
 #include <iostream>
@@ -99,7 +99,7 @@ void UNsVisFlux::CalcFlux()
     vis.Init();
     heat_flux.Init();
 
-    Alloc();
+    visflux = std::make_unique<MRField>( nscom.nEqu, ug.nFaces );
 
     this->SetVisPointer();
 
@@ -109,17 +109,7 @@ void UNsVisFlux::CalcFlux()
     this->CalcVisFlux();
     this->AddVisFlux();
 
-    DeAlloc();
-}
-
-void UNsVisFlux::Alloc()
-{
-    visflux = new MRField( nscom.nEqu, ug.nFaces );
-}
-
-void UNsVisFlux::DeAlloc()
-{
-    delete visflux;
+    visflux.reset();
 }
 
 void UNsVisFlux::PrepareField()
@@ -169,7 +159,13 @@ void UNsVisFlux::SaveHeatFlux()
 {
     if ( ug.fId >= ug.nBFaces ) return;
     if ( ug.bcRecord->bcType[ ug.fId ] != BC::SOLID_SURFACE ) return;
-    SurfaceValue * heat_sur = heat_flux.heatflux[ ZoneState::zid ];
+
+    // FIX: Use .get() to obtain the non-owning raw pointer.
+    SurfaceValue * heat_sur = heat_flux.heatflux[ ZoneState::zid ].get();
+
+    // FIX: Dereference the unique_ptr to get the RealField reference.
+    RealField & hf = *(heat_sur->var);
+
     Real non_dim_heatflux = - nscom.oreynolds * vis.qNormal;
     heat_sur->var->push_back( non_dim_heatflux );
 }
@@ -244,13 +240,13 @@ void UNsVisFlux::AddVisFlux()
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * res = GetFieldPointer< MRField >( grid, "res" );
 
-    ONEFLOW::AddF2CField( res, visflux );
+    ONEFLOW::AddF2CField( res, visflux.get() );
     if ( Iteration::outerSteps == -31 )
     {
         Real mindiff = 1.0e-10;
         int idumpface = 1;
         int idumpcell = 0;
-        HXDebug::DumpField( "VisFaceFlux.debug", visflux );
+        HXDebug::DumpField( "VisFaceFlux.debug", visflux.get() );
         HXDebug::CompareFile( mindiff, idumpface );
         HXDebug::DumpResField( "VisResFlux.debug" );
         HXDebug::CompareFile( mindiff, idumpcell );

@@ -35,6 +35,7 @@ const int BINARY = 1;
 class GridMediator;
 class TextFileParser;
 class ZgridMediator;
+struct GridConfig;
 
 class Plot3D
 {
@@ -55,7 +56,13 @@ public:
     static void DumpCoorAscii( GridMediator * gridMediator );
     static void DumpCoorAscii( std::fstream & file, RealField & coor );
     static void DumpBc( GridMediator * gridMediator );
-    static void Plot3DToCgns( ZgridMediator * zgridMediator );
+    static void Plot3DToCgns(
+        ZgridMediator * zgridMediator,
+        const std::string & caseDir = "" );
+    static void Plot3DToCgns(
+        ZgridMediator * zgridMediator,
+        const GridConfig & config,
+        const std::string & caseDir );
 
 };
 

@@ -23,7 +23,8 @@ License
 #include "Grad.h"
 #include "UGrad.h"
 #include "UCom.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
+#include "InterField.h"
 #include "FaceTopo.h"
 #include "BcRecord.h"
 #include "UnsGrid.h"
@@ -132,9 +133,9 @@ void Grad::StoreBcGrad()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
 
-    FaceTopo * faceTopo = grid->faceTopo;
+    FaceTopo * faceTopo = &grid->GetFaceTopo();
 
-    IntField & bcType = faceTopo->bcManager->bcRecord->bcType;
+    IntField & bcType = faceTopo->GetBcRecord().bcType;
 
     int nBFaces = bcType.size();
 
@@ -142,8 +143,8 @@ void Grad::StoreBcGrad()
     {
         int bc_type = bcType[ iFace ];
 
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
 
         for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
         {

@@ -27,13 +27,13 @@ License
 #include "ScalarGrid.h"
 #include "HXArray.h"
 #include "Task.h"
+#include <memory>
 #include <vector>
 #include <string>
 
 
 BeginNameSpace( ONEFLOW )
 
-class ScalarField;
 class ScalarGrid;
 class FieldPara;
 class ScalarFieldManager;
@@ -58,22 +58,13 @@ public:
     FieldSolverBasic();
     ~FieldSolverBasic();
 public:
-    ScalarField * field;
-    ScalarGrid * grid;
-    FieldPara * para;
-    ScalarFieldManager * scalarFieldManager;
-    std::vector< ScalarField * > fields;
-    std::vector< ScalarGrid * > grids;
-    bool tmpflag_delete_grids;
-public:
-    //tmp
-    void FillTmpGridVector();
+    std::unique_ptr< FieldPara > para;
+    std::unique_ptr< ScalarFieldManager > scalarFieldManager;
 public:
     virtual void Run();
     void Init();
     void LoadGrid();
     void InitCtrlParameter();
-    void AddZoneGrid();
     void CalcGridMetrics();
     void InitFlowField();
     void InitFlowField_Basic();
@@ -85,10 +76,9 @@ public:
 public:
     void Visualize();
     void ToTecplot( RealField & xList, RealField & varlist, std::string const & fileName );
-    void Theory( ScalarGrid * grid, Real time, RealField & theory );
-    void GetVisualData( DataBook * dataBook );
-    void AddVisualData( RealField & qList, RealField & theoryList, RealField & xcoorList );
-    void AddVisualData( DataBook * dataBook, RealField & qList, RealField & theoryList, RealField & xcoorList );
+    void Theory( ScalarGrid & grid, Real time, RealField & theory );
+    void GetVisualData( DataBook & dataBook );
+    void AddVisualData( DataBook & dataBook, RealField & qList, RealField & theoryList, RealField & xcoorList );
     void Reorder( RealField & a, RealField & b, RealField & c );
 public:
     Real ScalarFun( Real xm );
@@ -97,8 +87,8 @@ public:
 
 void PrepareFieldSendData();
 void PrepareFieldRecvData();
-ScalarFieldRecord * PrepareSendScalarFieldRecord();
-ScalarFieldRecord * PrepareRecvScalarFieldRecord();
+std::unique_ptr< ScalarFieldRecord > PrepareSendScalarFieldRecord();
+std::unique_ptr< ScalarFieldRecord > PrepareRecvScalarFieldRecord();
 
 void PrepareGeomSendData();
 void PrepareGeomRecvData();

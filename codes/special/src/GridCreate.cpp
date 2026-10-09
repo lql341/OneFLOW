@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "GridCreate.h"
+#include "GridTypes.h"
 #include "Transfinite.h"
 #include "CurveLine.h"
 #include "CurveMesh.h"
@@ -41,28 +42,9 @@ License
 BeginNameSpace( ONEFLOW )
 
 
-GridCreate::GridCreate()
+void GenerateLayoutGrid( const GridConfig & config )
 {
-}
-
-GridCreate::~GridCreate()
-{
-}
-
-void GridCreate::Run( int igene )
-{
-    if ( igene == 3 )
-    {
-    }
-    else if ( igene == 4 )
-    {
-        this->GenePlate();
-    }
-}
-
-void GridCreate::GenePlate()
-{
-    grid_Machine.Run();
+    grid_Machine.Run( config.layoutFile );
 }
 
 

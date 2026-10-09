@@ -73,34 +73,34 @@ void InitTimeStepUns()
 
     InitUnsField();
 
-    FaceTopo * faceTopo = grid->faceTopo;
-    ug.lcf = & faceTopo->lCells;
-    ug.rcf = & faceTopo->rCells;
+    FaceTopo & faceTopo = grid->GetFaceTopo();
+    ug.lcf = & faceTopo.GetLeftCells();
+    ug.rcf = & faceTopo.GetRightCells();
 
-    FaceMesh * faceMesh = grid->faceMesh;
-    CellMesh * cellMesh = grid->cellMesh;
+    FaceMesh & faceMesh = grid->GetFaceMesh();
+    CellMesh & cellMesh = grid->GetCellMesh();
 
-    ug.xfn = & faceMesh->xfn;
-    ug.yfn = & faceMesh->yfn;
-    ug.zfn = & faceMesh->zfn;
-    ug.vfn = & faceMesh->vfn;
-    ug.farea = & faceMesh->area;
+    ug.xfn = & faceMesh.xfn;
+    ug.yfn = & faceMesh.yfn;
+    ug.zfn = & faceMesh.zfn;
+    ug.vfn = & faceMesh.vfn;
+    ug.farea = & faceMesh.area;
 
-    ug.vfx = & faceMesh->vfx;
-    ug.vfy = & faceMesh->vfy;
-    ug.vfz = & faceMesh->vfz;
+    ug.vfx = & faceMesh.vfx;
+    ug.vfy = & faceMesh.vfy;
+    ug.vfz = & faceMesh.vfz;
 
-    ug.xfc = & faceMesh->xfc;
-    ug.yfc = & faceMesh->yfc;
-    ug.zfc = & faceMesh->zfc;
+    ug.xfc = & faceMesh.xfc;
+    ug.yfc = & faceMesh.yfc;
+    ug.zfc = & faceMesh.zfc;
 
-    ug.xcc = & cellMesh->xcc;
-    ug.ycc = & cellMesh->ycc;
-    ug.zcc = & cellMesh->zcc;
+    ug.xcc = & cellMesh.xcc;
+    ug.ycc = & cellMesh.ycc;
+    ug.zcc = & cellMesh.zcc;
 
-    ug.cvol  = & cellMesh->vol;
-    ug.cvol1 = & cellMesh->vol;
-    ug.cvol2 = & cellMesh->vol;
+    ug.cvol  = & cellMesh.vol;
+    ug.cvol1 = & cellMesh.vol;
+    ug.cvol2 = & cellMesh.vol;
     nscom.Init();
 }
 
@@ -120,82 +120,9 @@ void UTimeStep::Init()
     unsf.Init();
 }
 
-void UTimeStep::ReadTmp()
-{
-    static int iii = 0;
-    if ( iii ) return;
-    iii = 1;
-    std::fstream file;
-    file.open( "nsflow.dat", std::ios_base::in | std::ios_base::binary );
-    if ( ! file )
-    {
-        Fatal( "Failed to open file: nsflow.dat" );
-    }
-
-    unsf.Init();
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        for ( int iEqu = 0; iEqu < 5; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * unsf.q )[ iEqu ][ cId ] ), sizeof( double ) );
-        }
-    }
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * unsf.visl )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * unsf.vist )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-    std::vector< Real > tmp1( ug.nTCell ), tmp2( ug.nTCell );
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        tmp1[ cId ] = ( * unsf.timestep )[ 0 ][ cId ];
-    }
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * unsf.timestep )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-    for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        tmp2[ cId ] = ( * unsf.timestep )[ 0 ][ cId ];
-    }
-
-    for ( int iCell = 0; iCell < ug.nTCell; ++ iCell )
-    {
-        for ( int iEqu = 0; iEqu < nscom.nTModel; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * unsf.tempr )[ iEqu ][ iCell ] ), sizeof( double ) );
-        }
-    }
-
-    turbcom.Init();
-    uturbf.Init();
-    for ( int iCell = 0; iCell < ug.nTCell; ++ iCell )
-    {
-        for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * uturbf.q )[ iEqu ][ iCell ] ), sizeof( double ) );
-        }
-    }
-    file.close();
-    file.clear();
-}
-
-
 void UTimeStep::CalcTimeStep()
 {
     this->Init();
-
-    //ReadTmp();
 
     this->CalcCfl();
 
@@ -260,13 +187,13 @@ void UTimeStep::CalcSpectrumField()
 
 void UTimeStep::CalcInvSpectrumField()
 {
-    Grid * grid = Zone::GetGrid();
+    Grid & grid = Zone::GetGridReference();
 
-    MRField * invsr = ONEFLOW::GetFieldPointer< MRField >( grid, "invsr" );
+    MRField * invsr = ONEFLOW::GetFieldPointer< MRField >( &grid, "invsr" );
 
-    ONEFLOW::ZeroField( invsr, 1, grid->nCells );
+    ONEFLOW::ZeroField( invsr, 1, grid.nCells );
 
-    for ( int iFace = 0; iFace < grid->nFaces; ++ iFace )
+    for ( int iFace = 0; iFace < grid.nFaces; ++ iFace )
     {
         this->SetId( iFace );
 
@@ -280,15 +207,15 @@ void UTimeStep::CalcInvSpectrumField()
 
 void UTimeStep::CalcVisSpectrumField()
 {
-    Grid * grid = Zone::GetGrid();
+    Grid & grid = Zone::GetGridReference();
 
-    MRField * vissr = ONEFLOW::GetFieldPointer< MRField >( grid, "vissr" );
+    MRField * vissr = ONEFLOW::GetFieldPointer< MRField >( &grid, "vissr" );
 
-    ONEFLOW::ZeroField( vissr, 1, grid->nCells );
+    ONEFLOW::ZeroField( vissr, 1, grid.nCells );
 
     if ( vis_model.vismodel <= 0 ) return;
 
-    for ( int iFace = 0; iFace < grid->nFaces; ++ iFace )
+    for ( int iFace = 0; iFace < grid.nFaces; ++ iFace )
     {
         this->SetId( iFace );
 

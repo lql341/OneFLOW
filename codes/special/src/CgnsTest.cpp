@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "CgnsTest.h"
+#include <memory>
 #include "CgnsFile.h"
 #include "CgnsBase.h"
 #include "CgnsFactory.h"
@@ -100,49 +101,44 @@ void CgnsTest::SetDefaultGridName()
 
 void CgnsTest::WriteSimpleMultiBaseTest()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "smiplebase.cgns", CG_MODE_WRITE );
-    cgnsFile->WriteBase( "OneFLOW1" );
-    cgnsFile->WriteBase( "OneFLOW 2" );
-    cgnsFile->WriteBase( "CGNS base 3" );
-    cgnsFile->WriteBase( "Fluid" );
-    cgnsFile->WriteBase( "CAE library" );
-    delete cgnsFile;
+    // FIX: Stack allocation. Destructor automatically closes the file.
+    CgnsFile cgnsFile( "smiplebase.cgns", CG_MODE_WRITE );
+    cgnsFile.WriteBase( "OneFLOW1" );
+    cgnsFile.WriteBase( "OneFLOW 2" );
+    cgnsFile.WriteBase( "CGNS base 3" );
+    cgnsFile.WriteBase( "Fluid" );
+    cgnsFile.WriteBase( "CAE library" );
 }
 
 void CgnsTest::ReadSimpleMultiBaseTest()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "smiplebase.cgns", CG_MODE_READ );
-    cgnsFile->ReadBases();
-    delete cgnsFile;
+    CgnsFile cgnsFile( "smiplebase.cgns", CG_MODE_READ );
+    cgnsFile.ReadBases();
 }
 
 void CgnsTest::WriteDescriptor()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "descript.cgns", CG_MODE_WRITE );
-    cgnsFile->WriteBaseDescriptor();
-    delete cgnsFile;
+    CgnsFile cgnsFile( "descript.cgns", CG_MODE_WRITE );
+    cgnsFile.WriteBaseDescriptor();
+
 }
 
 void CgnsTest::ReadDescriptor()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "descript.cgns", CG_MODE_READ );
-    cgnsFile->ReadBaseDescriptor();
-    delete cgnsFile;
+    CgnsFile cgnsFile( "descript.cgns", CG_MODE_READ );
+    cgnsFile.ReadBaseDescriptor();
 }
 
 void CgnsTest::WriteEmptyCgnsFile()
 {
     //std::cout << " CgnsTest::WriteEmptyCgnsFile() " << "\n";
-    CgnsFile * cgnsFile = new CgnsFile( "empty.cgns", CG_MODE_WRITE );
+    CgnsFile cgnsFile( "empty.cgns", CG_MODE_WRITE );
     //std::cout << " 111 " << "\n";
-    delete cgnsFile;
-    //std::cout << " 222 " << "\n";
 }
 
 void CgnsTest::ReadEmptyCgnsFile()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "empty.cgns", CG_MODE_READ );
-    delete cgnsFile;
+    CgnsFile cgnsFile( "empty.cgns", CG_MODE_READ );
 }
 
 void CgnsTest::WriteDouble( const std::string & varName, const double & varValue )
@@ -173,18 +169,17 @@ void CgnsTest::TestCgnsLink()
     this->SetISize( isize );
     int nZones = 5;
 
-    CgnsFile * fileZone = new CgnsFile( fname, CG_MODE_WRITE );
-    CgnsBase * cgnsBase = fileZone->WriteBase( "Base" );
+    CgnsFile fileZone( fname, CG_MODE_WRITE );
+    CgnsBase * cgnsBase = fileZone.WriteBase( "Base" );
 
     for ( int iZone = 0; iZone < nZones; ++ iZone )
     {
         std::string name = AddString( "Zone", iZone + 1 );
         cgnsBase->WriteZoneInfo( name, CGNS_ENUMV( Structured ), isize );
     }
-    delete fileZone;
 
-    CgnsFile * fileZoneM = new CgnsFile( fname, CG_MODE_MODIFY );
-    CgnsBase * cgnsBaseM = fileZoneM->WriteBase( "Base" );
+    CgnsFile fileZoneM( fname, CG_MODE_MODIFY );
+    CgnsBase * cgnsBaseM = fileZoneM.WriteBase( "Base" );
 
     for ( int iZone = 0; iZone < nZones; ++ iZone )
     {
@@ -192,10 +187,8 @@ void CgnsTest::TestCgnsLink()
         cgnsBaseM->WriteZoneInfo( name, CGNS_ENUMV( Structured ), isize );
     }
 
-    delete fileZoneM;
-
-    CgnsFile * fileLink = new CgnsFile( linkname, CG_MODE_WRITE );
-    CgnsBase * cgnsBaseLink = fileLink->WriteBase( "Base2" );
+    CgnsFile fileLink( linkname, CG_MODE_WRITE );
+    CgnsBase * cgnsBaseLink = fileLink.WriteBase( "Base2" );
     cgnsBaseLink->GoToBase();
 
     for ( int iZone = 0; iZone < nZones; ++ iZone )
@@ -206,7 +199,6 @@ void CgnsTest::TestCgnsLink()
         cg_link_write( name.c_str(), fname.c_str(), linkpath.c_str() );
     }
 
-    delete fileLink;
 }
 
 void CgnsTest::GetArray( std::vector< std::vector< float > > & myfloat2d )
@@ -237,13 +229,11 @@ void CgnsTest::WriteArray()
     std::vector< std::vector< float > > myarray;
     this->GetArray( myarray );
 
-    CgnsFile * cgnsFile = new CgnsFile( "array.cgns", CG_MODE_WRITE );
-    CgnsBase * cgnsBase = cgnsFile->WriteBase( "BaseXXX" );
-    this->WriteArray( cgnsFile, cgnsBase );
-    cgnsBase = cgnsFile->WriteBase( "BaseYYY" );
-    this->WriteArray( cgnsFile, cgnsBase );
-
-    delete cgnsFile;
+    CgnsFile cgnsFile( "array.cgns", CG_MODE_WRITE );
+    CgnsBase * cgnsBase = cgnsFile.WriteBase( "BaseXXX" );
+    this->WriteArray( &cgnsFile, cgnsBase );
+    cgnsBase = cgnsFile.WriteBase( "BaseYYY" );
+    this->WriteArray( &cgnsFile, cgnsBase );
 }
 
 void CgnsTest::WriteArray( CgnsFile * cgnsFile, CgnsBase * cgnsBase )
@@ -280,9 +270,8 @@ void CgnsTest::WriteArray( CgnsFile * cgnsFile, CgnsBase * cgnsBase )
 
 void CgnsTest::ReadArray()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "array.cgns", CG_MODE_READ );
+    auto cgnsFile = std::make_unique<CgnsFile>( "array.cgns", CG_MODE_READ );
     cgnsFile->ReadArray();
-    delete cgnsFile;
 }
 
 void CgnsTest::WriteReferenceState()
@@ -305,7 +294,7 @@ void CgnsTest::WriteReferenceState()
     double vy       = 0.0;
     double vz       = 0.0;
 
-    CgnsFile * cgnsFile = new CgnsFile( "refstate.cgns", CG_MODE_WRITE );
+    auto cgnsFile = std::make_unique<CgnsFile>( "refstate.cgns", CG_MODE_WRITE );
     CgnsBase * cgnsBase1 = cgnsFile->WriteBase( "Base1" );
 
     cgnsBase1->GoToBase();
@@ -341,20 +330,19 @@ void CgnsTest::WriteReferenceState()
     cgnsBase3->GoToBase();
     cg_state_write("Test2");
 
-    delete cgnsFile; 
 }
+
 
 void CgnsTest::ReadReferenceState()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "refstate.cgns", CG_MODE_READ );
-    cgnsFile->ReadReferenceState();
-    delete cgnsFile; 
+    CgnsFile cgnsFile( "refstate.cgns", CG_MODE_READ );
+    cgnsFile.ReadReferenceState();
 }
 
 void CgnsTest::WriteConvergence()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "convergence.cgns", CG_MODE_WRITE );
-    CgnsBase * cgnsBase = cgnsFile->WriteBase( "Base" );
+    CgnsFile cgnsFile( "convergence.cgns", CG_MODE_WRITE );
+    CgnsBase * cgnsBase = cgnsFile.WriteBase( "Base" );
     cgnsBase->GoToBase();
     const int nIterations = 20;
     std::vector< double > cl( nIterations ), dl( 2 * nIterations );
@@ -380,14 +368,12 @@ void CgnsTest::WriteConvergence()
     cgsize_t muse = 2 * nIterations;
     cg_array_write("CoefLift",CGNS_ENUMV(RealDouble), 1, &nuse, &cl[ 0 ] );
     cg_array_write("DoefLift",CGNS_ENUMV(RealDouble), 1, &muse, &dl[ 0 ] );
-    delete cgnsFile; 
 }
 
 void CgnsTest::ReadConvergence()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "convergence.cgns", CG_MODE_READ );
-    cgnsFile->ReadConvergence();
-    delete cgnsFile; 
+    CgnsFile cgnsFile( "convergence.cgns", CG_MODE_READ );
+    cgnsFile.ReadConvergence(); 
 }
 
 
@@ -404,8 +390,8 @@ void CgnsTest::WriteFlowEqn()
     idata[4]=0;
     idata[5]=0;
 
-    CgnsFile * cgnsFile = new CgnsFile( "floweqn.cgns", CG_MODE_WRITE );
-    CgnsBase * cgnsBase = cgnsFile->WriteBase( "Base1" );
+    CgnsFile cgnsFile( "floweqn.cgns", CG_MODE_WRITE );
+    CgnsBase * cgnsBase = cgnsFile.WriteBase( "Base1" );
     CgnsZone * cgnsZone = cgnsBase->WriteZone( "Zone1" );
     cgnsZone->GoToZone();
 
@@ -449,14 +435,12 @@ void CgnsTest::WriteFlowEqn()
     //Create 'TurbulenceModel' under 'FlowEquationSet'
     cgnsZone->GoToNode( "FlowEquationSet_t", 1 );
     cg_model_write("TurbulenceModel_t",CGNS_ENUMV(OneEquation_SpalartAllmaras));
-    delete cgnsFile;
 }
 
 void CgnsTest::ReadFlowEqn()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "floweqn.cgns", CG_MODE_READ );
-    cgnsFile->ReadFlowEqn();
-    delete cgnsFile;
+    CgnsFile cgnsFile( "floweqn.cgns", CG_MODE_READ );
+    cgnsFile.ReadFlowEqn();
 }
 
 void CgnsTest::WriteTest()
@@ -933,17 +917,17 @@ int CgnsTest::read_grid_unst()
 
 void CgnsTest::mytest_read()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "mytest.cgns", CG_MODE_READ );
+    CgnsFile cgnsFile( "mytest.cgns", CG_MODE_READ );
     int index_base = -1;
     int icelldim = -1;
     int iphysdim = -1;
 
-    cgnsFile->ReadNumberOfBases();
-    std::cout << " cgnsFile->nBases = " << cgnsFile->nBases << "\n";
+    cgnsFile.ReadNumberOfBases();
+    std::cout << " cgnsFile.nBases = " << cgnsFile.nBases << "\n";
 
-    for ( int iBase = 0; iBase < cgnsFile->nBases; ++ iBase )
+    for ( int iBase = 0; iBase < cgnsFile.nBases; ++ iBase )
     {
-        CgnsBase * cgnsBase = cgnsFile->CreateCgnsBase();
+        CgnsBase * cgnsBase = cgnsFile.CreateCgnsBase();
         std::cout << " cgnsBase->baseId = " << cgnsBase->baseId << "\n";
         cgnsBase->ReadCgnsBaseBasicInfo();
         cgnsBase->ReadNumberOfCgnsZones();
@@ -957,16 +941,14 @@ void CgnsTest::mytest_read()
             cgnsZone->ReadCgnsGridBoundary();
         }
     }
-
-    delete cgnsFile;
 }
 
 void CgnsTest::mytest_write()
 {
-    CgnsFile * cgnsFile = new CgnsFile( "mytest.cgns", CG_MODE_WRITE );
+    CgnsFile cgnsFile( "mytest.cgns", CG_MODE_WRITE );
     int icelldim = 3;
     int iphysdim = 3;
-    CgnsBase * cgnsBase = cgnsFile->WriteBase( "Base", icelldim, iphysdim );
+    CgnsBase * cgnsBase = cgnsFile.WriteBase( "Base", icelldim, iphysdim );
 
     cgsize_t isize[ 3 ][ 1 ];
 
@@ -987,7 +969,7 @@ void CgnsTest::mytest_write()
     std::string zoneName = "Zone1";
     CgnsZone * cgnsZone = cgnsBase->WriteZoneInfo( zoneName, CGNS_ENUMV(Unstructured), isize[ 0 ] );
 
-    CgnsZbcBoco * cgnsZbcBoco = cgnsZone->cgnsZbc->cgnsZbcBoco;
+    CgnsZbcBoco * cgnsZbcBoco = cgnsZone->cgnsZbc->cgnsZbcBoco.get();
     CgnsBcBoco * cgnsBcBoco = 0;
     cgnsBcBoco = cgnsZbcBoco->WriteCgnsBoco( "Bc1", CGNS_ENUMV(BCTunnelInflow), CGNS_ENUMV(PointList), icounts, ipnts );
     cgnsBcBoco->WriteGridLocation( CGNS_ENUMV(FaceCenter) );
@@ -999,15 +981,13 @@ void CgnsTest::mytest_write()
     zoneName = "Zone2";
     cgnsZone = cgnsBase->WriteZoneInfo( zoneName, CGNS_ENUMV(Unstructured), isize[ 0 ] );
 
-    cgnsZbcBoco = cgnsZone->cgnsZbc->cgnsZbcBoco;
+    cgnsZbcBoco = cgnsZone->cgnsZbc->cgnsZbcBoco.get();
     cgnsBcBoco = cgnsZbcBoco->WriteCgnsBoco( "Bc_1", CGNS_ENUMV(BCTunnelInflow), CGNS_ENUMV(PointList), icounts, ipnts );
     cgnsBcBoco->WriteGridLocation( CGNS_ENUMV(Vertex) );
     cgnsBcBoco = cgnsZbcBoco->WriteCgnsBoco( "Bc_2", CGNS_ENUMV(BCTunnelInflow), CGNS_ENUMV(PointList), icounts, ipnts );
     cgnsBcBoco->WriteGridLocation( CGNS_ENUMV(Vertex) );
     cgnsBcBoco = cgnsZbcBoco->WriteCgnsBoco( "Bc_3", CGNS_ENUMV(BCTunnelInflow), CGNS_ENUMV(PointList), icounts, ipnts );
     cgnsBcBoco->WriteGridLocation( CGNS_ENUMV(CellCenter) );
-
-    delete cgnsFile;
 }
 
 EndNameSpace

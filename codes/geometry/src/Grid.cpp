@@ -21,26 +21,35 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Grid.h"
+#include "Fatal.h"
+#include "DataBase.h"
 #include "Dimension.h"
 #include "NodeMesh.h"
 #include "InterFace.h"
 #include "SlipFace.h"
-#include "DataBase.h"
 #include <iostream>
+#include <memory>
+#include <utility>
 
 
 BeginNameSpace( ONEFLOW )
 
-std::map< std::string, Grid * > * Grid::classMap = 0;
+namespace
+{
+using GridRegistry = std::map< std::string, std::unique_ptr< Grid > >;
+
+GridRegistry & GetGridRegistry()
+{
+    static GridRegistry registry;
+    return registry;
+}
+}
 
 Grid::Grid()
 {
     name = "grid";
     this->dimension = THREE_D;
     this->volBcType = -1;
-    this->nodeMesh = 0;
-    this->interFace = 0;
-    this->dataBase = 0;
 }
 
 Grid::~Grid()
@@ -48,52 +57,74 @@ Grid::~Grid()
     this->Free();
 }
 
-Grid * Grid::SafeClone( const std::string & type )
+DataBase * Grid::GetDataBase()
 {
-    std::map < std::string, Grid * >::iterator iter = Grid::classMap->find( type );
-    if ( iter == Grid::classMap->end() )
+    return dataBase.get();
+}
+
+const DataBase * Grid::GetDataBase() const
+{
+    return dataBase.get();
+}
+
+DataBase & Grid::RequireDataBase()
+{
+    if ( dataBase == nullptr )
     {
-        std::cout << type << " class not found" << std::endl;
-        exit( 0 );
+        throw std::logic_error( "Grid: DataBase is not initialized" );
+    }
+    return *dataBase;
+}
+
+const DataBase & Grid::RequireDataBase() const
+{
+    if ( dataBase == nullptr )
+    {
+        throw std::logic_error( "Grid: DataBase is not initialized" );
+    }
+    return *dataBase;
+}
+
+std::unique_ptr< Grid > Grid::SafeCloneUnique( const std::string & type )
+{
+    GridRegistry & registry = GetGridRegistry();
+    GridRegistry::iterator iter = registry.find( type );
+    if ( iter == registry.end() )
+    {
+        Fatal( type + " class not found" );
+        return nullptr;
     }
 
     return iter->second->Clone();
 }
 
-Grid * Grid::Register( const std::string & type, Grid * clone )
-{
-    if ( ! Grid::classMap )
-    {
-        Grid::classMap = new std::map < std::string, Grid * >();
-    }
 
-    std::map < std::string, Grid * >::iterator iter = Grid::classMap->find( type );
-    if ( iter == Grid::classMap->end() )
-    {
-        ( * Grid::classMap )[ type ] = clone;
-        return clone;
-    }
-    else
-    {
-        delete clone;
-        return iter->second;
-    }
+Grid * Grid::Register( const std::string & type, std::unique_ptr< Grid > clone )
+{
+    GridRegistry & registry = GetGridRegistry();
+    GridRegistry::iterator iter = registry.find( type );
+    if ( iter != registry.end() ) return iter->second.get();
+
+    Grid * registeredGrid = clone.get();
+    registry.emplace( type, std::move( clone ) );
+    return registeredGrid;
 }
 
 void Grid::BasicInit()
 {
-    nodeMesh  = new NodeMesh();
-    interFace = new InterFace();
-    slipFace  = new SlipFace();
-    dataBase  = new DataBase();
+    this->Free();
+    nodeMesh  = std::make_unique< NodeMesh >();
+    interFace = std::make_unique< InterFace >();
+    slipFace  = std::make_unique< SlipFace >();
+    dataBase = std::make_unique< DataBase >();
 }
 
 void Grid::Free()
 {
-    delete nodeMesh;
-    delete interFace;
-    delete slipFace;
-    delete dataBase;
+    nodeMesh.reset();
+    interFace.reset();
+    slipFace.reset();
+    dataBase.reset();
 }
 
 void Grid::Init()
@@ -101,17 +132,17 @@ void Grid::Init()
     this->BasicInit();
 }
 
-bool Grid::IsOneD()
+bool Grid::IsOneD() const
 {
     return this->dimension == ONEFLOW::ONE_D;
 }
 
-bool Grid::IsTwoD()
+bool Grid::IsTwoD() const
 {
     return this->dimension == ONEFLOW::TWO_D;
 }
 
-bool Grid::IsThreeD()
+bool Grid::IsThreeD() const
 {
     return this->dimension == ONEFLOW::THREE_D;
 }

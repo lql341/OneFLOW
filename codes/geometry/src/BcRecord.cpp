@@ -28,6 +28,7 @@ License
 #include "HXMath.h"
 #include "HXStd.h"
 #include <iostream>
+#include <utility>
 
 BeginNameSpace( ONEFLOW )
 
@@ -41,20 +42,30 @@ BcInfo::~BcInfo()
     ;
 }
 
-BcRecord::BcRecord()
+BcRecord::BcRecord() = default;
+
+BcRecord::BcRecord( const BcRecord & other )
+    : bcType( other.bcType ), bcNameId( other.bcNameId ), bcInfo( nullptr )
 {
-    bcInfo = 0;
 }
 
-BcRecord::~BcRecord()
+BcRecord & BcRecord::operator=( const BcRecord & other )
 {
-    delete bcInfo;
+    if ( this == &other ) return *this;
+
+    // bcInfo is derived from the boundary arrays and must be rebuilt.
+    this->bcInfo.reset();
+    this->bcType = other.bcType;
+    this->bcNameId = other.bcNameId;
+    return *this;
 }
+
+BcRecord::~BcRecord() = default;
 
 void BcRecord::CreateBcTypeRegion()
 {
     if ( bcInfo ) return;
-    this->bcInfo = new BcInfo();
+    this->bcInfo = std::make_unique< BcInfo >();
 
     IntSet bcTypeSet;
     IntSet bcUserTypeSet;
@@ -96,16 +107,16 @@ void BcRecord::CreateBcTypeRegion()
             }
         }
     }
-    int kkk = 1;
 }
 
-int BcRecord::GetNBFace()
+int BcRecord::GetNBFace() const
 {
     return bcType.size();
 }
 
 void BcRecord::Init( HXSize_t nBFaces )
 {
+    this->bcInfo.reset();
     this->bcType.resize( nBFaces );
     this->bcNameId.resize( nBFaces );
 }
@@ -142,9 +153,8 @@ int BcRecord::CalcNumWallFace()
     return nWFace;
 }
 
-void BcRecord::GenerateI2B( InterFace * interFace )
+void BcRecord::GenerateI2B( InterFace & interFace )
 {
-    if ( ! interFace ) return;
 
     int nBFaces = this->GetNBFace();
 
@@ -156,22 +166,42 @@ void BcRecord::GenerateI2B( InterFace * interFace )
             continue;
         }
 
-        interFace->i2b[ iFace ] = iBFace;
+        interFace.i2b[ iFace ] = iBFace;
         ++ iFace;
+    }
+}
+
+void BcRecord::CalcBcType( IntField & bcTypeList )
+{
+    IntSet bcTypeSet;
+
+    int nBFaces = this->GetNBFace();
+
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        int bcType = this->bcType[ iFace ];
+        bcTypeSet.insert( bcType );
+    }
+
+    for ( IntSet::iterator iter = bcTypeSet.begin(); iter != bcTypeSet.end(); ++ iter )
+    {
+        bcTypeList.push_back( * iter );
     }
 }
 
 BcManager::BcManager()
 {
-    bcRecord = new BcRecord();
-    bcRecordNew = new BcRecord();
+    // [Refactored] Use std::make_unique for exception-safe allocation.
+    this->bcRecord = std::make_unique<BcRecord>();
+    this->bcRecordNew = std::make_unique<BcRecord>();
 }
 
 BcManager::~BcManager()
 {
-    delete bcRecord;
-    delete bcRecordNew;
+    // [Refactored] Destructor is now empty. 
+    // std::unique_ptr automatically cleans up the owned BcRecord objects.
 }
+
 
 void BcManager::PreProcess()
 {
@@ -179,7 +209,7 @@ void BcManager::PreProcess()
     bcFlag.resize( nBFaces, 1 );
 }
 
-bool BcManager::ExistInterface()
+bool BcManager::ExistInterface() const
 {
     int nBFaces = this->bcRecord->GetNBFace();
 
@@ -196,28 +226,20 @@ bool BcManager::ExistInterface()
 
 void BcManager::Update()
 {
-    * this->bcRecord = * this->bcRecordNew;
+    // [Note] The following line uses operator* which is overloaded by unique_ptr.
+    // It performs a value-copy assignment between the two BcRecord objects.
+    // This syntax remains 100% identical to the legacy code.
+    * this->bcRecord = * this->bcRecordNew; 
+
     int nBFaces = this->bcRecord->bcType.size();
     this->bcFlag.resize( nBFaces );
     this->bcFlag = 1;
 }
 
+
 void BcManager::CalcBcType( IntField & bcTypeList )
 {
-    IntSet bcTypeSet;
-
-    int nBFaces = this->bcRecord->GetNBFace();
-
-    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
-    {
-        int bcType = this->bcRecord->bcType[ iFace ];
-        bcTypeSet.insert( bcType );
-    }
-
-    for ( IntSet::iterator iter = bcTypeSet.begin(); iter != bcTypeSet.end(); ++ iter )
-    {
-        bcTypeList.push_back( * iter );
-    }
+    this->bcRecord->CalcBcType( bcTypeList );
 }
 
 void BasicRegion::SetRegion( int ist, int ied, int jst, int jed )
@@ -315,8 +337,8 @@ TestRegionM::~TestRegionM()
 
 void TestRegionM::Run( BcRegion * bcRegion, int dimension )
 {
-    s.Run( bcRegion->s, dimension );
-    t.Run( bcRegion->t, dimension );
+    s.Run( bcRegion->s.get(), dimension );
+    t.Run( bcRegion->t.get(), dimension );
 
     for ( int i = 0; i < 3; ++ i )
     {
@@ -338,19 +360,14 @@ void TestRegionM::Run( BcRegion * bcRegion, int dimension )
 }
 
 BcRegion::BcRegion( int zid, int rid )
+    : s( std::make_unique< BasicRegion >() ),
+      t( std::make_unique< BasicRegion >() )
 {
-    s = new BasicRegion();
-    t = new BasicRegion();
-
     this->rid = rid;
     s->zid = zid;
 }
 
-BcRegion::~BcRegion()
-{
-    delete s;
-    delete t;
-}
+BcRegion::~BcRegion() = default;
 
 void BcRegion::GetNormalizeIJKRegion( int & ist, int & ied, int & jst, int & jed, int & kst, int & ked )
 {
@@ -376,37 +393,24 @@ int BcRegion::CalcRegionCells()
     return nRegionCells;
 }
 
-BcRegionGroup::BcRegionGroup()
-{
-    regions = 0;
-}
+BcRegionGroup::BcRegionGroup() = default;
 
-BcRegionGroup::~BcRegionGroup()
-{
-    if ( regions )
-    {
-        int nBcRegions = regions->size();
-        for ( int ir = 0; ir < nBcRegions; ++ ir )
-        {
-            delete ( * regions )[ ir ];
-        }
-        delete regions;
-    }
-}
+BcRegionGroup::~BcRegionGroup() = default;
 
 void BcRegionGroup::Create( int nBcRegions )
 {
-    regions = new HXVector< BcRegion * >( nBcRegions );
+    regions.clear();
+    regions.resize( nBcRegions );
 }
 
-void BcRegionGroup::SetBcRegion( int ir, BcRegion * bcRegion )
+void BcRegionGroup::SetBcRegion( int ir, std::unique_ptr< BcRegion > bcRegion )
 {
-    ( * regions )[ ir ] = bcRegion;
+    regions[ ir ] = std::move( bcRegion );
 }
 
 BcRegion *  BcRegionGroup::GetBcRegion( int ir )
 {
-    return ( * regions )[ ir ];
+    return regions[ ir ].get();
 }
 
 EndNameSpace

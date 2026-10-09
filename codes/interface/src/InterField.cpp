@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "InterField.h"
+#include "Fatal.h"
 #include "Grid.h"
 #include "Zone.h"
 #include "ZoneState.h"
@@ -32,38 +33,34 @@ License
 #include "DataBase.h"
 #include "DataStorage.h"
 #include "ActionState.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 
 BeginNameSpace( ONEFLOW )
 
 void PrepareInterfaceFieldRecord( int solverType, int iFk, int iSr, FieldRecord * fieldRecord )
 {
-    Grid * grid = Zone::GetGrid();
-    InterFace * interFace = grid->interFace;
+    Grid & grid = Zone::GetGridReference();
+    InterFace & interFace = *grid.interFace;
 
-    InterFaceState::interFace = interFace;
+    // Stack-local list: only used inside this function.
+    HXVector< DataStorage * > iDataStorageList;
+    GetInterfaceDataStorageList( interFace, &iDataStorageList, iSr );
 
-    HXVector< DataStorage * > * iDataStorageList = new HXVector< DataStorage * >;
+    VarNameSolver * varNameSolver =
+        VarNameFactory::GetVarNameSolver( solverType, iFk );
 
-    GetInterfaceDataStorageList( iDataStorageList, iSr );
-
-    VarNameSolver * varNameSolver = VarNameFactory::GetVarNameSolver( solverType, iFk );
-
-    for ( int dataId = 0; dataId < iDataStorageList->size(); ++ dataId )
+    for ( int dataId = 0; dataId < iDataStorageList.size(); ++ dataId )
     {
-        DataStorage * dataStorage = ( * iDataStorageList )[ dataId ];
+        DataStorage * dataStorage = iDataStorageList[ dataId ];
         AddFieldRecord( fieldRecord, dataStorage, varNameSolver->data );
     }
-
-    delete iDataStorageList;
 }
 
-void GetInterfaceDataStorageList( HXVector< DataStorage * > * iDataStorageList, int srFlag )
+void GetInterfaceDataStorageList( InterFace & interFace, HXVector< DataStorage * > * iDataStorageList, int srFlag )
 {
-    InterFace * interFace = InterFaceState::interFace;
     for ( int ghostId = MAX_GHOST_LEVELS - 1; ghostId >= 0; -- ghostId )
     {
-        DataStorage * dataStorage = GetInterfaceDataStorage( interFace, srFlag, ghostId );
+        DataStorage * dataStorage = GetInterfaceDataStorage( &interFace, srFlag, ghostId );
         iDataStorageList->push_back( dataStorage );
     }
 }
@@ -72,11 +69,11 @@ DataStorage * GetInterfaceDataStorage( InterFace * interFace, int srFlag, int gh
 {
     if ( srFlag == SEND_STORAGE )
     {
-        return interFace->dataSend[ ghostId ];
+        return &interFace->GetSendStorage( ghostId );
     }
     else if ( srFlag == RECV_STORAGE )
     {
-        return interFace->dataRecv[ ghostId ];
+        return &interFace->GetRecvStorage( ghostId );
     }
     else
     {
@@ -84,21 +81,40 @@ DataStorage * GetInterfaceDataStorage( InterFace * interFace, int srFlag, int gh
     }
 }
 
-void AddFieldRecord( FieldRecord * fieldRecord, DataStorage * dataStorage, StringField & fieldNameList )
+void AddFieldRecord(
+    FieldRecord * fieldRecord,
+    DataStorage * dataStorage,
+    const StringField & fieldNameList )
 {
-    for ( int iField = 0; iField < fieldNameList.size(); ++ iField )
+    for ( int iField = 0;
+        iField < fieldNameList.size();
+        ++ iField )
     {
-        std::string & fieldName = fieldNameList[ iField ];
-        MRField * field = ONEFLOW::GetFieldPointer< MRField >( dataStorage, fieldName );
-        int nEqu = GFieldProperty::GetNEqu( fieldName );
-        fieldRecord->AddField( field , nEqu );
+        const std::string & fieldName =
+            fieldNameList[ iField ];
+
+        MRField * field =
+            ONEFLOW::GetFieldPointer< MRField >(
+                dataStorage,
+                fieldName );
+
+        if ( field == nullptr )
+        {
+            // Interface storage must already hold every communication field.
+            Fatal(
+                "Interface field is not allocated in DataStorage: "
+                + fieldName );
+        }
+
+        fieldRecord->AddField(
+            field );
     }
 }
 
 void SetInterfaceFieldData( int iSr, FieldRecord * fieldRecord )
 {
-    Grid * grid = Zone::GetGrid();
-    InterFace * interFace = grid->interFace;
+    Grid & grid = Zone::GetGridReference();
+    InterFace * interFace = grid.interFace.get();
     if ( ! ONEFLOW::IsValid( interFace ) ) return;
 
     int oppoSr = GetOppositeSendRecv( iSr );
@@ -107,26 +123,32 @@ void SetInterfaceFieldData( int iSr, FieldRecord * fieldRecord )
     //How many neighbors of the current zone do you need to find out? This value is neiid.
 
     int neiId = interFace->z2n[ ZoneState::GetZid( oppoSr ) ];
-    int nIFaces = interFace->interFacePairs[ neiId ]->nIFaces;
+    int nIFaces = interFace->GetInterfacePair( neiId ).nIFaces;
     IntField & interfaceId = interFace->GetInterfaceId( neiId, iSr );
     
     ActionState::dataBook->MoveToBegin();
 
-    int nRecords = fieldRecord->nEquList.size();
+    int nRecords = fieldRecord->Size();
 
     for ( int fieldId = 0; fieldId < nRecords; ++ fieldId )
     {
-        int nEqu = fieldRecord->nEquList[ fieldId ];
-        MRField * field  = fieldRecord->GetField( fieldId );
+        MRField * field =
+            fieldRecord->GetField( fieldId );
+
         if ( iSr == GREAT_SEND )
         {
-            HXWriteSubData( ActionState::dataBook, field, interfaceId );
+            HXWriteSubData(
+                ActionState::dataBook,
+                field,
+                interfaceId );
         }
         else
         {
-            HXReadSubData( ActionState::dataBook, field, interfaceId );
+            HXReadSubData(
+                ActionState::dataBook,
+                field,
+                interfaceId );
         }
-        
     }
 }
 

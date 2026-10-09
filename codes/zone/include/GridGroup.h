@@ -23,7 +23,6 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "GridDef.h"
 #include <fstream>
 #include <string>
 
@@ -50,17 +49,19 @@ protected:
     void CreateGridTest( int zoneId );
 public:
     void ReadGrid( const std::string & fileName );
+    void ReadGrid( const std::string & fileName, const std::string & caseDir );
     void InitZoneLayout( const std::string & fileName );
+    void InitZoneLayout( const std::string & fileName, const std::string & caseDir );
 protected:
     void InitZoneLayout( std::fstream & file );
     void SetMultiZoneLayout();
 };
 
 class DataBook;
-void ReadAbstractData( std::fstream & file, DataBook * dataBook, int sendpid, int recvpid, int tag = 0 );
-void DataToGrid( DataBook * dataBook, int zid );
-void DataToGridImp( DataBook * dataBook, int zid );
-void DataToGridTest( DataBook * dataBook, int zid );
+void ReadAbstractData( std::fstream & file, DataBook & dataBook, int sendpid, int recvpid, int tag = 0 );
+void DataToGrid( DataBook & dataBook, int zid );
+void DataToGridImp( DataBook & dataBook, int zid );
+void DataToGridTest( DataBook & dataBook, int zid );
 
 
 EndNameSpace

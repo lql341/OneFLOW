@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "BlockFaceSolver.h"
+#include <memory>
 #include "MLine.h"
 #include "SimpleDomain.h"
 #include "LineMachine.h"
@@ -43,14 +44,7 @@ MDomain::MDomain()
     ;
 }
 
-MDomain::~MDomain()
-{
-    int nSDomain = sDomainList.size();
-    for ( int iSDomain = 0; iSDomain < nSDomain; ++ iSDomain )
-    {
-        delete sDomainList[ iSDomain ];
-    }
-}
+MDomain::~MDomain() = default;
 
 void MDomain::CalcSubDomainCtrlCoor()
 {
@@ -60,7 +54,7 @@ void MDomain::CalcSubDomainCtrlCoor()
         int nDomain = sDomainList.size();
         for ( int iDomain = 0; iDomain < nDomain; ++ iDomain )
         {
-            SDomain * sDomain = sDomainList[ iDomain ];
+            SDomain * sDomain = sDomainList[ iDomain ].get();
             bool flag = sDomain->CalcSingleDomainCoor();
             local_flag = ( flag && local_flag );
         }
@@ -70,9 +64,9 @@ void MDomain::CalcSubDomainCtrlCoor()
 
 void MDomain::AddSubDomain( int fid, IntField & lineList, IntField & posList )
 {
-    SDomain * sdomain = new SDomain( this );
+    auto sdomain = std::make_unique< SDomain >( this->coorMap );
     sdomain->SetDomain( fid, lineList, posList );
-    sDomainList.push_back( sdomain );
+    sDomainList.push_back( std::move( sdomain ) );
 }
 
 SDomain * MDomain::FindSDomain( int fid )
@@ -80,7 +74,7 @@ SDomain * MDomain::FindSDomain( int fid )
     int nSDomain = sDomainList.size();
     for ( int iSDomain = 0; iSDomain < nSDomain; ++ iSDomain )
     {
-        SDomain * sDomain = sDomainList[ iSDomain ];
+        SDomain * sDomain = sDomainList[ iSDomain ].get();
         if ( sDomain->domain_id == fid )
         {
             return sDomain;
@@ -106,7 +100,7 @@ void MDomain::ConstructMultiDomainTopo()
     int nSDomain = sDomainList.size();
     for ( int iSDomain = 0; iSDomain < nSDomain; ++ iSDomain )
     {
-        SDomain * sDomain = sDomainList[ iSDomain ];
+        SDomain * sDomain = sDomainList[ iSDomain ].get();
         sDomain->ConstructSDomainCtrlPoint();
         sDomain->ConstructDomainTopo();
     }
@@ -123,29 +117,29 @@ void MDomain::ConstructMultiLineToDomainMap()
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sdomain = this->sDomainList[ iDomain ];
+        SDomain * sdomain = this->sDomainList[ iDomain ].get();
         sdomain->ConstructLineToDomainMap( this->lineToDomainMap );
     }
 
-    int kkk = 1;
+
 }
 
 void MDomain::ConstructPointToLineMap()
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sdomain = this->sDomainList[ iDomain ];
+        SDomain * sdomain = this->sDomainList[ iDomain ].get();
         sdomain->ConstructPointToLineMap( this->pointToLineMap );
     }
 
-    int kkk = 1;
+
 }
 
 void MDomain::ConstructMultiPointToDomainMap()
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sdomain = this->sDomainList[ iDomain ];
+        SDomain * sdomain = this->sDomainList[ iDomain ].get();
         sdomain->ConstructPointToDomainMap( this->pointToDomainMap );
     }
 }
@@ -154,25 +148,25 @@ void MDomain::ConstructMultiPointToPointMap()
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sdomain = this->sDomainList[ iDomain ];
+        SDomain * sdomain = this->sDomainList[ iDomain ].get();
         sdomain->ConstructPointToPointMap( this->pointToPointMap );
     }
 }
 
-void MDomain::CreateInpFaceList( HXVector< Face2D * > &facelist )
+void MDomain::CreateInpFaceList( HXVector< std::unique_ptr<Face2D> > &facelist )
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sDomain = this->sDomainList[ iDomain ];
+        SDomain * sDomain = this->sDomainList[ iDomain ].get();
         sDomain->CreateInpFaceList( facelist );
     }
 }
 
-void MDomain::CreateInpFaceList1D( HXVector< Face2D * > &facelist )
+void MDomain::CreateInpFaceList1D( HXVector< std::unique_ptr<Face2D> > &facelist )
 {
     for ( int iDomain = 0; iDomain < this->sDomainList.size(); ++ iDomain )
     {
-        SDomain * sDomain = this->sDomainList[ iDomain ];
+        SDomain * sDomain = this->sDomainList[ iDomain ].get();
         sDomain->CreateInpFaceList1D( facelist );
     }
 }
@@ -182,7 +176,7 @@ void MDomain::SetBlkBcMesh( Block3D * blk3d )
     int nSDomain = sDomainList.size();
     for ( int iSDomain = 0; iSDomain < nSDomain; ++ iSDomain )
     {
-        SDomain * sDomain = sDomainList[ iSDomain ];
+        SDomain * sDomain = sDomainList[ iSDomain ].get();
         sDomain->SetBlkBcMesh( blk3d );
     }
 }
@@ -192,7 +186,7 @@ void MDomain::SetBlkBcMesh( Block2D * blk2d )
     int nSDomain = sDomainList.size();
     for ( int iSDomain = 0; iSDomain < nSDomain; ++ iSDomain )
     {
-        SDomain * sDomain = sDomainList[ iSDomain ];
+        SDomain * sDomain = sDomainList[ iSDomain ].get();
         sDomain->SetBlkBcMesh( blk2d );
     }
 }

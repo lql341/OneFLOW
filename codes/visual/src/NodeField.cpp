@@ -30,42 +30,40 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-MRField * AllocateNodeField( int nEqu )
+std::unique_ptr<MRField> AllocateNodeField( int nEqu )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
     int nNodes = grid->nNodes;
-    MRField * nf = new MRField( nEqu, nNodes );
-    return nf;
+    return std::make_unique<MRField>( nEqu, nNodes );
 }
 
-MRField * InterpolateCellToNode( const std::string & name )
+std::unique_ptr<MRField> InterpolateCellToNode( const std::string & name )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * cf = GetFieldPointer< MRField > ( grid, name );
     int nNodes = grid->nNodes;
     int nEqu = cf->GetNEqu();
 
-    MRField * nf = AllocateNodeField( nEqu );
+    auto nf = AllocateNodeField( nEqu );
     for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
     {
-        InterpolateCellToNodeForComponent( ( * nf )[ iEqu ], ( * cf )[ iEqu ] );
+        InterpolateCellToNodeForComponent( (*nf)[ iEqu ], (*cf)[ iEqu ] );
     }
     return nf;
 }
 
-MRField * InterpolateCellToNode( RealField & qc )
+std::unique_ptr<MRField> InterpolateCellToNode( RealField & qc )
 {
-    UnsGrid * grid = Zone::GetUnsGrid();
-    MRField * fn = AllocateNodeField( 1 );
-    InterpolateCellToNodeForComponent( ( * fn )[ 0 ], qc );
+    auto fn = AllocateNodeField( 1 );
+    InterpolateCellToNodeForComponent( (*fn)[ 0 ], qc );
     return fn;
 }
 
 void InterpolateCellToNodeForComponent( RealField & qNodeField, RealField & qField )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    FaceTopo * faceTopo = grid->faceTopo;
-    LinkField & f2c = faceTopo->faces;
+    FaceTopo * faceTopo = &grid->GetFaceTopo();
+    LinkField & f2c = faceTopo->GetFaces();
 
     int nNodes = grid->nNodes;
     int nFaces = grid->nFaces;
@@ -75,8 +73,8 @@ void InterpolateCellToNodeForComponent( RealField & qNodeField, RealField & qFie
 
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
 
         int fnNode = f2c[ iFace ].size();
         for ( int iNode = 0; iNode < fnNode; ++ iNode )
@@ -105,9 +103,9 @@ void InterpolateCellToNodeForComponent( RealField & qNodeField, RealField & qFie
 void ApplyBoundaryConditionToNodeField( RealField & qNodeField, RealField & qField, RealField & nCount, int bcType, bool twoSide )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    FaceTopo * faceTopo = grid->faceTopo;
-    BcRecord * bcRecord = faceTopo->bcManager->bcRecord;
-    LinkField & f2c = faceTopo->faces;
+    FaceTopo * faceTopo = &grid->GetFaceTopo();
+    BcRecord * bcRecord = &faceTopo->GetBcRecord();
+    LinkField & f2c = faceTopo->GetFaces();
 
     int nNodes = grid->nNodes;
     int nFaces = grid->nFaces;
@@ -116,8 +114,8 @@ void ApplyBoundaryConditionToNodeField( RealField & qNodeField, RealField & qFie
     for ( int iFace = 0; iFace < nBFaces; ++ iFace )
     {
         if ( bcRecord->bcType[ iFace ] != bcType ) continue;
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
 
         int fnNode = f2c[ iFace ].size();
         for ( int iNode = 0; iNode < fnNode; ++ iNode )
@@ -132,8 +130,8 @@ void ApplyBoundaryConditionToNodeField( RealField & qNodeField, RealField & qFie
     {
         if ( bcRecord->bcType[ iFace ] != bcType ) continue;
 
-        int lc = faceTopo->lCells[ iFace ];
-        int rc = faceTopo->rCells[ iFace ];
+        int lc = faceTopo->GetLeftCells()[ iFace ];
+        int rc = faceTopo->GetRightCells()[ iFace ];
 
         int fnNode = f2c[ iFace ].size();
         for ( int iNode = 0; iNode < fnNode; ++ iNode )

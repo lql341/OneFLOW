@@ -37,6 +37,7 @@ License
 #include "TurbPlate.h"
 #include "SolverRegister.h"
 #include "DataBase.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -65,9 +66,9 @@ void INsInitFinal( StringField & data )
     INsCalcGamaT( F_GHOST );
     //ICalcLaminarViscosity( F_GHOST );
 
-    Grid * grid = Zone::GetGrid();
+    Grid & grid = Zone::GetGridReference();
 
-    if ( Zone::GetCGrid( grid ) )
+    if ( Zone::GetCGrid( &grid ) )
     {
         //RestrictAllQ( NS_SOLVER, FLOW_FIELD_INDEX );
 
@@ -95,16 +96,14 @@ void INsCalcBoundary( StringField & data )
 
 void INsCalcTimeStep( StringField & data )
 {
-    UTimeStep * uTimeStep = new UTimeStep();
+    auto uTimeStep = std::make_unique<UTimeStep>();
     uTimeStep->CalcTimeStep();
-    delete uTimeStep;
 }
 
 void INsUpdateResiduals( StringField & data )
 {
-    Rhs * rhs = new INsRhs();
+    auto rhs = std::make_unique<INsRhs>();
     rhs->UpdateResiduals();
-    delete rhs;
 }
 
 void INsImplicitMethod( StringField & data )

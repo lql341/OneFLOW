@@ -35,9 +35,13 @@ class SimuImp : public SimuBase
 {
 public:
     explicit SimuImp( std::vector<std::string>& args );
+    SimuImp( const std::string& caseDir, bool debug );
     ~SimuImp() override;
 
     void Run() override;
+
+    // Execute one case while keeping process-level runtime alive.
+    void RunCase();
 
     // Exposed for tests that inject a pre-built context path later.
     SimuContext& Context() { return *ctx_; }
@@ -47,6 +51,9 @@ public:
     void PreProcess();
     void MainProcess();
     void PostProcess();
+
+    // Finalize process-level runtime after the case has completed.
+    void FinalizeEnvironment();
 
 protected:
     void InitSimu();

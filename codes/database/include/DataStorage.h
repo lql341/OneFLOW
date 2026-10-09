@@ -22,6 +22,8 @@ License
 
 #pragma once
 #include "NamespaceMacros.h"
+#include <memory>
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
 
@@ -31,10 +33,32 @@ class DataStorage
 public:
     DataStorage();
     ~DataStorage();
-protected:
-    DataBase * dataBase;
+private:
+    std::unique_ptr<DataBase> dataBase;
+
 public:
-    DataBase * GetDataBase() { return dataBase;  };
+    DataBase * GetDataBase() { return dataBase.get(); };
+    const DataBase * GetDataBase() const { return dataBase.get(); }
+    DataBase & RequireDataBase()
+    {
+        if ( dataBase == nullptr )
+        {
+            throw std::logic_error( "DataStorage: DataBase is not initialized" );
+        }
+        return *dataBase;
+    }
+    const DataBase & RequireDataBase() const
+    {
+        if ( dataBase == nullptr )
+        {
+            throw std::logic_error( "DataStorage: DataBase is not initialized" );
+        }
+        return *dataBase;
+    }
+
+protected:
+    void InitializeDataBase();
+    void ResetDataBase() noexcept;
 };
 
 EndNameSpace

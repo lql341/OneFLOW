@@ -23,6 +23,7 @@ License
 
 #pragma once
 #include "UnitElement.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -32,10 +33,10 @@ public:
     ElementHome();
     ~ElementHome();
 public:
-    static HXVector< UnitElement * > unitElement;
+    static HXVector< std::unique_ptr< UnitElement > > unitElement;
     static int numberOfUnitElement;
 public:
-    static UnitElement * GetUnitElement( int elementType );
+    static UnitElement & GetUnitElement( int elementType );
 public:
     static void Initialize();
     static void Free();

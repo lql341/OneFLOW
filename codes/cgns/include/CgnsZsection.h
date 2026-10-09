@@ -23,6 +23,7 @@ License
 
 #pragma once
 #include "HXDefine.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -34,23 +35,23 @@ class CgnsSection;
 class CgnsZsection
 {
 public:
-    CgnsZsection( CgnsZone * cgnsZone );
+    explicit CgnsZsection( CgnsZone & cgnsZone );
     ~CgnsZsection();
+private:
+    HXVector< std::unique_ptr< CgnsSection > > cgnsSections;
+    CgnsZone & cgnsZone;
 public:
-    int nSection;
-
-    HXVector< CgnsSection * > cgnsSections;
-    CgnsZone * cgnsZone;
-public:
-    void AddCgnsSection( CgnsSection * cgnsSection );
-    CgnsSection * GetCgnsSection( int iSection );
-    bool HasPolygonSection();
-    void CreateCgnsSection();
+    void AddCgnsSection( std::unique_ptr< CgnsSection > cgnsSection );
+    CgnsSection & GetCgnsSection( int iSection );
+    const CgnsSection & GetCgnsSection( int iSection ) const;
+    int GetNSections() const;
+    bool HasPolygonSection() const;
+    void CreateCgnsSections( int nSections );
     void CreateConnList();
     void ConvertToInnerDataStandard();
     CgnsSection * GetSectionByEid( int eId );
 public:
-    void ReadNumberOfCgnsSections();
+    int ReadNumberOfCgnsSections();
     void ReadCgnsSections();
     void DumpCgnsSections();
     void SetElemPosition();

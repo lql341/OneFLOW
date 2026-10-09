@@ -6,23 +6,22 @@ License
     This file is part of OneFLOW.
 
     OneFLOW is free software: you can redistribute it and/or modify it
-    under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
+    under the terms of the GNU General Public License as published by the
+    Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
-    OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    OneFLOW is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\---------------------------------------------------------------------------*/
 
 #include "UTurbUnsteady.h"
 #include "SolverDef.h"
-#include "UsdData.h"
 #include "Com.h"
 #include "UCom.h"
 #include "UnsGrid.h"
@@ -34,49 +33,61 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-UTurbUsdField::UTurbUsdField()
-{
-}
-
-UTurbUsdField::~UTurbUsdField()
-{
-}
-
-void UTurbUsdField::Init()
-{
-    this->InitBasic( TURB_SOLVER );
-}
-
 UTurbUnsteady::UTurbUnsteady()
 {
-    this->solverType = TURB_SOLVER;
-    data = new TurbUsdData();
-    field = new UTurbUsdField();
-    data->Init();
-    field->Init();
+    this->SetEquationCount( turbcom.nEqu );
 
-    this->srcFun = & UTurbUnstPrepareSrcData;
-    this->criFun = & UTurbUnstPrepareCriData;
+    this->SetSourceFunction( & UTurbUnstPrepareSrcData );
+    this->SetCriterionFunction( & UTurbUnstPrepareCriData );
 
     ug.Init();
     uturbf.Init();
 }
-
-UTurbUnsteady::~UTurbUnsteady()
+void UTurbUnstPrepareSrcData( UUnsteady * unsteady )
 {
-    delete data;
-    delete field;
-}
+    MRField * q =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Current );
 
-void UTurbUnstPrepareSrcData( Unsteady * unst )
-{
-    UsdData * data = unst->data;
-    UsdField * field = unst->field;
-    for ( int iEqu = 0; iEqu < data->nEqu; ++ iEqu )
+    MRField * q1 =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Previous );
+
+    MRField * q2 =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Old );
+
+    RealField & primitive =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Current );
+
+    RealField & primitive1 =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Previous );
+
+    RealField & primitive2 =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Old );
+
+    RealField & conservative =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Current );
+
+    RealField & conservative1 =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Previous );
+
+    RealField & conservative2 =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Old );
+
+    for ( int iEqu = 0; iEqu < unsteady->GetEquationCount(); ++ iEqu )
     {
-        data->prim [ iEqu ] = ( * field->q  )[ iEqu ][ ug.cId ];
-        data->prim1[ iEqu ] = ( * field->q1 )[ iEqu ][ ug.cId ];
-        data->prim2[ iEqu ] = ( * field->q2 )[ iEqu ][ ug.cId ];
+        primitive[ iEqu ] =
+            ( * q )[ iEqu ][ ug.cId ];
+
+        primitive1[ iEqu ] =
+            ( * q1 )[ iEqu ][ ug.cId ];
+
+        primitive2[ iEqu ] =
+            ( * q2 )[ iEqu ][ ug.cId ];
     }
 
     gcom.cvol  = ( * ug.cvol  )[ ug.cId ];
@@ -85,28 +96,64 @@ void UTurbUnstPrepareSrcData( Unsteady * unst )
 
     Real coef = 1.0;
 
-    if ( data->nEqu >= 2 )
+    if ( unsteady->GetEquationCount() >= 2 )
     {
         coef  = ( * uturbf.q_ns )[ IDX::IR ][ ug.cId ];
     }
 
-    for ( int iEqu = 0; iEqu < data->nEqu; ++ iEqu )
+    for ( int iEqu = 0; iEqu < unsteady->GetEquationCount(); ++ iEqu )
     {
-        data->q [ iEqu ] = coef * data->prim [ iEqu ];
-        data->q1[ iEqu ] = coef * data->prim1[ iEqu ];
-        data->q2[ iEqu ] = coef * data->prim2[ iEqu ];
+        conservative [ iEqu ] = coef * primitive [ iEqu ];
+        conservative1[ iEqu ] = coef * primitive1[ iEqu ];
+        conservative2[ iEqu ] = coef * primitive2[ iEqu ];
     }
 }
 
-void UTurbUnstPrepareCriData( Unsteady * unst )
+void UTurbUnstPrepareCriData( UUnsteady * unsteady )
 {
-    UsdData * data = unst->data;
-    UsdField * field = unst->field;
-    for ( int iEqu = 0; iEqu < data->nEqu; ++ iEqu )
+    MRField * q =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Current );
+
+    MRField * q1 =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Previous );
+
+    MRField * q2 =
+        unsteady->GetFlow( Unsteady::HistoryLevel::Old );
+
+    RealField & primitive =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Current );
+
+    RealField & primitive1 =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Previous );
+
+    RealField & primitive2 =
+        unsteady->GetPrimitive(
+            Unsteady::HistoryLevel::Old );
+
+    RealField & conservative =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Current );
+
+    RealField & conservative1 =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Previous );
+
+    RealField & conservative2 =
+        unsteady->GetConservative(
+            Unsteady::HistoryLevel::Old );
+
+    for ( int iEqu = 0; iEqu < unsteady->GetEquationCount(); ++ iEqu )
     {
-        data->prim [ iEqu ] = ( * field->q  )[ iEqu ][ ug.cId ];
-        data->prim1[ iEqu ] = ( * field->q1 )[ iEqu ][ ug.cId ];
-        data->prim2[ iEqu ] = ( * field->q2 )[ iEqu ][ ug.cId ];
+        primitive [ iEqu ] =
+            ( * q )[ iEqu ][ ug.cId ];
+
+        primitive1[ iEqu ] =
+            ( * q1 )[ iEqu ][ ug.cId ];
+
+        primitive2[ iEqu ] =
+            ( * q2 )[ iEqu ][ ug.cId ];
     }
 
     gcom.cvol  = ( * ug.cvol  )[ ug.cId ];
@@ -115,21 +162,16 @@ void UTurbUnstPrepareCriData( Unsteady * unst )
 
     Real coef = 1.0;
 
-    if ( data->nEqu >= 2 )
+    if ( unsteady->GetEquationCount() >= 2 )
     {
         coef  = ( * uturbf.q_ns )[ IDX::IR ][ ug.cId ];
     }
 
-    for ( int iEqu = 0; iEqu < data->nEqu; ++ iEqu )
+    for ( int iEqu = 0; iEqu < unsteady->GetEquationCount(); ++ iEqu )
     {
-        data->q [ iEqu ] = coef * data->prim [ iEqu ];
-        data->q1[ iEqu ] = coef * data->prim1[ iEqu ];
-        data->q2[ iEqu ] = coef * data->prim2[ iEqu ];
-    }
-
-    for ( int iEqu = 0; iEqu < data->nEqu; ++ iEqu )
-    {
-        data->res [ iEqu ] = ( * field->res  )[ iEqu ][ ug.cId ];
+        conservative [ iEqu ] = coef * primitive [ iEqu ];
+        conservative1[ iEqu ] = coef * primitive1[ iEqu ];
+        conservative2[ iEqu ] = coef * primitive2[ iEqu ];
     }
 
 }

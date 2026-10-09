@@ -26,6 +26,7 @@ License
 #include <vector>
 #include <string>
 #include <map>
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -42,26 +43,29 @@ public:
     LinkField bcNameId;
     IntField bcType;
 public:
-    HXSize_t GetNBcRegion() { return bcType.size(); }
+    HXSize_t GetNBcRegion() const { return bcType.size(); }
 };
 
 class BcRecord
 {
 public:
     BcRecord();
+    BcRecord( const BcRecord & other );
+    BcRecord & operator=( const BcRecord & other );
     ~BcRecord();
 public:
     IntField bcType;
     IntField bcNameId;
-    BcInfo * bcInfo;
+    std::unique_ptr< BcInfo > bcInfo;
 public:
     void Init( HXSize_t nBFaces );
-    int GetNBFace();
+    int GetNBFace() const;
     int CalcNIFace();
     int CalcNumWallFace();
-    void GenerateI2B( InterFace * interFace );
+    void GenerateI2B( InterFace & interFace );
 public:
     void CreateBcTypeRegion();
+    void CalcBcType( IntField & bcTypeList );
 };
 
 class IFaceLink;
@@ -71,10 +75,16 @@ class BcManager
 public:
     BcManager();
     ~BcManager();
+
+    // Disable copying to prevent accidental double-free of unique_ptrs
+    BcManager(const BcManager&) = delete;
+    BcManager& operator=(const BcManager&) = delete;
 public:
     bool deleteBoundaryCondition;
-    BcRecord * bcRecord;
-    BcRecord * bcRecordNew;
+
+    // [Refactored] Changed from raw pointers to std::unique_ptr for automatic memory management.
+    std::unique_ptr<BcRecord> bcRecord;
+    std::unique_ptr<BcRecord> bcRecordNew;
     IntField l2gNew;
 
     IntField bcKeyVector;
@@ -86,7 +96,7 @@ public:
     IntField bcFlag;
 public:
     void PreProcess();
-    bool ExistInterface();
+    bool ExistInterface() const;
     void Update();
     void CalcBcType( IntField & bcTypeList );
 };
@@ -141,8 +151,8 @@ public:
     int bcType;                      //boundary type
     std::string regionName;               //boundary name
 public:
-    BasicRegion * s;
-    BasicRegion * t;
+    std::unique_ptr< BasicRegion > s;
+    std::unique_ptr< BasicRegion > t;
 public:
     void GetNormalizeIJKRegion( int & ist, int & ied, int & jst, int & jed, int & kst, int & ked );
     int CalcRegionCells();
@@ -156,9 +166,9 @@ public:
 public:
     int zoneIndex;
     int nBFaces, nIFaces;
-    HXVector< BcRegion * > * regions;
+    HXVector< std::unique_ptr< BcRegion > > regions;
     void Create( int nBcRegions );
-    void SetBcRegion( int ir, BcRegion * bcRegion );
+    void SetBcRegion( int ir, std::unique_ptr< BcRegion > bcRegion );
     BcRegion * GetBcRegion( int ir );
 };
 

@@ -22,9 +22,10 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "GridDef.h"
-
-
+#include "GridHandles.h"
+#include "GridTypes.h"
+#include <memory>
+#include <utility>
 
 BeginNameSpace( ONEFLOW )
 
@@ -40,13 +41,16 @@ public:
 public:
     Grids grids;
     std::string gridFileName;
-    IFaceLink * iFaceLink;
+    std::unique_ptr< IFaceLink > iFaceLink;
+    GridConfig config;
 public:
     void BuildInterfaceLink();
     void Dump();
     void Post();
 public:
-    void Init( Grids & grids );
+    // Takes exclusive ownership of the collection.
+    void Init( Grids grids );
+    void Init( Grids grids, const GridConfig & config );
 public:
     void GenerateOverset();
     void GenerateLink();
@@ -63,14 +67,20 @@ public:
     void MatchInterfaceTopology();
     void ReconstructLink( int iZone );
 public:
-    void GenerateMultiZoneCalcGrids( Grids & grids );
+    void GenerateMultiZoneCalcGrids( Grids grids );
+    void GenerateMultiZoneCalcGrids( Grids grids, const GridConfig & config );
 };
 
 std::string GetTargetGridFileName();
 int GetIgnoreNoBc();
 
-void GenerateMultiZoneCalcGrids( Grids & grids );
-void ResetGridScaleAndTranslate( NodeMesh * nodeMesh );
-void TurnZAxisToYAxis( NodeMesh * nodeMesh );
+void GenerateMultiZoneCalcGrids( Grids grids );
+void GenerateMultiZoneCalcGrids(
+    Grids grids,
+    const GridConfig & config );
+
+void ResetGridScaleAndTranslate( NodeMesh & nodeMesh, const GridConfig & config );
+void ResetGridScaleAndTranslate( NodeMesh & nodeMesh );
+void TurnZAxisToYAxis( NodeMesh & nodeMesh );
 
 EndNameSpace

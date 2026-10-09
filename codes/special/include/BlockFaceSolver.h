@@ -1,4 +1,4 @@
-/*---------------------------------------------------------------------------*\
+/*---------------------------------------------------------------------------*\\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
 -------------------------------------------------------------------------------
@@ -10,15 +10,15 @@ License
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
 
-    OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-    for more details.
+    OneFLOW is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\\*---------------------------------------------------------------------------*/
 
 
 #pragma once
@@ -26,10 +26,11 @@ License
 #include "HXLookup.h"
 #include "CalcCoor.h"
 #include "SimpleDomain.h"
-#include "GridDef.h"
+#include "GridHandles.h"
 #include <set>
 #include <map>
 #include <fstream>
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -49,38 +50,49 @@ class BlkFaceSolver
 public:
     BlkFaceSolver();
     ~BlkFaceSolver();
-public:
+private:
     IntSet blkset;
-    HXVector< Block3D * > blkList;
-    HXVector< Block2D * > blkList2d;
+    HXVector< std::unique_ptr< Block3D > > blkList;
+    HXVector< std::unique_ptr< Block2D > > blkList2d;
     bool flag;
-public:
     bool init_flag;
-    LinkField lineList; 
     LinkField faceList;
     LinkField faceLinePosList;
     HXLookup<int> lineLookup;
     HXLookup<int> faceLookup;
     IntSet faceset;
-    HXVector< BlkF2C > line2Face;
-    HXVector< BlkF2C > face2Block;
-    HXVector< SDomain * > sDomainList;
-    HXVector< SLine * > slineList;
+
 public:
-    Face2D * GetBlkFace( int blk, int face_id );
-    Face2D * GetBlkFace2D( int blk, int face_id );
-public:
-    void Alloc();
-    void MyFaceAlloc();
-    void CreateFaceList();
-    int  FindLineId( IntField & line );
+    void Reset();
+    const Face2D * GetBlkFace( int blk, int face_id ) const;
+    const Face2D * GetBlkFace2D( int blk, int face_id ) const;
     IntField & GetLine( int line_id );
-    void MyFaceBuildSDomainList();
-    void MyFaceGenerateFaceMesh();
-    void MyFaceGenerateLineMesh();
+    const IntField & GetLine( int line_id ) const;
+    BlkF2C & GetLineToFace( int line_id );
+    const BlkF2C & GetLineToFace( int line_id ) const;
+    BlkF2C & GetFaceToBlock( int faceIndex );
+    const BlkF2C & GetFaceToBlock( int faceIndex ) const;
+    SDomain * GetSDomain( int domainIndex );
+    SLine * GetSLine( int lineIndex );
+    int FindLineId( const IntField & line ) const;
 public:
     void AddLineToFace( int faceid, int pos, int lineid );
     void AddFace2Block( int blockid, int pos, int faceid );
+    void GenerateGrid();
+
+private:
+    HXVector< std::unique_ptr< SDomain > > sDomainList;
+    HXVector< std::unique_ptr< SLine > > slineList;
+    LinkField lineList;
+    HXVector< BlkF2C > line2Face;
+    HXVector< BlkF2C > face2Block;
+
+    void Alloc();
+    void InitializeLineTopology();
+    void CreateFaceList();
+    void BuildSurfaceDomainList();
+    void GenerateSurfaceFaceMesh();
+    void GenerateSurfaceLineMesh();
     void BuildBlkFace();
     void BuildBlkFace2D();
     void SetBoundary();
@@ -95,8 +107,6 @@ public:
     void DumpStandardGrid();
     void DumpStandardGrid2D();
     void DumpStandardGrid( Grids & strGridList );
-    void GenerateFaceBlockLink();
-public:
     void DumpBlkScript();
     void DumpBlkScript( std::fstream & file, BlkElem * blkHexa, IntField & ctrlpoints );
     void DumpBlkScript( std::fstream & file, IntField & localid, IntField & ctrlpoints );
@@ -104,6 +114,5 @@ public:
 
 extern BlkFaceSolver blkFaceSolver;
 
-IntField GlobalGetLine( int line_id );
 
 EndNameSpace

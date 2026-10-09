@@ -30,13 +30,14 @@ class FieldRecord
 public:
     FieldRecord();
     ~FieldRecord();
-public:
-    HXVector< MRField * > fields;
-    IntField nEquList;
-public:
-    void AddField( MRField * field, int nEqu );
-    MRField * GetField( int id );
-};
 
+public:
+    void AddField( MRField * field );
+    MRField * GetField( int id );
+    int Size() const;
+
+private:
+    HXVector< MRField * > fields;
+};
 
 EndNameSpace

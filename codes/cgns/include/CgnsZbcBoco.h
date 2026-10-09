@@ -24,6 +24,7 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "HXCgns.h"
+#include <memory>
 #include <string>
 
 BeginNameSpace( ONEFLOW )
@@ -43,20 +44,21 @@ class TestRegion;
 class CgnsZbcBoco
 {
 public:
-    CgnsZbcBoco( CgnsZone * cgnsZone );
+    explicit CgnsZbcBoco( CgnsZone & cgnsZone );
     ~CgnsZbcBoco();
 public:
     int nBoco;
-    HXVector< CgnsBcBoco * > cgnsBcBocos;
-    CgnsZone * cgnsZone;
+    HXVector< std::unique_ptr< CgnsBcBoco > > cgnsBcBocos;
+    CgnsZone & cgnsZone;
 public:
     void AddCgnsBcBoco( CgnsBcBoco * cgnsBcBoco );
+    void AddCgnsBcBoco( std::unique_ptr< CgnsBcBoco > cgnsBcBoco );
     CgnsBcBoco * WriteCgnsBoco( const std::string & bocoName, BCType_t bocotype, PointSetType_t ptset_type, cgsize_t npnts, const cgsize_t * pnts );
     CgnsBcBoco * GetCgnsBc( int iBoco );
     void CreateCgnsZbc();
     void ShiftBcRegion();
     void ConvertToInnerDataStandard();
-    void ScanBcFace( FaceSolver * face_solver );
+    void ScanBcFace( FaceSolver & faceSolver );
     void PrintZnboco();
     void ReadZnboco();
     void ReadZnboco( int nBoco );

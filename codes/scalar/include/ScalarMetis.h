@@ -1,4 +1,4 @@
-/*---------------------------------------------------------------------------*\
+/*---------------------------------------------------------------------------*\\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
 -------------------------------------------------------------------------------
@@ -11,18 +11,19 @@ License
     (at your option) any later version.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\\*---------------------------------------------------------------------------*/
 
 
 #pragma once
 #include "HXType.h"
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -43,9 +44,10 @@ public:
     static void CreateCgnsMesh1D();
 };
 
-void ScalarMetisAddZoneGrid( std::vector< ScalarGrid * > & part_grids );
-void ScalarReadGrid( const std::string & gridFileName, std::vector< ScalarGrid * > & grids );
-void ScalarDumpGrid( const std::string & gridFileName, ScalarGrid * grid );
-void ScalarDumpGrid( const std::string & gridFileName, std::vector< ScalarGrid * > & grids );
+void ScalarMetisAddZoneGrid( std::vector< std::unique_ptr< ScalarGrid > > part_grids );
+std::vector< std::unique_ptr< ScalarGrid > > ScalarReadGrid( const std::string & gridFileName );
+void ScalarDumpGrid( const std::string & gridFileName, ScalarGrid & grid );
+void ScalarDumpGrid( const std::string & gridFileName,
+                     const std::vector< std::unique_ptr< ScalarGrid > > & grids );
 
 EndNameSpace

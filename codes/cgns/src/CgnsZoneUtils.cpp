@@ -37,6 +37,8 @@ License
 #include "Grid.h"
 #include "BgGrid.h"
 #include "StrGrid.h"
+#include <utility>
+#include "GridHandles.h"
 #include "GridState.h"
 #include "Dimension.h"
 #include "GridElem.h"
@@ -86,13 +88,13 @@ void GetIJKRegion( Range & I, Range & J, Range & K, int & ist, int & ied, int & 
     ked = K.Last();
 }
 
-void PrepareCgnsZoneSub( Grids & grids, CgnsZone * cgnsZone )
+void PrepareCgnsZoneSub( GridViews & grids, CgnsZone * cgnsZone )
 {
     NodeMesh * nodeMesh = cgnsZone->cgnsCoor->GetNodeMesh();
 
     int nNodes, nCells;
 
-    HXVector< Int3D * > unsIdList;
+    HXVector< std::unique_ptr< Int3D > > unsIdList;
 
     MergeToSingleZone( grids, unsIdList, nodeMesh, nNodes, nCells );
 
@@ -103,13 +105,12 @@ void PrepareCgnsZoneSub( Grids & grids, CgnsZone * cgnsZone )
 
     cgnsZone->ConvertToInnerDataStandard();
 
-    ONEFLOW::DeletePointer( unsIdList );
 }
 
-void MergeToSingleZone( Grids & grids, HXVector< Int3D * > & unsIdList, NodeMesh * nodeMesh, int & nNodes, int & nCells )
+void MergeToSingleZone( GridViews & grids, HXVector< std::unique_ptr< Int3D > > & unsIdList, NodeMesh * nodeMesh, int & nNodes, int & nCells )
 {
-    PointLocator * point_search = new PointLocator();
-    point_search->Initialize( grids );
+    PointLocator pointSearch;
+    pointSearch.Initialize( grids );
 
     size_t nZone = grids.size();
 
@@ -117,18 +118,17 @@ void MergeToSingleZone( Grids & grids, HXVector< Int3D * > & unsIdList, NodeMesh
     nCells = 0;
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( grids[ iZone ] );
+        StrGrid * grid = ONEFLOW::StrGridCast( GridAt( grids, iZone ) );
         int ni = grid->ni;
         int nj = grid->nj;
         int nk = grid->nk;
         nCells += grid->nCells;
-        unsIdList[ iZone ] = new Int3D( Range( 1, ni ), Range( 1, nj ), Range( 1, nk ) );
-        Int3D & unsId = * unsIdList[ iZone ];
+        unsIdList[ iZone ] = std::make_unique< Int3D >( Range( 1, ni ), Range( 1, nj ), Range( 1, nk ) );
         std::cout << " block = " << iZone + 1 << "\n";
-        CalcUnsId( grid, point_search, & unsId );
+        CalcUnsId( grid, & pointSearch, unsIdList[ iZone ].get() );
     }
 
-    nNodes = point_search->GetNPoint();
+    nNodes = pointSearch.GetNPoint();
 
     std::cout << " First nNodes = " << nNodes << "\n";
     nodeMesh->xN.resize( nNodes );
@@ -137,16 +137,15 @@ void MergeToSingleZone( Grids & grids, HXVector< Int3D * > & unsIdList, NodeMesh
     for ( int i = 0; i < nNodes; ++ i )
     {
         Real xm, ym, zm;
-        point_search->GetPoint( i, xm, ym, zm );
+        pointSearch.GetPoint( i, xm, ym, zm );
 
         nodeMesh->xN[ i ] = xm;
         nodeMesh->yN[ i ] = ym;
         nodeMesh->zN[ i ] = zm;
     }
-    delete point_search;
 }
 
-void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgnsZone )
+void FillSection( GridViews & grids, HXVector< std::unique_ptr< Int3D > > & unsIdList, CgnsZone * cgnsZone )
 {
     int nTBcRegion = 0;
 
@@ -155,17 +154,17 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
 
     for ( int iZone = 0; iZone < grids.size(); ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( grids[ iZone ] );
+        StrGrid * grid = ONEFLOW::StrGridCast( GridAt( grids, iZone ) );
         Int3D & unsId = * unsIdList[ iZone ];
 
         nTCell += grid->CalcNumberOfCell();
 
-        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
-        size_t nBcRegions = bcRegionGroup->regions->size();
+        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
+        size_t nBcRegions = bcRegionGroup->regions.size();
 
         for ( int ir = 0; ir < nBcRegions; ++ ir )
         {
-            BcRegion * bcRegion = ( * bcRegionGroup->regions )[ ir ];
+            BcRegion * bcRegion = bcRegionGroup->regions[ ir ].get();
             if ( BC::IsNotNormalBc( bcRegion->bcType ) ) continue;
             
             nBFaces += bcRegion->CalcRegionCells();
@@ -177,43 +176,42 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
 
     cgnsZone->cgnsCoor->SetNCell( nTCell );
 
-    cgnsZone->cgnsZsection->nSection = 2;
-    cgnsZone->cgnsZsection->CreateCgnsSection();
+    cgnsZone->cgnsZsection->CreateCgnsSections( 2 );
 
-    cgnsZone->cgnsZsection->cgnsSections[ 0 ]->startId = 1;
-    cgnsZone->cgnsZsection->cgnsSections[ 0 ]->endId   = nTCell;
+    cgnsZone->cgnsZsection->GetCgnsSection( 0 ).startId = 1;
+    cgnsZone->cgnsZsection->GetCgnsSection( 0 ).endId   = nTCell;
 
-    cgnsZone->cgnsZsection->cgnsSections[ 1 ]->startId = nTCell + 1;
-    cgnsZone->cgnsZsection->cgnsSections[ 1 ]->endId   = nTCell + 1 + nBFaces;
+    cgnsZone->cgnsZsection->GetCgnsSection( 1 ).startId = nTCell + 1;
+    cgnsZone->cgnsZsection->GetCgnsSection( 1 ).endId   = nTCell + 1 + nBFaces;
 
     if ( Dim::dimension == ONEFLOW::THREE_D )
     {
-        cgnsZone->cgnsZsection->cgnsSections[ 0 ]->eType = HEXA_8;
-        cgnsZone->cgnsZsection->cgnsSections[ 1 ]->eType = QUAD_4;
+        cgnsZone->cgnsZsection->GetCgnsSection( 0 ).eType = HEXA_8;
+        cgnsZone->cgnsZsection->GetCgnsSection( 1 ).eType = QUAD_4;
     }
     else
     {
-        cgnsZone->cgnsZsection->cgnsSections[ 0 ]->eType = QUAD_4;
-        cgnsZone->cgnsZsection->cgnsSections[ 1 ]->eType = BAR_2;
+        cgnsZone->cgnsZsection->GetCgnsSection( 0 ).eType = QUAD_4;
+        cgnsZone->cgnsZsection->GetCgnsSection( 1 ).eType = BAR_2;
     }
 
     cgnsZone->cgnsZsection->CreateConnList();
 
-    CgnsZbc * cgnsZbc = cgnsZone->cgnsZbc;
+    CgnsZbc * cgnsZbc = cgnsZone->cgnsZbc.get();
     cgnsZbc->cgnsZbcBoco->ReadZnboco( nTBcRegion );
     cgnsZbc->CreateCgnsZbc( cgnsZbc );
 
-    CgnsSection * secV = cgnsZone->cgnsZsection->GetCgnsSection( 0 );
-    CgnsSection * secB = cgnsZone->cgnsZsection->GetCgnsSection( 1 );
+    CgnsSection & secV = cgnsZone->cgnsZsection->GetCgnsSection( 0 );
+    CgnsSection & secB = cgnsZone->cgnsZsection->GetCgnsSection( 1 );
 
-    CgIntField& connList  = secV->connList;
-    CgIntField& bConnList = secB->connList;
+    CgIntField& connList  = secV.connList;
+    CgIntField& bConnList = secB.connList;
 
     int pos = 0;
 
     for ( int iZone = 0; iZone < grids.size(); ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( grids[ iZone ] );
+        StrGrid * grid = ONEFLOW::StrGridCast( GridAt( grids, iZone ) );
         int ni = grid->ni;
         int nj = grid->nj;
         int nk = grid->nk;
@@ -229,7 +227,7 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
 
         if ( Dim::dimension == ONEFLOW::TWO_D ) ks = 0;
 
-        int eNodeNumbers = ONEFLOW::GetElementNodeNumbers( secV->eType );
+        int eNodeNumbers = ONEFLOW::GetElementNodeNumbers( secV.eType );
 
         for ( int k = IJKRange::kst; k <= IJKRange::ked; ++ k )
         {
@@ -254,31 +252,31 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
         }
     }
 
-    secV->SetElemPosition();
-    secB->SetElemPosition();
+    secV.SetElemPosition();
+    secB.SetElemPosition();
 
     int irc  = 0;
     int eIdPos  = nTCell;
     pos = 0;
 
-    BcTypeMap * bcTypeMap = new BcTypeMap();
-    bcTypeMap->Init();
+    BcTypeMap bcTypeMap;
+    bcTypeMap.Init();
 
     for ( int iZone = 0; iZone < grids.size(); ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( grids[ iZone ] );
+        StrGrid * grid = ONEFLOW::StrGridCast( GridAt( grids, iZone ) );
         int ni = grid->ni;
         int nj = grid->nj;
         int nk = grid->nk;
 
         Int3D & unsId = * unsIdList[ iZone ];
 
-        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
-        size_t nBcRegions = bcRegionGroup->regions->size();
+        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
+        size_t nBcRegions = bcRegionGroup->regions.size();
 
         for ( int ir = 0; ir < nBcRegions; ++ ir )
         {
-            BcRegion * bcRegion = ( * bcRegionGroup->regions )[ ir ];
+            BcRegion * bcRegion = bcRegionGroup->regions[ ir ].get();
             if ( BC::IsNotNormalBc( bcRegion->bcType ) ) continue;
             int nRegionCell = bcRegion->CalcRegionCells();
 
@@ -286,7 +284,7 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
             
             cgnsBcBoco->SetCgnsBcRegionGridLocation( CellCenter );
             cgnsBcBoco->nElements    = 2;
-            cgnsBcBoco->bcType       = static_cast< BCType_t >( bcTypeMap->OneFlow2Cgns( bcRegion->bcType ) );
+            cgnsBcBoco->bcType       = static_cast< BCType_t >( bcTypeMap.OneFlow2Cgns( bcRegion->bcType ) );
             cgnsBcBoco->pointSetType = PointRange;
 
             //cgnsBcBoco->SetCgnsBcRegion( nElements, bcType, );
@@ -305,7 +303,6 @@ void FillSection( Grids & grids, HXVector< Int3D * > & unsIdList, CgnsZone * cgn
         }
     }
 
-    delete bcTypeMap;
 }
 
 void CalcUnsId( StrGrid * grid, PointLocator * pointSearch, Int3D * unsId )
@@ -485,20 +482,20 @@ void SetUnsBcConn( BcRegion * bcRegion, CgIntField& conn, int & pos, Int3D & uns
 void GenerateUnsBcElemConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
 {
     int iSection = 1;
-    CgnsSection * cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
+    CgnsSection & cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
 
-    myZone->cgnsZbc->CreateCgnsZbc( cgnsZoneIn->cgnsZbc );
+    myZone->cgnsZbc->CreateCgnsZbc( cgnsZoneIn->cgnsZbc.get() );
 
-    std::cout << " ConnectionList Size = " << cgnsSection->connSize << "\n";
-    cgnsZoneIn->cgnsZbc->GenerateUnsBcElemConn( cgnsSection->connList );
+    std::cout << " ConnectionList Size = " << cgnsSection.connSize << "\n";
+    cgnsZoneIn->cgnsZbc->GenerateUnsBcElemConn( cgnsSection.connList );
 }
 
 void GenerateUnsBcCondConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
 {
     int iSection = 1;
-    CgnsSection * cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
+    CgnsSection & cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
 
-    CgInt startId = cgnsSection->startId;
+    CgInt startId = cgnsSection.startId;
 
     int nBoco = cgnsZoneIn->cgnsZbc->cgnsZbcBoco->nBoco;
     for ( int iBoco = 0; iBoco < nBoco; ++ iBoco )
@@ -518,7 +515,7 @@ void GenerateUnsVolElemConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
     std::cout << " ni = " << ni << " nj = " << nj << " nk = " << nk << "\n";
 
     int iSection = 0;
-    CgnsSection * cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
+    CgnsSection & cgnsSection = myZone->cgnsZsection->GetCgnsSection( iSection );
 
     Range I, J, K;
     GetRange( ni, nj, nk, 0, -1, I, J, K );
@@ -530,12 +527,12 @@ void GenerateUnsVolElemConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
     int jl1 = 1;
     int kl1 = 1;
 
-    int cell_dim = myZone->cgnsBase->celldim;
+    int cell_dim = myZone->cgnsBase.celldim;
 
     if ( cell_dim == TWO_D ) kl1 = 0;
     if ( cell_dim == ONE_D ) jl1 = 0;
 
-    CgIntField & connList = cgnsSection->connList;
+    CgIntField & connList = cgnsSection.connList;
 
     int pos = 0;
 
@@ -579,17 +576,16 @@ void GenerateUnsVolElemConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
 
 void AllocateUnsElemConn( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
 {
-    myZone->cgnsZsection->nSection = 2;
-    myZone->cgnsZsection->CreateCgnsSection();
+    myZone->cgnsZsection->CreateCgnsSections( 2 );
 
     int s1, e1, s2, e2, etype1, etype2;
     //cgnsZoneIn->GetStrZonePara( s1, e1, s2, e2, etype1, etype2 );
     ONEFLOW::GetStrZonePara( cgnsZoneIn, s1, e1, s2, e2, etype1, etype2 );
 
-    CgnsSection * cgnsSection1 = myZone->cgnsZsection->GetCgnsSection( 0 );
-    CgnsSection * cgnsSection2 = myZone->cgnsZsection->GetCgnsSection( 1 );
-    cgnsSection1->SetSectionInfo( "Section1", etype1, s1, e1 );
-    cgnsSection2->SetSectionInfo( "Section2", etype2, s2, e2 );
+    CgnsSection & cgnsSection1 = myZone->cgnsZsection->GetCgnsSection( 0 );
+    CgnsSection & cgnsSection2 = myZone->cgnsZsection->GetCgnsSection( 1 );
+    cgnsSection1.SetSectionInfo( "Section1", etype1, s1, e1 );
+    cgnsSection2.SetSectionInfo( "Section2", etype2, s2, e2 );
 
     myZone->cgnsZsection->CreateConnList();
 }
@@ -613,7 +609,7 @@ void GetStrZonePara( CgnsZone * myZone, int & s1, int & e1, int & s2, int & e2, 
     s2 = e1 + 1;
     e2 = e1 + nActualBcFace;
 
-    int celldim = myZone->cgnsBase->celldim;
+    int celldim = myZone->cgnsBase.celldim;
 
     if ( celldim == ONE_D )
     {
@@ -646,7 +642,7 @@ void ReadCgnsZoneNameAndGeneralizedDimension( CgnsZone * myZone, CgnsZone * cgns
 
 void SetDimension( CgnsZone * myZone, CgnsZone * cgnsZoneIn )
 {
-    CgnsCoor * cgnsCoorIn = cgnsZoneIn->cgnsCoor;
+    CgnsCoor * cgnsCoorIn = cgnsZoneIn->cgnsCoor.get();
     myZone->cgnsCoor->SetDimension( cgnsCoorIn );
 }
 
@@ -733,9 +729,9 @@ void DumpCgnsZoneNameAndGeneralizedDimension( CgnsZone * myZone, Grid * gridIn )
 
     myZone->zoneName = gridIn->name;
     myZone->zId = -1;
-    std::cout << " cell dim = " << myZone->cgnsBase->celldim << " physics dim = " << myZone->cgnsBase->phydim << "\n";
+    std::cout << " cell dim = " << myZone->cgnsBase.celldim << " physics dim = " << myZone->cgnsBase.phydim << "\n";
     //create zone
-    cg_zone_write( myZone->cgnsBase->cgnsFile->fileId, myZone->cgnsBase->baseId, myZone->zoneName.c_str(), myZone->isize, myZone->cgnsZoneType, &myZone->zId );
+    cg_zone_write( myZone->cgnsBase.cgnsFile->fileId, myZone->cgnsBase.baseId, myZone->zoneName.c_str(), myZone->isize, myZone->cgnsZoneType, &myZone->zId );
     std::cout << " Zone Id = " << myZone->zId << "\n";
 
     std::cout << "   CGNS Zone Name = " << myZone->zoneName << "\n";
@@ -748,9 +744,9 @@ void DumpCgnsZoneAttribute( CgnsZone * myZone, Grid * grid )
     ONEFLOW::DumpCgnsZoneNameAndGeneralizedDimension( myZone, grid );
 }
 
-void DumpCgnsGridBoundary( CgnsZone * myZone, Grid * grid )
+void DumpCgnsGridBoundary( CgnsZone * myZone, Grid * grid, const Grids & grids )
 {
-    myZone->cgnsZbc->DumpCgnsGridBoundary( grid );
+    myZone->cgnsZbc->DumpCgnsGridBoundary( grid, grids );
 }
 
 void DumpCgnsGridCoordinates( CgnsZone * myZone, Grid * grid )
@@ -759,26 +755,27 @@ void DumpCgnsGridCoordinates( CgnsZone * myZone, Grid * grid )
     int index_x = -1;
     int index_y = -2;
     int index_z = -3;
-    cg_coord_write( myZone->cgnsBase->cgnsFile->fileId, myZone->cgnsBase->baseId, myZone->zId, RealDouble, "CoordinateX", &grid->nodeMesh->xN[0], &index_x );
-    cg_coord_write( myZone->cgnsBase->cgnsFile->fileId, myZone->cgnsBase->baseId, myZone->zId, RealDouble, "CoordinateY", &grid->nodeMesh->yN[0], &index_y );
-    cg_coord_write( myZone->cgnsBase->cgnsFile->fileId, myZone->cgnsBase->baseId, myZone->zId, RealDouble, "CoordinateZ", &grid->nodeMesh->zN[0], &index_z );
+    cg_coord_write( myZone->cgnsBase.cgnsFile->fileId, myZone->cgnsBase.baseId, myZone->zId, RealDouble, "CoordinateX", &grid->nodeMesh->xN[0], &index_x );
+    cg_coord_write( myZone->cgnsBase.cgnsFile->fileId, myZone->cgnsBase.baseId, myZone->zId, RealDouble, "CoordinateY", &grid->nodeMesh->yN[0], &index_y );
+    cg_coord_write( myZone->cgnsBase.cgnsFile->fileId, myZone->cgnsBase.baseId, myZone->zId, RealDouble, "CoordinateZ", &grid->nodeMesh->zN[0], &index_z );
     std::cout << " index_x = " << index_x << "\n";
     std::cout << " index_y = " << index_y << "\n";
     std::cout << " index_z = " << index_z << "\n";
 }
 
-void DumpCgnsZone( CgnsZone * myZone, Grid * grid )
+void DumpCgnsZone( CgnsZone * myZone, Grid * grid, const Grids & grids )
 {
     ONEFLOW::DumpCgnsZoneAttribute( myZone, grid );
 
-    ONEFLOW::DumpCgnsGridBoundary( myZone, grid );
+    ONEFLOW::DumpCgnsGridBoundary( myZone, grid, grids );
 
     ONEFLOW::DumpCgnsGridCoordinates( myZone, grid );
 }
 
 void PrepareCgnsZone( CgnsZone * myZone, Grid * grid )
 {
-    Grids grids;
+    // Non-owning view: PrepareCgnsZoneSub only reads grid data during the call.
+    GridViews grids;
     grids.push_back( grid );
     myZone->cgnsZoneType = CGNS_ENUMV( Unstructured );
     ONEFLOW::PrepareCgnsZoneSub( grids, myZone );

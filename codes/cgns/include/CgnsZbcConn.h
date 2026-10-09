@@ -24,6 +24,7 @@ License
 #pragma once
 #include "HXDefine.h"
 #include "HXCgns.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
@@ -44,15 +45,16 @@ class CgnsBcConn;
 class CgnsZbcConn
 {
 public:
-    CgnsZbcConn( CgnsZone * cgnsZone );
+    explicit CgnsZbcConn( CgnsZone & cgnsZone );
     ~CgnsZbcConn();
 public:
     int nConn;
-    HXVector< CgnsBcConn * > cgnsBcConns;
+    HXVector< std::unique_ptr< CgnsBcConn > > cgnsBcConns;
     
-    CgnsZone * cgnsZone;
+    CgnsZone & cgnsZone;
 public:
     void AddCgnsConnBcRegion( CgnsBcConn * cgnsBcConn );
+    void AddCgnsConnBcRegion( std::unique_ptr< CgnsBcConn > cgnsBcConn );
     CgnsBcConn * GetCgnsBc( int iConn );
     void CreateCgnsZbc();
     void PrintZnconn();

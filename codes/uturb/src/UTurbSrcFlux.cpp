@@ -26,7 +26,6 @@ License
 #include "NsCtrl.h"
 #include "NsIdx.h"
 #include "TurbCom.h"
-#include "UTurbCom.h"
 #include "Com.h"
 #include "UCom.h"
 #include "DataBase.h"
@@ -86,7 +85,6 @@ void UTurbSrcFlux::Init()
 
 void UTurbSrcFlux::CalcSrcFlux()
 {
-    //ReadTmp();
     Init();
     if ( turbcom.nEqu == 1 )
     {
@@ -144,61 +142,6 @@ void UTurbSrcFlux::ZeroSpectrum()
     }
 }
 
-void UTurbSrcFlux::ReadTmp()
-{
-    static int iii = 0;
-    if ( iii ) return;
-    iii = 1;
-
-    std::fstream file;
-    file.open( "turbflowsrc.dat", std::ios_base::in | std::ios_base::binary );
-    if ( ! file )
-    {
-        Fatal( "Failed to open file: turbflowsrc.dat" );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        for ( int iEqu = 0; iEqu < 5; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * uturbf.q_ns )[ iEqu ][ cId ] ), sizeof( double ) );
-        }
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IU ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IV ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdx_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdy_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-        file.read( reinterpret_cast< char * >( & ( * uturbf.dqdz_ns )[ IDX::IW ][ cId ] ), sizeof( double ) );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.visl )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-       for ( int cId = 0; cId < ug.nTCell; ++ cId )
-    {
-        file.read( reinterpret_cast< char * >( & ( * uturbf.vist )[ 0 ][ cId ] ), sizeof( double ) );
-    }
-
-    for ( int iCell = 0; iCell < ug.nTCell; ++ iCell )
-    {
-        for ( int iEqu = 0; iEqu < turbcom.nEqu; ++ iEqu )
-        {
-            file.read( reinterpret_cast< char * >( & ( * uturbf.q )[ iEqu ][ iCell ] ), sizeof( double ) );
-        }
-    }
-    file.close();
-    file.clear();
-}
-
 void UTurbSrcFlux::CalcVistMax()
 {
     turbcom.maxid = 0;
@@ -224,10 +167,6 @@ void UTurbSrcFlux::CalcVist1Equ()
     {
         ug.cId = cId;
 
-        if ( cId == 6155 )
-        {
-            int kkk = 1;
-        }
         if ( turbcom.rho < 0 || NotANumber( turbcom.rho ) )
         {
             std::cout << " zone = " << ZoneState::zid << " cId = " << cId << " rho = " << turbcom.rho << "\n";
@@ -279,11 +218,6 @@ void UTurbSrcFlux::CalcSrcFlux1Equ()
     {
         ug.cId = cId;
 
-        if ( cId == 22 )
-        {
-            int kkk = 1;
-        }
-
         this->PrepareCellValue1Equ();
 
         this->CalcSrcSa();
@@ -297,11 +231,6 @@ void UTurbSrcFlux::CalcSrcFlux2Equ()
     for ( int cId = 0; cId < ug.nCells; ++ cId )
     {
         ug.cId = cId;
-
-        if ( cId == 11 )
-        {
-            int kkk = 1;
-        }
 
         this->PrepareCellValue();
 
@@ -467,7 +396,7 @@ void UTurbSrcFlux::CalcLengthScaleOfSaDes()
 
     CalcLengthLesOfSa( lesLength );
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
 
     for ( int cId = 0; cId < numberOfCells; ++ cId ) 
     {
@@ -489,7 +418,7 @@ void UTurbSrcFlux::CalcLengthScaleOfSstDes()
 
     CalcLengthLesOfSst( lesLength );
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
 
     for ( int cId = 0; cId < numberOfCells; ++ cId ) 
     {
@@ -510,7 +439,7 @@ void UTurbSrcFlux::CalcLengthScaleOfSaDdes()
 
     int nCells = grid->nCells;
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
 
     RealField lesLength( nCells );
     CalcLengthLesOfSa( lesLength );
@@ -556,7 +485,7 @@ void UTurbSrcFlux::CalcLengthScaleOfSstDdes()
 
     int nCells = grid->nCells;
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
 
     RealField lesLength( nCells );
     CalcLengthLesOfSst( lesLength );
@@ -615,8 +544,8 @@ void UTurbSrcFlux::CalcLengthScaleOfSaIddes()
 
     int nCells = grid->nCells;
 
-    RealField & wall_dist = grid->cellMesh->dist;
-    RealField & span = grid->cellMesh->span;
+    RealField & wall_dist = grid->GetCellMesh().dist;
+    RealField & span = grid->GetCellMesh().span;
 
     RealField lesLength( nCells );
 
@@ -699,8 +628,8 @@ void UTurbSrcFlux::CalcLengthScaleOfSstIddes()
 
     int nCells = grid->nCells;
 
-    RealField & wall_dist = grid->cellMesh->dist;
-    RealField & span = grid->cellMesh->span;
+    RealField & wall_dist = grid->GetCellMesh().dist;
+    RealField & span = grid->GetCellMesh().span;
 
     RealField lesLength( nCells );
 
@@ -800,7 +729,7 @@ void UTurbSrcFlux::CalcLengthScaleOfWallDist()
     UnsGrid * grid = Zone::GetUnsGrid();
     MRField * len_scale = GetFieldPointer< MRField > ( grid, "len_scale" );
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
     int nCells = grid->nCells;
 
     for ( int cId = 0; cId < nCells; ++ cId ) 
@@ -844,10 +773,7 @@ void UTurbSrcFlux::CalcBlendField()
     for ( int cId = 0; cId < ug.nCells; ++ cId )
     {
         ug.cId = cId;
-        if ( cId == 11 )
-        {
-            int kkk = 1;
-        }
+
         turbcom.rho  = ( * uturbf.q_ns  )[ IDX::IR ][ ug.cId ];
         turbcom.ke   = ( * uturbf.q  )[ IKE ][ ug.cId ];
         turbcom.kw   = ( * uturbf.q  )[ IKW ][ ug.cId ];
@@ -997,9 +923,9 @@ void CalcSubgridLengthScale( RealField & lenth_scale )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
 
-    CalcCellSpan( grid );
+    CalcCellSpan( *grid );
 
-    RealField & wall_dist = grid->cellMesh->dist;
+    RealField & wall_dist = grid->GetCellMesh().dist;
     RealField & largestSpacing = GetLargestSpacing();
 
     lenth_scale.resize( grid->nCells );
@@ -1019,8 +945,8 @@ void CalcSubgridLengthScale( RealField & lenth_scale )
 RealField & GetLargestSpacing()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    CalcCellSpan( grid );
-    return grid->cellMesh->span;
+    CalcCellSpan( *grid );
+    return grid->GetCellMesh().span;
 }
 
 EndNameSpace

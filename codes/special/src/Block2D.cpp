@@ -21,8 +21,8 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "BlkMesh.h"
+#include <memory>
 #include "Block2D.h"
-#include "MLine.h"
 #include "MDomain.h"
 
 #include "Prj.h"
@@ -42,20 +42,16 @@ Block2D::Block2D()
     int nMDomain = 1;
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = new MDomain();
+        auto mDomain = std::make_unique< MDomain >();
         mDomain->pos = iMDomain;
         mDomain->coorMap = & this->coorMap;
-        mDomainList.push_back( mDomain );
+        mDomainList.push_back( std::move( mDomain ) );
     }
 
     this->AddLocalPt( 1, 2, 3, 4 );
 }
 
-Block2D::~Block2D()
-{
-    DeletePointer( mLineList );
-    DeletePointer( facelist );
-}
+Block2D::~Block2D() = default;
 
 void Block2D::Alloc()
 {
@@ -69,7 +65,7 @@ void Block2D::CreateBlockMesh2D()
     int nMDomain = mDomainList.size();
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->SetBlkBcMesh( this );
     }
 
@@ -97,11 +93,10 @@ void Block2D::DumpBlockMesh2D( std::fstream &file )
 int Block2D::GetNSubDomain()
 {
     int nSubDomain = 0;
-    int nMDomain = mLineList.size();
-    for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
+    for ( const auto & mDomain : mDomainList )
     {
-        MLine * mLine = mLineList[ iMDomain ];
-        nSubDomain += mLine->slineList.size();
+        // MDomain owns its subdomains; Block2D only aggregates their count.
+        nSubDomain += mDomain->GetNsubDomain();
     }
     return nSubDomain;
 }
@@ -112,37 +107,21 @@ void Block2D::ConstructTopo()
     int nMDomain = mDomainList.size();
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->ConstructMultiDomainTopo();
     }
 
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->CalcDomainCtrlPoints();
     }
 
-    MDomain * mDomain = mDomainList[ 0 ];
+    MDomain * mDomain = mDomainList[ 0 ].get();
 
     this->controlpoints = mDomain->ctrlpoints;
 
     this->CalcBlkDim();
-}
-
-void Block2D::GetCornerPoint( int & pt, int id1, int id2 )
-{
-    MLine * d1 = mLineList[ id1 ];
-    MLine * d2 = mLineList[ id2 ];
-
-    int nSize = d1->candidate_ctrlpoints.size();
-    for ( int i = 0; i < nSize; ++ i )
-    {
-        int ip = d1->candidate_ctrlpoints[ i ];
-        bool flag1 = InArray( ip, d2->candidate_ctrlpoints );
-        if ( ! flag1 ) continue;
-        pt = ip;
-        break;
-    }
 }
 
 void Block2D::SetInterfaceBc()
@@ -150,13 +129,13 @@ void Block2D::SetInterfaceBc()
     int nFaces = this->facelist.size();
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        Face2D * face2d = this->facelist[ iFace ];
+        Face2D * face2d = this->facelist[ iFace ].get();
         int domain_id = face2d->face_id;
         if ( face2d->bcType == -1 )
         {
-            face2d->t = new Face2D();
+            face2d->t = std::make_unique<Face2D>();
 
-            BlkF2C & face_struct = blkFaceSolver.line2Face[ domain_id - 1 ];
+            const BlkF2C & face_struct = blkFaceSolver.GetLineToFace( domain_id );
             int n_neibor = face_struct.cellList.size();
             int blk1 = face_struct.cellList[ 0 ] - 1;
             int blk2 = face_struct.cellList[ 1 ] - 1;
@@ -170,7 +149,7 @@ void Block2D::SetInterfaceBc()
             {
                 tblk = blk1;
             }
-            Face2D * facet = blkFaceSolver.GetBlkFace2D( tblk, domain_id );
+            const Face2D * facet = blkFaceSolver.GetBlkFace2D( tblk, domain_id );
             face2d->t->bcType = tblk + 1;
             face2d->t->st = facet->st;
             face2d->t->ed = facet->ed;
@@ -183,11 +162,11 @@ void Block2D::CalcBlkDim()
     int nMDomain = mDomainList.size();
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->CalcDim2D();
     }
 
-    MDomain * d = mDomainList[ 0 ];
+    MDomain * d = mDomainList[ 0 ].get();
 
     this->ni = d->ni;
     this->nj = d->nj;
@@ -212,13 +191,13 @@ void Block2D::CalcBlkDim()
 
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->CalcCoor();
     }
 
     CreateFaceList();
 
-    int kkk = 1;
+
 }
 
 void Block2D::CreateFaceList()
@@ -226,11 +205,11 @@ void Block2D::CreateFaceList()
     int nMDomain = mDomainList.size();
     for ( int iMDomain = 0; iMDomain < nMDomain; ++ iMDomain )
     {
-        MDomain * mDomain = mDomainList[ iMDomain ];
+        MDomain * mDomain = mDomainList[ iMDomain ].get();
         mDomain->CreateInpFaceList1D( facelist );
     }
 
-    int kkk = 1;
+
 }
 
 void Block2D::FillStrGrid( Grid * gridIn, int iZone )

@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "GridTask.h"
+#include <memory>
 #include "CmxTask.h"
 #include "TaskCom.h"
 #include "TaskState.h"
@@ -57,25 +58,24 @@ void SetGridFunc()
 void AllocWallDist( StringField & data )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    grid->cellMesh->AllocDist();
+    grid->GetCellMesh().AllocDist();
 }
 
 void ReadWallDist( StringField & data )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    grid->cellMesh->ReadDist();
+    grid->GetCellMesh().ReadDist();
 }
 
 void DumpWallDist( StringField & data )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    grid->cellMesh->DumpDist();
+    grid->GetCellMesh().DumpDist();
 }
 
 void CreateCalcMetricsTask( StringField & data )
 {
-    CalcMetricsTask * task = new CalcMetricsTask();
-    TaskState::createdTask = task;
+    TaskState::createdTask = std::make_unique<CalcMetricsTask>();
 }
 
 void CalcMetrics( StringField & data )
@@ -98,29 +98,29 @@ void CalcMetricsTask::Run()
 void SwapCellCenter( StringField & data )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    InterFace * interFace = grid->interFace;
+    InterFace * interFace = grid->interFace.get();
     if ( ! ONEFLOW::IsValid( interFace ) ) return;
 
     int iNei = interFace->z2n[ ZoneState::rzid ];
-    int nIFaces  = interFace->interFacePairs[ iNei ]->nIFaces;
+    int nIFaces  = interFace->GetInterfacePair( iNei ).nIFaces;
 
     IntField & interfaceId = interFace->GetInterfaceId( iNei, GREAT_SEND );
 
     ActionState::dataBook->MoveToBegin();
 
-    CellMesh * cellMesh = grid->cellMesh;
+    CellMesh & cellMesh = grid->GetCellMesh();
 
-    RealField & xcc = cellMesh->xcc;
-    RealField & ycc = cellMesh->ycc;
-    RealField & zcc = cellMesh->zcc;
-    RealField & vol = cellMesh->vol;
+    RealField & xcc = cellMesh.xcc;
+    RealField & ycc = cellMesh.ycc;
+    RealField & zcc = cellMesh.zcc;
+    RealField & vol = cellMesh.vol;
 
     for ( int iLocalFace = 0; iLocalFace < nIFaces; ++ iLocalFace )
     {
         int s1;
         int iFace = interfaceId[ iLocalFace ];
 
-        grid->faceTopo->GetSId( iFace, 1, s1 );
+        grid->GetFaceTopo().GetSId( iFace, 1, s1 );
 
         HXWrite( ActionState::dataBook, xcc[ s1 ] );
         HXWrite( ActionState::dataBook, ycc[ s1 ] );
@@ -132,27 +132,27 @@ void SwapCellCenter( StringField & data )
 void DecodeCellCenter( StringField & data )
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    InterFace * interFace = grid->interFace;
+    InterFace * interFace = grid->interFace.get();
     if ( ! ONEFLOW::IsValid( interFace ) ) return;
 
     int iNei = interFace->z2n[ ZoneState::szid ];
-    int nIFaces  = interFace->interFacePairs[ iNei ]->nIFaces;
+    int nIFaces  = interFace->GetInterfacePair( iNei ).nIFaces;
     IntField & interfaceId = interFace->GetInterfaceId( iNei, GREAT_RECV );
 
     ActionState::dataBook->MoveToBegin();
 
-    CellMesh * cellMesh = grid->cellMesh;
+    CellMesh & cellMesh = grid->GetCellMesh();
 
-    RealField & xcc = cellMesh->xcc;
-    RealField & ycc = cellMesh->ycc;
-    RealField & zcc = cellMesh->zcc;
-    RealField & vol = cellMesh->vol;
+    RealField & xcc = cellMesh.xcc;
+    RealField & ycc = cellMesh.ycc;
+    RealField & zcc = cellMesh.zcc;
+    RealField & vol = cellMesh.vol;
 
     for ( int iLocalFace = 0; iLocalFace < nIFaces; ++ iLocalFace )
     {
         int iFace = interfaceId[ iLocalFace ];
         int t1;
-        grid->faceTopo->GetTId( iFace, 1, t1 );
+        grid->GetFaceTopo().GetTId( iFace, 1, t1 );
 
         HXRead( ActionState::dataBook, xcc[ t1 ] );
         HXRead( ActionState::dataBook, ycc[ t1 ] );

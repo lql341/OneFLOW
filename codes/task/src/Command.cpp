@@ -23,12 +23,89 @@ License
 #include "Task.h"
 #include "TaskState.h"
 
+#include "DataBook.h"
+#include "FileInfo.h"
+
 #include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+    void DumpTaskInfo(
+        std::ostream & output,
+        Task * task,
+        int iTask )
+    {
+        output
+            << "  Task "
+            << iTask
+            << ":\n";
+
+        if ( task == nullptr )
+        {
+            output
+                << "    <null>\n";
+            return;
+        }
+
+        output
+            << "    id       : "
+            << task->taskId
+            << "\n"
+            << "    name     : "
+            << task->taskName
+            << "\n";
+
+        output
+            << "    action:\n"
+            << "      normal  : "
+            << ( task->action != nullptr ? "set" : "null" )
+            << "\n"
+            << "      send    : "
+            << ( task->sendAction != nullptr ? "set" : "null" )
+            << "\n"
+            << "      receive : "
+            << ( task->recvAction != nullptr ? "set" : "null" )
+            << "\n";
+
+        if ( task->dataBook != nullptr )
+        {
+            output
+                << "    DataBook:\n"
+                << "      size      : "
+                << task->dataBook->size()
+                << "\n"
+                << "      pageCount : "
+                << task->dataBook->GetPageCount()
+                << "\n";
+        }
+        else
+        {
+            output
+                << "    DataBook: <null>\n";
+        }
+
+        if ( task->fileInfo != nullptr )
+        {
+            output
+                << "    FileInfo:\n"
+                << "      fileName : "
+                << task->fileInfo->fileName
+                << "\n";
+        }
+        else
+        {
+            output
+                << "    FileInfo: <null>\n";
+        }
+    }
+
+}
 
 /*
 * Command implementation
@@ -100,8 +177,8 @@ void SimpleCmd::Execute()
 * cmdList is only a non-owning compatibility view.
 */
 
-HXVector< Command * > * CMD::cmdList_ = nullptr;
-CMD::CommandOwnerList * CMD::commandOwners = nullptr;
+std::unique_ptr< HXVector< Command * > > CMD::cmdList_;
+std::unique_ptr< CMD::CommandOwnerList > CMD::commandOwners;
 
 CMD::CMD()
 {
@@ -118,8 +195,8 @@ void CMD::Init()
         return;
     }
 
-    CMD::cmdList_ = new HXVector< Command * >;
-    CMD::commandOwners = new CommandOwnerList;
+    CMD::cmdList_ = std::make_unique< HXVector< Command * > >();
+    CMD::commandOwners = std::make_unique< CommandOwnerList >();
 }
 
 void CMD::Free()
@@ -132,11 +209,8 @@ void CMD::Free()
     */
     CMD::Clear();
 
-    delete CMD::commandOwners;
-    CMD::commandOwners = nullptr;
-
-    delete CMD::cmdList_;
-    CMD::cmdList_ = nullptr;
+    CMD::commandOwners.reset();
+    CMD::cmdList_.reset();
 
     TaskState::task = nullptr;
 }
@@ -177,7 +251,7 @@ void CMD::AddCmd( std::unique_ptr< Command > cmd )
 
 const HXVector< Command * > * CMD::GetCmdList()
 {
-    return CMD::cmdList_;
+    return CMD::cmdList_.get();
 }
 
 void CMD::RunCmd( Command * cmd )
@@ -288,5 +362,63 @@ void CMD::ShowCmdInfo( Command * cmd, int iCmd )
             << std::endl;
     }
 }
+
+void CMD::DumpCommandQueue(
+    std::ostream & output )
+{
+    output
+        << "========== Command Environment ==========\n";
+
+    if ( CMD::cmdList_ == nullptr ||
+        CMD::cmdList_->empty() )
+    {
+        output
+            << "  <empty>\n"
+            << "==========================================\n";
+        return;
+    }
+
+    for ( HXSize_t iCmd = 0;
+        iCmd < CMD::cmdList_->size();
+        ++ iCmd )
+    {
+        Command * cmd =
+            ( * CMD::cmdList_ )[ iCmd ];
+
+        output
+            << "\n[Command "
+            << iCmd
+            << "]\n";
+
+        if ( cmd == nullptr )
+        {
+            output
+                << "  <null>\n";
+            continue;
+        }
+
+        const Command::TList & tasks =
+            * cmd->GetTaskList();
+
+        output
+            << "  Tasks: "
+            << tasks.size()
+            << "\n";
+
+        for ( HXSize_t iTask = 0;
+            iTask < tasks.size();
+            ++ iTask )
+        {
+            DumpTaskInfo(
+                output,
+                tasks[ iTask ],
+                static_cast< int >( iTask ) );
+        }
+    }
+
+    output
+        << "\n==========================================\n";
+}
+
 
 EndNameSpace

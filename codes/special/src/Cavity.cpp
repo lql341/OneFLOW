@@ -17,9 +17,9 @@ License
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
+*---------------------------------------------------------------------------*/
 
-\*---------------------------------------------------------------------------*/
-
+// Cavity grid generation is a stateless workflow.
 #include "Cavity.h"
 #include "CurveLine.h"
 #include "CurveMesh.h"
@@ -39,40 +39,39 @@ License
 #include "Dimension.h"
 #include "Plot3D.h"
 #include "DataBase.h"
-#include <iostream>
+#include <memory>
+#include <utility>
 
 
 BeginNameSpace( ONEFLOW )
 
-Cavity::Cavity()
+
+namespace
 {
-    ;
+    void DumpPlot3DGrid( GridMediator & gridMediator );
+    void DumpCgnsGrid( std::unique_ptr< GridMediator > gridMediator );
 }
 
-Cavity::~Cavity()
-{
-    ;
-}
-
-void Cavity::Run()
+void GenerateCavityGrid()
 {
     int ni = 101;
     int nj = 51;
     int nk = 1;
 
     int nZone = 1;
-    GridMediator * gridMediator = new GridMediator();
-    gridMediator->gridFile = ONEFLOW::GetDataValue< std::string >( "sourceGridFileName" );
-    gridMediator->bcFile   = ONEFLOW::GetDataValue< std::string >( "sourceGridBcName" );
-    gridMediator->targetFile = ONEFLOW::GetDataValue< std::string >( "targetGridFileName" );
+    auto ownedGridMediator = std::make_unique< GridMediator >();
+    GridMediator & gridMediator = *ownedGridMediator;
+    gridMediator.gridFile = ONEFLOW::GetDataValue< std::string >( "sourceGridFileName" );
+    gridMediator.bcFile   = ONEFLOW::GetDataValue< std::string >( "sourceGridBcName" );
+    gridMediator.targetFile = ONEFLOW::GetDataValue< std::string >( "targetGridFileName" );
 
-    gridMediator->numberOfZones = nZone;
-    gridMediator->gridVector.resize( nZone );
+    gridMediator.numberOfZones = nZone;
+    gridMediator.gridVector.resize( nZone );
 
-    Grid * gridstr = ONEFLOW::CreateStrGrid();
-    StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
+    auto owned = ONEFLOW::CreateStrGridUnique();
+    StrGrid * grid = ONEFLOW::StrGridCast( owned.get() );
     int iZone = 0;
-    gridMediator->gridVector[ iZone ] = grid;
+    gridMediator.gridVector[ static_cast< std::size_t >( iZone ) ] = std::move( owned );
     grid->name = AddString( "Zone", iZone );
     grid->id = iZone;
     grid->ni = ni;
@@ -114,70 +113,70 @@ void Cavity::Run()
         }
     }
 
-    BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
+    BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
     int nBcRegions = 4;
     grid->bcRegionGroup->Create( nBcRegions );
 
-    BcRegion * bcRegion = 0;
+    std::unique_ptr< BcRegion > bcRegion;
     int ir = 0;
-    bcRegion = new BcRegion( iZone, ir );
+    bcRegion = std::make_unique< BcRegion >( iZone, ir );
     bcRegion->s->SetRegion( 1, ni, 1, 1 );
     bcRegion->s->zid = iZone;
     bcRegion->regionName = "lower";
     bcRegion->bcType = BC::SOLID_SURFACE;
-    bcRegionGroup->SetBcRegion( ir, bcRegion );
+    bcRegionGroup->SetBcRegion( ir, std::move( bcRegion ) );
     ++ ir;
 
-    bcRegion = new BcRegion( iZone, ir );
+    bcRegion = std::make_unique< BcRegion >( iZone, ir );
     bcRegion->s->SetRegion( 1, ni, nj, nj );
     bcRegion->s->zid = iZone;
     bcRegion->regionName = "upper";
     bcRegion->bcType = BC::SOLID_SURFACE;
     //bcRegion->bcType = BC::INTERFACE;
-    bcRegionGroup->SetBcRegion( ir, bcRegion );
+    bcRegionGroup->SetBcRegion( ir, std::move( bcRegion ) );
     ++ ir;
 
-    bcRegion = new BcRegion( iZone, ir );
+    bcRegion = std::make_unique< BcRegion >( iZone, ir );
     bcRegion->s->SetRegion( 1, 1, 1, nj );
     bcRegion->s->zid = iZone;
     bcRegion->regionName = "left";
     bcRegion->bcType = BC::SOLID_SURFACE;
-    bcRegionGroup->SetBcRegion( ir, bcRegion );
+    bcRegionGroup->SetBcRegion( ir, std::move( bcRegion ) );
     ++ ir;
 
-    bcRegion = new BcRegion( iZone, ir );
+    bcRegion = std::make_unique< BcRegion >( iZone, ir );
     bcRegion->s->SetRegion( ni, ni, 1, nj );
     bcRegion->s->zid = iZone;
     bcRegion->regionName = "right";
     bcRegion->bcType = BC::SOLID_SURFACE;
-    bcRegionGroup->SetBcRegion( ir, bcRegion );
+    bcRegionGroup->SetBcRegion( ir, std::move( bcRegion ) );
     ++ ir;
 
-    this->DumpPlot3DGrid( gridMediator );
+    DumpPlot3DGrid( gridMediator );
 
-    this->DumpCgnsGrid( gridMediator );
-
-    delete gridMediator;
-}
-
-void Cavity::DumpPlot3DGrid( GridMediator * gridMediator )
-{
-    Plot3D::DumpCoor( gridMediator );
-    Plot3D::DumpBc( gridMediator );
+    DumpCgnsGrid( std::move( ownedGridMediator ) );
 
 }
 
-void Cavity::DumpCgnsGrid( GridMediator * gridMediator )
+namespace
 {
-    CgnsFactory * cgnsFactory = new CgnsFactory();
+    void DumpPlot3DGrid( GridMediator & gridMediator )
+{
+    Plot3D::DumpCoor( & gridMediator );
+    Plot3D::DumpBc( & gridMediator );
+
+}
+
+    void DumpCgnsGrid( std::unique_ptr< GridMediator > gridMediator )
+{
+    CgnsFactory cgnsFactory;
 
     ZgridMediator zgridMediator;
-    zgridMediator.AddGridMediator( gridMediator );
+    zgridMediator.AddGridMediator( std::move( gridMediator ) );
 
-    cgnsFactory->DumpCgnsGrid( & zgridMediator );
-
-    delete cgnsFactory;
+    cgnsFactory.DumpCgnsGrid( zgridMediator );
 }
 
+}
 
 EndNameSpace

@@ -37,35 +37,44 @@ SimuImp::SimuImp( std::vector<std::string>& args )
     ctx_->ProcessCommandLine();
 }
 
+SimuImp::SimuImp( const std::string& caseDir, bool debug )
+    : ctx_( std::make_unique<SimuContext>( caseDir, debug ) )
+{
+}
+
 SimuImp::~SimuImp()
 {
 }
 
 void SimuImp::Run()
 {
-    this->PreProcess();
+    ctx_->SetupProcessEnvironment();
+    RunCase();
+}
+
+void SimuImp::RunCase()
+{
     try
     {
+        this->PreProcess();
         this->MainProcess();
-        this->PostProcess();
     }
     catch ( ... )
     {
-        // MainProcess exceptions must not bypass accelerator teardown. HIP
-        // buffers must be released while the runtime is still initialized.
-        if ( ctx_ != nullptr && ctx_->IsEnvironmentReady() )
+        // Case setup may fail after partially binding global case state.
+        // Always release that state before propagating the failure.
+        try
         {
-            try
-            {
-                this->PostProcess();
-            }
-            catch ( ... )
-            {
-                // Preserve the original solver failure.
-            }
+            this->PostProcess();
+        }
+        catch ( ... )
+        {
+            // Preserve the original setup or solver failure.
         }
         throw;
     }
+
+    this->PostProcess();
 }
 
 void SimuImp::PreProcess()
@@ -80,12 +89,17 @@ void SimuImp::MainProcess()
 
 void SimuImp::PostProcess()
 {
-    ctx_->TeardownEnvironment();
+    ctx_->TeardownCase();
+}
+
+void SimuImp::FinalizeEnvironment()
+{
+    ctx_->FinalizeEnvironment();
 }
 
 void SimuImp::InitSimu()
 {
-    ctx_->SetupEnvironment();
+    ctx_->SetupCaseEnvironment();
 }
 
 void SimuImp::RunSimu()

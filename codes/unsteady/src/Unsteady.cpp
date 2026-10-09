@@ -11,51 +11,87 @@ License
     (at your option) any later version.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-    for more details.
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+    License for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
-
 \*---------------------------------------------------------------------------*/
 
 #include "Unsteady.h"
-#include "UsdPara.h"
-#include "FieldImp.h"
 #include "FieldWrap.h"
-#include "DataBase.h"
-#include "Zone.h"
-#include "Grid.h"
+#include "Fatal.h"
 
 BeginNameSpace( ONEFLOW )
 
-Unsteady::Unsteady()
+void Unsteady::BindFields(
+    UnsGrid * grid,
+    const UnsteadyFieldNames & fieldNames )
 {
-    solverType = -1;
-    data = 0;
-    field = 0;
+    const std::size_t requiredHistoryLevels =
+        GetHistoryIndex( HistoryLevel::Old ) + 1;
+
+    if ( fieldNames.flow.size() < requiredHistoryLevels )
+    {
+        Fatal(
+            "Unsteady requires Current, Previous, and Old flow time levels." );
+    }
+
+    if ( fieldNames.residual.size() < requiredHistoryLevels )
+    {
+        Fatal(
+            "Unsteady requires Current, Previous, and Old residual time levels." );
+    }
+
+    this->fieldView.BindFields( grid, fieldNames );
 }
 
-Unsteady::~Unsteady()
+std::size_t Unsteady::GetHistoryIndex( Unsteady::HistoryLevel level )
 {
+    switch ( level )
+    {
+    case Unsteady::HistoryLevel::Current:
+        return 0;
+
+    case Unsteady::HistoryLevel::Previous:
+        return 1;
+
+    case Unsteady::HistoryLevel::Old:
+        return 2;
+    }
+
+    Fatal( "Invalid unsteady history level" );
+    return 0;
 }
 
-void Unsteady::UpdateUnsteady( int solverType )
+MRField * Unsteady::GetFlow( Unsteady::HistoryLevel level )
 {
-    FieldManager * fieldManager = FieldFactory::GetFieldManager( solverType );
-
-    UsdPara * usdPara = fieldManager->usdPara.get();
-
-    Grid * grid = Zone::GetGrid();
-
-    MRField * q  = GetFieldPointer< MRField > ( grid, usdPara->flow[ 0 ] );
-    MRField * q1 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 1 ] );
-    MRField * q2 = GetFieldPointer< MRField > ( grid, usdPara->flow[ 2 ] );
-
-    SetField( q2, q1 );
-    SetField( q1, q  );
+    return this->fieldView.GetFlow(
+        GetHistoryIndex( level ) );
 }
 
+MRField * Unsteady::GetResidual( Unsteady::HistoryLevel level )
+{
+    return this->fieldView.GetResidual(
+        GetHistoryIndex( level ) );
+}
+
+void Unsteady::UpdateUnsteady()
+{
+    // Reuse the persistent field view instead of rebuilding a second view.
+    UnsteadyFieldView & fieldView = this->fieldView;
+
+    // Shift from the oldest configured level toward the current level.
+    // Reverse order prevents overwriting a history level before it is copied.
+    for ( std::size_t level = fieldView.GetFlowCount();
+        level > 1;
+        -- level )
+    {
+        SetField(
+            fieldView.GetFlow( level - 1 ),
+            fieldView.GetFlow( level - 2 ) );
+    }
+}
 
 EndNameSpace

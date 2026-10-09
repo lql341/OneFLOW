@@ -26,24 +26,24 @@ License
 #include "HXDefine.h"
 #include <vector>
 #include <string>
-#include <map>
+#include <memory>
+#include <stdexcept>
 
 
 BeginNameSpace( ONEFLOW )
 
 #define IMPLEMENT_GRID_CLONE( TYPE ) \
-Grid * Clone() const { return new TYPE(); }
-//Grid * Clone() const { return new TYPE( * this ); }
+std::unique_ptr< Grid > Clone() const override { return std::make_unique< TYPE >(); }
 
 #define REGISTER_GRID( TYPE ) \
     Grid * TYPE ## _myClass = \
-        Grid::Register( #TYPE, new TYPE() );
+        Grid::Register( #TYPE, std::make_unique< TYPE >() );
 
+class DataBase;
 class DataBook;
 class NodeMesh;
 class InterFace;
 class SlipFace;
-class DataBase;
 class IFaceLink;
 
 class Grid
@@ -52,11 +52,16 @@ public:
     Grid();
     virtual ~Grid();
 public:
-    virtual Grid * Clone() const = 0;
+    DataBase * GetDataBase();
+    const DataBase * GetDataBase() const;
+    DataBase & RequireDataBase();
+    const DataBase & RequireDataBase() const;
 public:
-    static Grid * SafeClone( const std::string & type );
-    static Grid * Register( const std::string & type, Grid * clone );
-    static std::map < std::string, Grid * > * classMap;
+    virtual std::unique_ptr< Grid > Clone() const = 0;
+public:
+    // Preferred: exclusive ownership of a registered grid prototype clone.
+    static std::unique_ptr< Grid > SafeCloneUnique( const std::string & type );
+    static Grid * Register( const std::string & type, std::unique_ptr< Grid > clone );
 public:
     std::string name;
     int dimension;
@@ -67,20 +72,20 @@ public:
     int nBFaces;
     int nIFaces;
     int volBcType;
-    NodeMesh * nodeMesh;
-    InterFace * interFace;
-    SlipFace * slipFace;
-    DataBase * dataBase;
+private:
+    std::unique_ptr< DataBase > dataBase;
 public:
-    DataBase * GetDataBase() { return dataBase; };
+    std::unique_ptr< NodeMesh > nodeMesh;
+    std::unique_ptr< InterFace > interFace;
+    std::unique_ptr< SlipFace > slipFace;
 public:
     void BasicInit();
     void Free();
     virtual void Init();
 public:
-    bool IsOneD();
-    bool IsTwoD();
-    bool IsThreeD();
+    bool IsOneD() const;
+    bool IsTwoD() const;
+    bool IsThreeD() const;
 public:
     virtual void ReadGrid ( std::fstream & file ) {};
     virtual void WriteGrid( std::fstream & file ) {};
@@ -89,9 +94,9 @@ public:
     virtual void ReadGrid( DataBook * databook ){};
     virtual void WriteGrid( DataBook * databook ){};
     virtual void ModifyBcType( int bcType1, int bcType2 ) {};
-    virtual void GenerateLgMapping( IFaceLink * iFaceLink ){};
-    virtual void ReGenerateLgMapping( IFaceLink * iFaceLink ){};
-    virtual void UpdateOtherTopologyTerm( IFaceLink * iFaceLink ){};
+    virtual void GenerateLgMapping( IFaceLink & iFaceLink ){};
+    virtual void ReGenerateLgMapping( IFaceLink & iFaceLink ){};
+    virtual void UpdateOtherTopologyTerm( IFaceLink & iFaceLink ){};
 public:
     virtual void GetMinMaxDistance( Real & dismin, Real & dismax ) {};
     virtual void CalcMetrics() {};

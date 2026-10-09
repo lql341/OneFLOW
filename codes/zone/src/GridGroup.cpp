@@ -21,9 +21,12 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "GridGroup.h"
+#include <memory>
+#include <utility>
 #include "Zone.h"
 #include "ZoneState.h"
 #include "ScalarGrid.h"
+#include "ScalarZone.h"
 
 #include "PIO.h"
 #include "Parallel.h"
@@ -55,8 +58,26 @@ GridGroup::~GridGroup()
 
 void GridGroup::InitZoneLayout( const std::string & fileName )
 {
+    this->InitZoneLayout( fileName, std::string() );
+}
+
+void GridGroup::InitZoneLayout(
+    const std::string & fileName,
+    const std::string & caseDir )
+{
     std::fstream file;
-    PIO::OpenPrjFile( file, fileName, std::ios_base::in|std::ios_base::binary );
+
+    if ( caseDir.empty() )
+    {
+        PIO::OpenPrjFile(
+            file, fileName, std::ios_base::in|std::ios_base::binary );
+    }
+    else
+    {
+        PIO::OpenCaseFile(
+            file, caseDir, fileName,
+            std::ios_base::in|std::ios_base::binary );
+    }
 
     this->InitZoneLayout( file );
     this->SetMultiZoneLayout();
@@ -100,9 +121,26 @@ void GridGroup::SetMultiZoneLayout()
 
 void GridGroup::ReadGrid( const std::string & fileName )
 {
+    this->ReadGrid( fileName, std::string() );
+}
+
+void GridGroup::ReadGrid(
+    const std::string & fileName,
+    const std::string & caseDir )
+{
     std::fstream file;
 
-    PIO::OpenPrjFile( file, fileName, std::ios_base::in|std::ios_base::binary );
+    if ( caseDir.empty() )
+    {
+        PIO::OpenPrjFile(
+            file, fileName, std::ios_base::in|std::ios_base::binary );
+    }
+    else
+    {
+        PIO::OpenCaseFile(
+            file, caseDir, fileName,
+            std::ios_base::in|std::ios_base::binary );
+    }
 
     this->InitZoneLayout( file );
     this->SetMultiZoneLayout();
@@ -120,7 +158,6 @@ void GridGroup::ReadGrid( std::fstream & file, int zid )
 {
     int spid = 0;
     int rpid = 0;
-
     Parallel::GetSrPid( zid, spid, rpid );
 
     if ( Parallel::pid == rpid )
@@ -128,13 +165,12 @@ void GridGroup::ReadGrid( std::fstream & file, int zid )
         this->CreateGrid( zid );
     }
 
-    DataBook * dataBook = new DataBook();
-
+    // FIX: Use stack allocation instead of raw pointers. 
+    // This guarantees exception safety and eliminates memory leaks 
+    // if ReadAbstractData or DataToGrid throws an exception.
+    DataBook dataBook;
     ONEFLOW::ReadAbstractData( file, dataBook, spid, rpid );
-
     ONEFLOW::DataToGrid( dataBook, zid );
-
-    delete dataBook;
 }
 
 void GridGroup::CreateGrid( int zoneId )
@@ -152,38 +188,38 @@ void GridGroup::CreateGrid( int zoneId )
 void GridGroup::CreateGridImp( int zoneId )
 {
     int gridType = ZoneState::zoneType[ zoneId ];
-    Grid * grid = ONEFLOW::CreateGrid( gridType );
+    auto grid = ONEFLOW::CreateGridUnique( gridType );
     grid->level = 0;
     grid->id = zoneId;
     grid->localId = Zone::nLocalZones ++;
     grid->type = gridType;
-    Zone::AddGrid( zoneId, grid );
+    Zone::AddGrid( zoneId, std::move( grid ) );
 }
 
 void GridGroup::CreateGridTest( int zoneId )
 {
     int gridType = ZoneState::zoneType[ zoneId ];
 
-    ScalarGrid * grid = new ScalarGrid();
+    auto grid = std::make_unique< ScalarGrid >();
     grid->level = 0;
     grid->id = zoneId;
     grid->localId = Zone::nLocalZones ++;
     grid->type = gridType;
 
-    Zone::AddScalarGrid( zoneId, grid );
+    ScalarZone::AddGrid( zoneId, std::move( grid ) );
 }
 
-void ReadAbstractData( std::fstream & file, DataBook * dataBook, int sendpid, int recvpid, int tag )
+void ReadAbstractData( std::fstream & file, DataBook & dataBook, int sendpid, int recvpid, int tag )
 {
     if ( Parallel::pid == sendpid )
     {
-        dataBook->ReadFile( file );
+        dataBook.ReadFile( file );
     }
 
-    dataBook->SendRecv( sendpid, recvpid, tag );
+    dataBook.SendRecv( sendpid, recvpid, tag );
 }
 
-void DataToGrid( DataBook * dataBook, int zid )
+void DataToGrid( DataBook & dataBook, int zid )
 {
     if ( Zone::flag_test_grid == 0 )
     {
@@ -195,7 +231,7 @@ void DataToGrid( DataBook * dataBook, int zid )
     }
 }
 
-void DataToGridImp( DataBook * dataBook, int zid )
+void DataToGridImp( DataBook & dataBook, int zid )
 {
     int spid = 0;
     int rpid = 0;
@@ -204,12 +240,12 @@ void DataToGridImp( DataBook * dataBook, int zid )
 
     if ( Parallel::pid != rpid ) return;
 
-    Grid * grid = Zone::GetGrid( zid, 0 );
+    Grid & grid = Zone::GetGridReference( zid, 0 );
 
-    grid->Decode( dataBook );
+    grid.Decode( &dataBook );
 }
 
-void DataToGridTest( DataBook * dataBook, int zid )
+void DataToGridTest( DataBook & dataBook, int zid )
 {
     int spid = 0;
     int rpid = 0;
@@ -218,8 +254,8 @@ void DataToGridTest( DataBook * dataBook, int zid )
 
     if ( Parallel::pid != rpid ) return;
 
-    ScalarGrid * grid = Zone::GetScalarGrid( zid );
-    grid->ReadGrid( dataBook );
+    ScalarGrid & grid = ScalarZone::GetGridReference( zid );
+    grid.ReadGrid( &dataBook );
 }
 
 EndNameSpace

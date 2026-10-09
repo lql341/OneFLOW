@@ -47,6 +47,11 @@ INsSolver::~INsSolver()
 {
 }
 
+void INsSolver::Reset()
+{
+    INsSolver::initFlag = false;
+}
+
 void INsSolver::StaticInit()
 {
     if ( INsSolver::initFlag ) return;
@@ -62,9 +67,10 @@ void INsSolver::StaticInit()
     solverInfo->nEqu  = nscom.nEqu;
     solverInfo->nTEqu = nscom.nTEqu;
 
-    solverInfo->registerInterface = 0;
     solverInfo->residualName = "res";
     solverInfo->resFileName = GetDataValue< std::string >( "resFile" );
+    solverInfo->gradString.clear();
+    solverInfo->implicitString.clear();
     solverInfo->gradString.push_back( "q"    );
     solverInfo->gradString.push_back( "dqdx" );
     solverInfo->gradString.push_back( "dqdy" );

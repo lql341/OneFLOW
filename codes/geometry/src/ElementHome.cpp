@@ -22,11 +22,11 @@ License
 
 #include "ElementHome.h"
 #include "HXCgns.h"
-#include "HXPointer.h"
+#include <utility>
 
 BeginNameSpace( ONEFLOW )
 
-HXVector< UnitElement * > ElementHome::unitElement;
+HXVector< std::unique_ptr< UnitElement > > ElementHome::unitElement;
 int ElementHome::numberOfUnitElement = 0;
 
 ElementHome::ElementHome()
@@ -39,26 +39,29 @@ ElementHome::~ElementHome()
     ;
 }
 
-UnitElement * ElementHome::GetUnitElement( int elementType )
+UnitElement & ElementHome::GetUnitElement( int elementType )
 {
-    return unitElement[ elementType ];
+    return *unitElement[ elementType ];
 }
 
 void ElementHome::Initialize()
 {
     ElementHome::numberOfUnitElement = NofValidElementTypes;
 
-    ONEFLOW::CreatePointer( unitElement, numberOfUnitElement );
+    unitElement.clear();
+    unitElement.reserve( numberOfUnitElement );
 
     for ( HXSize_t iUnitElement = 0; iUnitElement < numberOfUnitElement; ++ iUnitElement )
     {
-        unitElement[ iUnitElement ]->Initialize( iUnitElement );
+        auto unit = std::make_unique< UnitElement >();
+        unit->Initialize( iUnitElement );
+        unitElement.push_back( std::move( unit ) );
     }
 }
 
 void ElementHome::Free()
 {
-    ONEFLOW::DeletePointer( unitElement );
+    unitElement.clear();
 }
 
 class ElementHomeInit
@@ -77,14 +80,14 @@ ElementHomeInit elementHomeInit;
 
 int GetElementNodeNumbers( int eType )
 {
-    UnitElement * unitElement = ElementHome::GetUnitElement( eType );
-    int nodeNumber = unitElement->GetElementNodeNumbers( eType );
+    UnitElement & unitElement = ElementHome::GetUnitElement( eType );
+    int nodeNumber = unitElement.GetElementNodeNumbers( eType );
     return nodeNumber;
 }
 
 bool IsBasicVolumeElementType( int eType )
 {
-    return ElementHome::GetUnitElement( eType )->IsBasicVolumeElementType( eType );
+    return ElementHome::GetUnitElement( eType ).IsBasicVolumeElementType( eType );
 }
 
 EndNameSpace

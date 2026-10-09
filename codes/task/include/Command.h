@@ -23,8 +23,8 @@ License
 #pragma once
 
 #include "HXDefine.h"
-
 #include <memory>
+#include <ostream>
 
 BeginNameSpace( ONEFLOW )
 
@@ -119,6 +119,10 @@ public:
 
     static void ShowCmdInfo( Command * cmd, int iCmd );
 
+    // Dump the current command queue without changing execution state.
+    static void DumpCommandQueue(
+        std::ostream & output );
+
     // Return a read-only view of the current command queue.
     static const HXVector< Command * > * GetCmdList();
 
@@ -127,10 +131,10 @@ private:
         HXVector< std::unique_ptr< Command > >;
 
     // Non-owning view used to preserve command execution order.
-    static HXVector< Command * > * cmdList_;
+    static std::unique_ptr< HXVector< Command * > > cmdList_;
 
     // Actual owner of all commands currently in the queue.
-    static CommandOwnerList * commandOwners;
+    static std::unique_ptr< CommandOwnerList > commandOwners;
 };
 
 EndNameSpace

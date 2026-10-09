@@ -37,25 +37,31 @@ public:
     FaceMesh();
     ~FaceMesh();
 public:
-    FaceTopo * faceTopo;
+    void BindFaceTopo( FaceTopo & faceTopo );
+    FaceTopo & GetFaceTopo();
+    const FaceTopo & GetFaceTopo() const;
+
     RealField xfc, yfc, zfc;
     RealField xfn, yfn, zfn;
     RealField area;
     RealField vfx, vfy, vfz;
     RealField vfn;
 public:
-    HXSize_t GetNFace();
-    HXSize_t CalcTotalFaceNodes();
-    HXSize_t GetNBFace();
+    HXSize_t GetNFace() const;
+    HXSize_t CalcTotalFaceNodes() const;
+    HXSize_t GetNBFace() const;
     void SetNBFace( HXSize_t nBFaces );
-    void CalcFaceNormal1D( NodeMesh * nodeMesh, CellMesh * cellMesh );
-    void CalcFaceCenter1D( NodeMesh * nodeMesh );
-    void CalcFaceNormal2D( NodeMesh * nodeMesh );
-    void CalcFaceCenter2D( NodeMesh * nodeMesh );
-    void CalcFaceNormal3D( NodeMesh * nodeMesh );
-    void CalcFaceCenter3D( NodeMesh * nodeMesh );
+    void CalcFaceNormal1D( const NodeMesh & nodeMesh, CellMesh & cellMesh );
+    void CalcFaceCenter1D( const NodeMesh & nodeMesh );
+    void CalcFaceNormal2D( const NodeMesh & nodeMesh );
+    void CalcFaceCenter2D( const NodeMesh & nodeMesh );
+    void CalcFaceNormal3D( const NodeMesh & nodeMesh );
+    void CalcFaceCenter3D( const NodeMesh & nodeMesh );
 
     void AllocateMetrics();
+
+private:
+    FaceTopo * faceTopo = nullptr;
 };
 
 

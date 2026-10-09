@@ -7,7 +7,7 @@
 
 // Include OneFLOW namespaces and headers
 // Ensure CMake is configured with the correct include paths
-#include "AdtTree.h" 
+#include "HXAdtTree.h" 
 #include "HXDefine.h"
 
 // ============================================================================
@@ -41,7 +41,7 @@ TEST_F(AdtTreeTest, BasicInsertionAndCount) {
 
     for (int i = 0; i < 5; ++i) {
         // Note: The refactored AddNode takes ownership of the raw pointer
-        tree.AddNode(new ONEFLOW::HXAdtNode<int, double>(3, pts[i], i));
+        tree.AddNode( std::make_unique<ONEFLOW::HXAdtNode<int, double>>(3, pts[i], i) );
     }
 
     // GTest assertion: prints expected vs. actual values on failure without aborting subsequent tests
@@ -60,7 +60,7 @@ TEST_F(AdtTreeTest, RegionQueryAccuracy) {
     };
 
     for (int i = 0; i < 4; ++i) {
-        tree.AddNode(new ONEFLOW::HXAdtNode<int, double>(3, pts[i], i));
+        tree.AddNode(std::make_unique<ONEFLOW::HXAdtNode<int, double>>(3, pts[i], i));
     }
 
     // Query box: [0.5, 4.0] for all dimensions
@@ -83,12 +83,58 @@ TEST_F(AdtTreeTest, RegionQueryAccuracy) {
     EXPECT_TRUE(found2) << "Failed to find point ID 2";
 }
 
+
+// Test node deletion and tree rebuild
+TEST_F(AdtTreeTest, NodeDeletionAndRebuild) {
+    ONEFLOW::HXAdtTree<int, double> tree(3, pmin_.data(), pmax_.data());
+
+    double pts[4][3] = {
+        {1.0, 1.0, 1.0},
+        {2.0, 2.0, 2.0},
+        {5.0, 5.0, 5.0},
+        {8.0, 8.0, 8.0}
+    };
+
+    ONEFLOW::HXAdtTree<int, double>::AdtNodeList nodes;
+    for (int i = 0; i < 4; ++i) {
+        auto node = std::make_unique<ONEFLOW::HXAdtNode<int, double>>(3, pts[i], i);
+        nodes.push_back(node.get());
+        tree.AddNode(std::move(node));
+    }
+
+    ASSERT_EQ(tree.nCount(), 4);
+    ASSERT_TRUE(tree.RemoveNode(nodes[1]));
+    EXPECT_EQ(tree.nCount(), 3);
+
+    double qmin[] = {0.5, 0.5, 0.5};
+    double qmax[] = {9.0, 9.0, 9.0};
+
+    ONEFLOW::HXAdtTree<int, double>::AdtNodeList results;
+    tree.FindNodesInRegion(qmin, qmax, results);
+
+    ASSERT_EQ(results.size(), 3u);
+
+    bool found0 = false;
+    bool found2 = false;
+    bool found3 = false;
+    for (auto * node : results) {
+        found0 = found0 || node->GetData() == 0;
+        found2 = found2 || node->GetData() == 2;
+        found3 = found3 || node->GetData() == 3;
+        EXPECT_NE(node->GetData(), 1);
+    }
+
+    EXPECT_TRUE(found0);
+    EXPECT_TRUE(found2);
+    EXPECT_TRUE(found3);
+}
+
 // Test floating-point boundary conditions (Critical for CFD applications)
 TEST_F(AdtTreeTest, FloatingPointBoundaryConditions) {
     ONEFLOW::HXAdtTree<int, double> tree(3, pmin_.data(), pmax_.data());
 
     double pt[] = {5.0, 5.0, 5.0};
-    tree.AddNode(new ONEFLOW::HXAdtNode<int, double>(3, pt, 99));
+    tree.AddNode( std::make_unique<ONEFLOW::HXAdtNode<int, double>>(3, pt, 99) );
 
     // Query box exactly touching the point, with a tiny floating-point offset
     double qmin[] = {5.0 - 1e-12, 5.0 - 1e-12, 5.0 - 1e-12};
@@ -126,7 +172,7 @@ TEST_F(AdtTreeTest, StressTestAndMemorySafety) {
             static_cast<double>(rand()) / RAND_MAX * 10.0,
             static_cast<double>(rand()) / RAND_MAX * 10.0
         };
-        tree.AddNode(new ONEFLOW::HXAdtNode<int, double>(3, pt, i));
+        tree.AddNode(std::make_unique<ONEFLOW::HXAdtNode<int, double>>(3, pt, i));
     }
 
     EXPECT_EQ(tree.nCount(), NUM_POINTS);

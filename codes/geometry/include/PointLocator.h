@@ -23,8 +23,8 @@ License
 
 #pragma once
 #include "HXDefine.h"
-#include "AdtTree.h"
-#include "GridDef.h"
+#include "HXAdtTree.h"
+#include "GridHandles.h"
 
 BeginNameSpace( ONEFLOW )
 
@@ -37,10 +37,19 @@ class PointLocator
 {
 public:
     PointLocator();
-    ~PointLocator();
+    ~PointLocator(); // Will be defined as = default in .cpp
+
+    // [Refactored] Disable copying to prevent double-free of unique_ptr.
+    // unique_ptr is move-only, so we explicitly delete copy operations.
+    PointLocator(const PointLocator&) = delete;
+    PointLocator& operator=(const PointLocator&) = delete;
 protected:
     int id;
-    AdtTree * coorTree;
+
+    // [Refactored] Changed from raw pointer to std::unique_ptr.
+    // Automatic cleanup, exception safety, no double-free possible.
+    std::unique_ptr<AdtTree> coorTree;
+
     Real tolerance;
     RealField xCoor, yCoor, zCoor;
 public:
@@ -48,6 +57,7 @@ public:
     void Initialize( Grid * grid );
     void InitializeSpecial( Grid * grid, Real toleranceIn );
     void Initialize( Grids & grids );
+    void Initialize( const GridViews & grids );
 public:
     int GetNPoint() { return static_cast<int> (xCoor.size()); }
     int FindPoint( Real xm, Real ym, Real zm );
@@ -61,14 +71,19 @@ public:
     void GetFaceCoorList( const IntField & nodeId, RealField &xList, RealField &yList, RealField &zList );
 };
 
-void CreateStandardADT( RealField & ptmin, RealField & ptmax, AdtTree *& adtTree, Real & tolerance );
-void CreateStandardADT( Grid * grid, AdtTree *& adtTree, Real & tolerance );
-void CreateStandardADT( Grids & grids, AdtTree *& adtTree, Real & tolerance );
-void CreateStandardADTByTolerance( Grids & grids, AdtTree *& adtTree, Real & tolerance );
+void CreateStandardADT( RealField & ptmin, RealField & ptmax, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
+void CreateStandardADT( Grid * grid, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
+void CreateStandardADT( Grids & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
+void CreateStandardADT( const GridViews & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
+void CreateStandardADTByTolerance( Grids & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
+void CreateStandardADTByTolerance( const GridViews & grids, std::unique_ptr<AdtTree>& adtTree, Real & tolerance );
 
 void ShiftMinMaxBox( RealField & pmin, RealField & pmax, Real tolerance );
 void GetGridsMinMaxDistance( Grids & grids, Real & mindis, Real & maxdis );
+void GetGridsMinMaxDistance( const GridViews & grids, Real & mindis, Real & maxdis );
 Real CalcGridTolerance( Grids & grids );
+Real CalcGridTolerance( const GridViews & grids );
 void GetBoundingBoxOfMultiZoneGrids( Grids & grids, RealField & pmin, RealField & pmax );
+void GetBoundingBoxOfMultiZoneGrids( const GridViews & grids, RealField & pmin, RealField & pmax );
 
 EndNameSpace

@@ -23,23 +23,24 @@ License
 #include "Plot3D.h"
 #include "CgnsFactory.h"
 #include "GridMediator.h"
+#include "GridTypes.h"
 #include "Fatal.h"
 #include "Prj.h"
 #include "StrGrid.h"
 #include "NodeMesh.h"
-#include "BgGrid.h"
 #include "GridState.h"
 #include "TextFileParser.h"
 #include "FileO.h"
 
 #include "Dimension.h"
 #include "HXMath.h"
-#include "Zone.h"
+#include "BgGrid.h"
 #include "ZoneState.h"
 #include "BcRecord.h"
 #include "DataBase.h"
-#include "GridPara.h"
 #include <iostream>
+#include <memory>
+#include <utility>
 
 
 
@@ -93,7 +94,17 @@ void Plot3D::ReadCoorBinary( GridMediator * gridMediator )
     std::string separator  = " =\r\n\t#$,;";
 
     std::fstream file;
-    Prj::OpenPrjFile( file, fileName, std::ios_base::in|std::ios_base::binary );
+    if ( gridMediator->caseDir.empty() )
+    {
+        Prj::OpenPrjFile(
+            file, fileName, std::ios_base::in|std::ios_base::binary );
+    }
+    else
+    {
+        Prj::OpenCaseFile(
+            file, gridMediator->caseDir, fileName,
+            std::ios_base::in|std::ios_base::binary );
+    }
 
     HXRead( & file, gridMediator->numberOfZones );
     gridMediator->gridVector.resize( gridMediator->numberOfZones );
@@ -111,9 +122,9 @@ void Plot3D::ReadCoorBinary( GridMediator * gridMediator )
             HXRead( & file, nk );
         }
 
-        Grid * gridstr = ONEFLOW::CreateGrid( ONEFLOW::SMESH );
-        StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
-        gridMediator->gridVector[ iZone ] = grid;
+        auto owned = ONEFLOW::CreateStrGridUnique();
+        StrGrid * grid = StrGridCast( owned.get() );
+        gridMediator->gridVector[ static_cast< std::size_t >( iZone ) ] = std::move( owned );
         grid->id = iZone;
         grid->ni = ni;
         grid->nj = nj;
@@ -137,7 +148,7 @@ void Plot3D::ReadCoorBinary( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
         int numberOfNodes = grid->nNodes;
 
         int ni = grid->ni;
@@ -165,7 +176,17 @@ void Plot3D::DumpCoorBinary( GridMediator * gridMediator )
     std::string & fileName = gridMediator->gridFile;
 
     std::fstream file;
-    Prj::OpenPrjFile( file, fileName, std::ios_base::out|std::ios_base::binary );
+    if ( gridMediator->caseDir.empty() )
+    {
+        Prj::OpenPrjFile(
+            file, fileName, std::ios_base::out|std::ios_base::binary );
+    }
+    else
+    {
+        Prj::OpenCaseFile(
+            file, gridMediator->caseDir, fileName,
+            std::ios_base::out|std::ios_base::binary );
+    }
 
     int numberOfZones = gridMediator->numberOfZones;
     HXWrite( & file, numberOfZones );
@@ -174,7 +195,7 @@ void Plot3D::DumpCoorBinary( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
 
         int ni = grid->ni;
         int nj = grid->nj;
@@ -202,7 +223,7 @@ void Plot3D::DumpCoorBinary( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
 
         int ni = grid->ni;
         int nj = grid->nj;
@@ -226,7 +247,15 @@ void Plot3D::ReadCoorAscii( GridMediator * gridMediator )
 
     TextFileParser textFileParser;
     std::string separator  = " =\r\n\t#$,;";
-    textFileParser.OpenPrjFile( fileName, std::ios_base::in );
+    if ( gridMediator->caseDir.empty() )
+    {
+        textFileParser.OpenPrjFile( fileName, std::ios_base::in );
+    }
+    else
+    {
+        textFileParser.OpenCaseFile(
+            gridMediator->caseDir, fileName, std::ios_base::in );
+    }
     textFileParser.SetDefaultSeparator( separator );
 
     gridMediator->numberOfZones = textFileParser.ReadNextDigit< int >();
@@ -246,9 +275,9 @@ void Plot3D::ReadCoorAscii( GridMediator * gridMediator )
             nk = textFileParser.ReadNextDigit< int >();
         }
 
-        Grid * gridstr = ONEFLOW::CreateGrid( ONEFLOW::SMESH );
-        StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
-        gridMediator->gridVector[ zCount ] = grid;
+        auto owned = ONEFLOW::CreateStrGridUnique();
+        StrGrid * grid = StrGridCast( owned.get() );
+        gridMediator->gridVector[ static_cast< std::size_t >( zCount ) ] = std::move( owned );
         grid->id = zCount;
         grid->ni = ni;
         grid->nj = nj;
@@ -273,7 +302,7 @@ void Plot3D::ReadCoorAscii( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
         int numberOfNodes = grid->nNodes;
 
         int ni = grid->ni;
@@ -325,7 +354,15 @@ void Plot3D::DumpCoorAscii( GridMediator * gridMediator )
     std::string & fileName = gridMediator->gridFile;
 
     FileO fileO;
-    fileO.OpenPrjFile( fileName, std::ios_base::out );
+    if ( gridMediator->caseDir.empty() )
+    {
+        fileO.OpenPrjFile( fileName, std::ios_base::out );
+    }
+    else
+    {
+        fileO.OpenCaseFile(
+            gridMediator->caseDir, fileName, std::ios_base::out );
+    }
 
     int numberOfZones = gridMediator->numberOfZones;
     fileO.WriteLine( numberOfZones );
@@ -334,7 +371,7 @@ void Plot3D::DumpCoorAscii( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
 
         int ni = grid->ni;
         int nj = grid->nj;
@@ -361,7 +398,7 @@ void Plot3D::DumpCoorAscii( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < gridMediator->numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
 
         int ni = grid->ni;
         int nj = grid->nj;
@@ -401,9 +438,17 @@ void Plot3D::ReadBc( GridMediator * gridMediator )
     std::string & bcName = gridMediator->bcFile;
     //\t is the tab key
     std::string separator = " =\r\n#$,;";
-
+    
     TextFileParser textFileParser;
-    textFileParser.OpenPrjFile( bcName, std::ios_base::in );
+    if ( gridMediator->caseDir.empty() )
+    {
+        textFileParser.OpenPrjFile( bcName, std::ios_base::in );
+    }
+    else
+    {
+        textFileParser.OpenCaseFile(
+            gridMediator->caseDir, bcName, std::ios_base::in );
+    }
     textFileParser.SetDefaultSeparator( separator );
 
     textFileParser.ReadNextNonEmptyLine();
@@ -427,7 +472,7 @@ void Plot3D::ReadBc( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
         textFileParser.ReadNextNonEmptyLine();
 
         int ni = textFileParser.ReadNextDigit< int >();
@@ -463,7 +508,7 @@ void Plot3D::ReadBc( GridMediator * gridMediator )
         int nBcRegions = textFileParser.ReadNextDigit< int >();
 
         grid->bcRegionGroup->Create( nBcRegions );
-        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
+        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
         for ( int ir = 0; ir < nBcRegions; ++ ir )
         {
             int imin, imax, jmin, jmax, kmin, kmax;
@@ -487,12 +532,10 @@ void Plot3D::ReadBc( GridMediator * gridMediator )
             }
 
             int bcType = textFileParser.ReadNextDigit< int >();
-            BcRegion * bcRegion = new BcRegion( iZone, ir );
+            auto bcRegion = std::make_unique< BcRegion >( iZone, ir );
             bcRegion->s->SetRegion( imin, imax, jmin, jmax, kmin, kmax );
             bcRegion->s->zid = iZone;
             bcRegion->bcType = bcType;
-            bcRegionGroup->SetBcRegion( ir, bcRegion );
-
             if ( bcType == 3 )
             {
                 zoneidlist.push_back( iZone );
@@ -523,10 +566,10 @@ void Plot3D::ReadBc( GridMediator * gridMediator )
                 bcRegion->t->zid = textFileParser.ReadNextDigit< int >();
 
             }
+            bcRegionGroup->SetBcRegion( ir, std::move( bcRegion ) );
         }
     }
 
-    int kkk = 1;
 
     textFileParser.CloseFile();
 }
@@ -536,7 +579,15 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
     std::string & bcName = gridMediator->bcFile;
 
     std::fstream file;
-    Prj::OpenPrjFile( file, bcName, std::ios_base::out );
+    if ( gridMediator->caseDir.empty() )
+    {
+        Prj::OpenPrjFile( file, bcName, std::ios_base::out );
+    }
+    else
+    {
+        Prj::OpenCaseFile(
+            file, gridMediator->caseDir, bcName, std::ios_base::out );
+    }
 
     int flowSolverIndex = 1;
     file << flowSolverIndex << "\n";
@@ -551,7 +602,7 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
 
     for ( int iZone = 0; iZone < numberOfZones; ++ iZone )
     {
-        StrGrid * grid = ONEFLOW::StrGridCast( gridMediator->gridVector[ iZone ] );
+        StrGrid * grid = static_cast< StrGrid * >( &GridAt( gridMediator->gridVector, iZone ) );
 
         int ni = grid->ni;
         int nj = grid->nj;
@@ -569,8 +620,8 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
         std::string blockName = grid->name;
         file << blockName << "\n";
 
-        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
-        int nBcRegions = bcRegionGroup->regions->size();
+        BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
+        int nBcRegions = bcRegionGroup->regions.size();
 
         file << nBcRegions << "\n";
 
@@ -579,7 +630,7 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
             BcRegion * bcRegion = bcRegionGroup->GetBcRegion( ir );
 
             int imin, imax, jmin, jmax, kmin, kmax;
-            BasicRegion * s = bcRegion->s;
+            BasicRegion * s = bcRegion->s.get();
             imin = s->start[ 0 ];
             imax = s->end[ 0 ];
             jmin = s->start[ 1 ];
@@ -605,7 +656,7 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
 
             if ( bcType < 0 )
             {
-                BasicRegion * t = bcRegion->t;
+                BasicRegion * t = bcRegion->t.get();
                 imin = t->start[ 0 ];
                 imax = t->end[ 0 ];
                 jmin = t->start[ 1 ];
@@ -615,7 +666,7 @@ void Plot3D::DumpBc( GridMediator * gridMediator )
                 file << std::setiosflags( std::ios::right );
                 file << std::setw( width ) << imin;
                 file << std::setw( width ) << imax;
-                file << std::setw( width ) << jmin;
+                file << std::setw( width ) << jmax;
                 file << std::setw( width ) << jmax;
 
                 if ( ONEFLOW::IsThreeD() )
@@ -668,20 +719,32 @@ void Plot3D::ReadCoor( TextFileParser * textFileParser, RealField & coor, int to
     }
 }
 
-void Plot3D::Plot3DToCgns( ZgridMediator * zgridMediator )
+void Plot3D::Plot3DToCgns(
+    ZgridMediator * zgridMediator,
+    const std::string & caseDir )
+{
+    Plot3DToCgns( zgridMediator, GridConfig::FromDataBase(), caseDir );
+}
+
+void Plot3D::Plot3DToCgns(
+    ZgridMediator * zgridMediator,
+    const GridConfig & config,
+    const std::string & caseDir )
 {
     std::cout << "plot3d to cgns\n";
-    GridMediator * gridMediator = new GridMediator();
-    gridMediator->gridFile = grid_para.gridFile;
-    gridMediator->bcFile = grid_para.bcFile;
-    gridMediator->targetFile = grid_para.targetFile;
 
-    gridMediator->gridType = grid_para.filetype;
+    auto gridMediator = std::make_unique< GridMediator >();
+    gridMediator->gridFile   = config.sourceFile;
+    gridMediator->bcFile     = config.bcFile;
+    gridMediator->targetFile = config.targetFile;
+    gridMediator->gridType   = std::string( ToString( config.sourceType ) );
+    gridMediator->caseDir = config.ResolveSourceCaseDir( caseDir );
+
     gridMediator->ReadGrid();
     gridMediator->AddDefaultName();
 
-    zgridMediator->SetDeleteFlag( true );
-    zgridMediator->AddGridMediator( gridMediator );
+    // Ownership transfers into ZgridMediator (unique_ptr storage).
+    zgridMediator->AddGridMediator( std::move( gridMediator ) );
 }
 
 

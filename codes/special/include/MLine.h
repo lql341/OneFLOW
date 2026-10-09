@@ -25,12 +25,14 @@ License
 #include "CalcCoor.h"
 #include "SimpleDomain.h"
 #include <map>
+#include <memory>
 
 
 BeginNameSpace( ONEFLOW )
 
 class SDomain;
 class Block2D;
+class CurveMesh;
 
 class SLine
 {
@@ -45,22 +47,22 @@ public:
 public:
     void SetDomainBcMesh( SDomain * sDomain );
     void SetBlkBcMesh( Block2D * blk2d );
-    void ConstructCtrlPoints();
+    void ConstructCtrlPoints( const IntField & pointIdList );
     void Alloc();
-    void CopyMesh();
-    void ConstructPointToLineMap( std::map< int, IntSet > & pointToLineMap );
+    void CopyMesh( const CurveMesh & curveMesh );
+    void ConstructPointToLineMap( const IntField & pointIdList, std::map< int, IntSet > & pointToLineMap ) const;
 
 };
 
 class MLine : public DomData
 {
 public:
-    MLine( SDomain * sDomain );
+    explicit MLine( CoorMap * coorMap );
     ~MLine();
 public:
     int pos;
     IntField lineList;
-    HXVector< SLine * > slineList;
+    HXVector< std::unique_ptr< SLine > > slineList;
     CoorMap * coorMap;
 public:
     std::map< int, IntSet > pointToLine;
@@ -68,10 +70,11 @@ public:
     void ConstructLineToDomainMap();
     void ConstructLineToDomainMap( int domain_id, std::map< int, IntSet > & lineToDomainMap );
     void ConstructPointToDomainMap();
-    void ConstructPointToDomainMap( int domain_id, std::map< int, IntSet > & pointToDomainMap );
+    void ConstructPointToDomainMap( const LinkField & pointIdLink );
+    void ConstructPointToDomainMap( int domain_id, std::map< int, IntSet > & pointToDomainMap ) const;
     void ConstructPointToPointMap();
-    void ConstructPointToPointMap( std::map< int, IntSet > & pointToPointMap );
-    void ConstructPointToLineMap( std::map< int, IntSet > & pointToLineMap );
+    void ConstructPointToPointMap( std::map< int, IntSet > & pointToPointMap ) const;
+    void ConstructPointToLineMap( const LinkField & pointIdLink, std::map< int, IntSet > & pointToLineMap ) const;
 public:
     void AddSubLine( int line_id );
     void ConstructDomainTopo();
@@ -80,7 +83,7 @@ public:
     //void CalcCoor( CoorMap * localCoorMap );
     void CalcCoor();
     void SetDomainBcMesh( SDomain * sDomain );
-    void CreateInpFaceList1D( HXVector< Face2D * > &facelist );
+    void CreateInpFaceList1D( HXVector< std::unique_ptr<Face2D> > &facelist );
     void SetBlkBcMesh( Block2D * blk2d );
 };
 

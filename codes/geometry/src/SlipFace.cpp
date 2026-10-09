@@ -29,15 +29,13 @@ License
 #include "FaceTopo.h"
 #include "BcRecord.h"
 #include "Boundary.h"
-#include "DataStorage.h"
 #include "Parallel.h"
 #include "DataBook.h"
 #include "SolverDef.h"
 #include "LogFile.h"
-#include "Parallel.h"
 #include "HXMath.h"
-#include "DataStorage.h"
 #include <algorithm>
+#include <utility>
 
 
 BeginNameSpace( ONEFLOW )
@@ -47,9 +45,7 @@ SlipFace::SlipFace()
     this->nSlipFace = 0;
 }
 
-SlipFace::~SlipFace()
-{
-}
+SlipFace::~SlipFace() = default;
 
 void SlipFace::Set( int nSlipFace, Grid * parent )
 {
@@ -92,7 +88,7 @@ void SlipFace::Init()
 
 SlipfacePair * SlipFace::GetSlipfacePair( int iNei )
 {
-    return this->slipfacePairs[ iNei ];
+    return this->slipfacePairs[ iNei ].get();
 }
 
 void SlipFace::InitNeighborZoneInfo()
@@ -119,7 +115,7 @@ void SlipFace::InitNeighborZoneInfo()
 
 void SlipFace::InitNeighborZoneInfo( int iNei, int iZone )
 {
-    SlipfacePair * slipfacePair = slipfacePairs[ iNei ];
+    SlipfacePair * slipfacePair = slipfacePairs[ iNei ].get();
     slipfacePair->zid = this->zoneid;
     slipfacePair->nzid = iZone;
 
@@ -144,7 +140,7 @@ void SlipFace::InitNeighborFlag( IntField & flags )
     {
         nNeighbor += flags[ iZone ];
     }
-    int kkk = 1;
+
 }
 
 void SlipFace::AllocateNeighbor()
@@ -153,13 +149,13 @@ void SlipFace::AllocateNeighbor()
 
     for ( int iNei = 0; iNei < nNeighbor; ++ iNei )
     {
-        this->slipfacePairs[ iNei ] = new SlipfacePair();
+        this->slipfacePairs[ iNei ] = std::make_unique< SlipfacePair >();
     }
 }
 
 void SlipFace::FillRecvId( int iNei )
 {
-    SlipfacePair * slipfacePair = slipfacePairs[ iNei ];
+    SlipfacePair * slipfacePair = slipfacePairs[ iNei ].get();
     slipfacePair->idrecv.resize( 0 );
 
     for ( int iFace = 0; iFace < this->nSlipFace; ++ iFace )
@@ -173,7 +169,7 @@ void SlipFace::FillRecvId( int iNei )
 
 void SlipFace::CalcSendId( int iNei, IntField & idsend )
 {
-    SlipfacePair * slipfacePair = slipfacePairs[ iNei ];
+    SlipfacePair * slipfacePair = slipfacePairs[ iNei ].get();
     idsend.resize( 0 );
 
     for ( int iFace = 0; iFace < this->nSlipFace; ++ iFace )
@@ -188,7 +184,7 @@ void SlipFace::CalcSendId( int iNei, IntField & idsend )
 void SlipFace::SetSendId( int zid, IntField & idsend )
 {
     int iNei = this->z2n[ zid ];
-    SlipfacePair * slipfacePair = slipfacePairs[ iNei ];
+    SlipfacePair * slipfacePair = slipfacePairs[ iNei ].get();
     slipfacePair->idsend = idsend;
 }
 
@@ -197,10 +193,7 @@ LocalSlipFace::LocalSlipFace()
     ;
 }
 
-LocalSlipFace::~LocalSlipFace()
-{
-    ;
-}
+LocalSlipFace::~LocalSlipFace() = default;
 
 void LocalSlipFace::AddSlipFace( SlipFace * slipFace )
 {
@@ -226,32 +219,25 @@ GlobalSlipFace::GlobalSlipFace()
     ;
 }
 
-GlobalSlipFace::~GlobalSlipFace()
-{
-    for ( int i = 0; i < this->data.size(); ++ i )
-    {
-        delete this->data[ i ];
-    }
-}
+GlobalSlipFace::~GlobalSlipFace() = default;
 
-void GlobalSlipFace::AddSlipFace( SlipFace * slipFace )
+void GlobalSlipFace::AddSlipFace( std::unique_ptr< SlipFace > slipFace )
 {
-    this->data.push_back( slipFace );
+    this->data.push_back( std::move( slipFace ) );
 }
 
 void GlobalSlipFace::Swap()
 {
     for ( int proc = 0; proc < Parallel::nProc; ++ proc )
     {
-        DataBook * dataBook = new DataBook();
+        DataBook dataBook;
         if ( proc == Parallel::pid )
         {
-            Init( dataBook );
+            Init( &dataBook );
         }
 
-        HXBcast( dataBook, proc );
-        Trans( dataBook );
-        delete dataBook;
+        HXBcast( &dataBook, proc );
+        Trans( &dataBook );
     }
 }
 
@@ -278,15 +264,15 @@ void GlobalSlipFace::Trans( DataBook * dataBook )
     HXRead( dataBook, nSize );
     for ( int i = 0; i < nSize; ++ i )
     {
-        SlipFace * slipFace = new SlipFace();
-        this->AddSlipFace( slipFace );
+        auto slipFace = std::make_unique< SlipFace >();
         int nSlip = -1;
         HXRead( dataBook, nSlip );
-        slipFace->Set( nSlip, 0 );
+        slipFace->Set( nSlip, nullptr );
         HXRead( dataBook, slipFace->zoneid );
         HXRead( dataBook, slipFace->xfcList );
         HXRead( dataBook, slipFace->yfcList );
         HXRead( dataBook, slipFace->zfcList );
+        this->AddSlipFace( std::move( slipFace ) );
     }
 }
 
@@ -313,7 +299,7 @@ void GlobalSlipFace::CalcDist( SlipFace * slipface )
 
         for ( int i = 0; i < data.size(); ++ i )
         {
-            SlipFace * slipface1 = this->data[ i ];
+            SlipFace * slipface1 = this->data[ i ].get();
             if ( slipface1->zoneid == slipface->zoneid ) continue;
             this->Calc( xfc, yfc, zfc, dst, zid, isbc, slipface1 );
         }
@@ -344,24 +330,24 @@ void GlobalSlipFace::Calc( Real xfc, Real yfc, Real zfc, Real & dst, int & zid, 
     }
 }
 
-LocalSlipFace * localSlipFace;
-GlobalSlipFace * globalSlipFace;
-SlipFaceTopo * slipFaceTopo;
+std::unique_ptr< LocalSlipFace > localSlipFace;
+std::unique_ptr< GlobalSlipFace > globalSlipFace;
+std::unique_ptr< SlipFaceTopo > slipFaceTopo;
 void CreateSlip();
 void FreeSlip();
 
 void CreateSlip()
 {
-    localSlipFace = new LocalSlipFace();
-    globalSlipFace = new GlobalSlipFace();
-    slipFaceTopo = new SlipFaceTopo();
+    localSlipFace = std::make_unique< LocalSlipFace >();
+    globalSlipFace = std::make_unique< GlobalSlipFace >();
+    slipFaceTopo = std::make_unique< SlipFaceTopo >();
 }
 
 void FreeSlip()
 {
-    delete localSlipFace;
-    delete globalSlipFace;
-    delete slipFaceTopo;
+    localSlipFace.reset();
+    globalSlipFace.reset();
+    slipFaceTopo.reset();
 }
 
 void InitSlipFaceTopo()
@@ -378,7 +364,7 @@ void InitSlipFaceTopo()
 
         UnsGrid * grid = Zone::GetUnsGrid();
 
-        BcRecord * bcRecord = grid->faceTopo->bcManager->bcRecord;
+        BcRecord * bcRecord = &grid->GetFaceTopo().GetBcRecord();
         int nBFaces = bcRecord->GetNBFace();
 
         int nSlipFace = 0;
@@ -391,7 +377,7 @@ void InitSlipFaceTopo()
             }
         }
 
-        SlipFace * slipFace = grid->slipFace;
+        SlipFace * slipFace = grid->slipFace.get();
         slipFace->Set( nSlipFace, grid );
 
         localSlipFace->AddSlipFace( slipFace );
@@ -408,9 +394,9 @@ void InitSlipFaceTopo()
             slipFace->s2b[ iFace ++ ] = iBFace;
         }
 
-        RealField & xfc = grid->faceMesh->xfc;
-        RealField & yfc = grid->faceMesh->yfc;
-        RealField & zfc = grid->faceMesh->zfc;
+        RealField & xfc = grid->GetFaceMesh().xfc;
+        RealField & yfc = grid->GetFaceMesh().yfc;
+        RealField & zfc = grid->GetFaceMesh().zfc;
 
         for ( int iSlip = 0; iSlip < nSlipFace; ++ iSlip )
         {
@@ -420,7 +406,7 @@ void InitSlipFaceTopo()
             slipFace->zfcList[ iSlip ] = zfc[ iBFace ];
 
         }
-        int kkk = 1;
+
     }
 
     globalSlipFace->Swap();
@@ -431,7 +417,7 @@ void InitSlipFaceTopo()
 
     FreeSlip();
 
-    int kkk = 1;
+
 }
 
 SlipfacePair::SlipfacePair()
@@ -463,22 +449,22 @@ void SlipFaceTopo::InitZoneNeighborsInfo()
     {
         if ( ! ZoneState::IsValidZone( iZone ) ) continue;
 
-        Grid * grid = Zone::GetGrid( iZone );
+        Grid & grid = Zone::GetGridReference( iZone );
 
-        grid->slipFace->InitNeighborZoneInfo();
+        grid.slipFace->InitNeighborZoneInfo();
     }
 
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
         if ( ! ZoneState::IsValidZone( iZone ) ) continue;
 
-        Grid * grid = Zone::GetGrid( iZone );
+        Grid & grid = Zone::GetGridReference( iZone );
 
         IntField & t = this->data[ iZone ];
 
-        for ( int iNei = 0; iNei < grid->slipFace->nNeighbor; ++ iNei )
+        for ( int iNei = 0; iNei < grid.slipFace->nNeighbor; ++ iNei )
         {
-            SlipfacePair * slipfacePair = grid->slipFace->GetSlipfacePair( iNei );
+            SlipfacePair * slipfacePair = grid.slipFace->GetSlipfacePair( iNei );
 
             t.push_back( slipfacePair->nzid );
         }
@@ -525,10 +511,10 @@ void SlipFaceTopo::SwapNeighborsSendContent()
 
             if ( Parallel::pid == spid )
             {
-                Grid * grid = Zone::GetGrid( iZone );
-                SlipfacePair * slipfacePair = grid->slipFace->GetSlipfacePair( iNei );
+                Grid & grid = Zone::GetGridReference( iZone );
+                SlipfacePair * slipfacePair = grid.slipFace->GetSlipfacePair( iNei );
 
-                grid->slipFace->CalcSendId( iNei, idsend );
+                grid.slipFace->CalcSendId( iNei, idsend );
 
                 nSend = idsend.size();
             }
@@ -545,8 +531,8 @@ void SlipFaceTopo::SwapNeighborsSendContent()
 
             if ( Parallel::pid == rpid )
             {
-                Grid * gridN = Zone::GetGrid( nZid );
-                gridN->slipFace->SetSendId( iZone, idsend );
+                Grid & gridN = Zone::GetGridReference( nZid );
+                gridN.slipFace->SetSendId( iZone, idsend );
             }
         }
     }

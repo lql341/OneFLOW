@@ -1,4 +1,4 @@
-/*---------------------------------------------------------------------------*\
+/*---------------------------------------------------------------------------*\\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
 -------------------------------------------------------------------------------
@@ -11,16 +11,19 @@ License
     (at your option) any later version.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\\*---------------------------------------------------------------------------*/
 
 #include "Zone.h"
+#include <vector>
+#include <utility>
+#include <memory>
 #include "LogFile.h"
 #include "ZoneState.h"
 #include "InterFace.h"
@@ -37,6 +40,7 @@ License
 #include "ActionState.h"
 #include "HXMath.h"
 #include "DataBook.h"
+#include "GridTypes.h"
 #include "Task.h"
 #include <iostream>
 #include <string>
@@ -45,9 +49,10 @@ License
 BeginNameSpace( ONEFLOW )
 
 
-HXVector< Grids * > Zone::globalGrids;
+std::vector< Grids > Zone::globalGrids;
 int Zone::nLocalZones = 0;
 int Zone::flag_test_grid = 0;
+std::unique_ptr< InterFaceTopo > Zone::interfaceTopo;
 
 Zone::Zone()
 {
@@ -57,29 +62,66 @@ Zone::~Zone()
 {
 }
 
-void Zone::AddGrid( int zid, Grid * grid )
+void Zone::ReleaseGrids()
 {
-    if ( Zone::globalGrids.size() == 0 )
-    {
-        Zone::globalGrids.resize( ZoneState::nZones, 0 );
-    }
-    Grids * grids = Zone::globalGrids[ zid ];
-    if ( ! grids )
-    {
-        grids = new Grids;
-        Zone::globalGrids[ zid ] = grids;
-    }
-    grids->push_back( grid );
+    // Destroying each Grids vector releases all owned Grid instances.
+    Zone::globalGrids.clear();
+    Zone::nLocalZones = 0;
+    Zone::flag_test_grid = 0;
+
+    ScalarZone::Reset();
+    Zone::interfaceTopo.reset();
 }
+
+void Zone::Reset()
+{
+    Zone::ReleaseGrids();
+    ZoneState::Reset();
+    GridState::Reset();
+}
+
+InterFaceTopo & Zone::GetInterfaceTopo()
+{
+    if ( ! Zone::interfaceTopo )
+    {
+        Zone::interfaceTopo = std::make_unique< InterFaceTopo >();
+    }
+    return *Zone::interfaceTopo;
+}
+
+void Zone::InitInterfaceTopo()
+{
+    Zone::GetInterfaceTopo().InitInterfaceTopo();
+}
+
+void Zone::AddGrid( int zid, std::unique_ptr< Grid > grid )
+{
+    if ( Zone::globalGrids.empty() )
+    {
+        Zone::globalGrids.resize( static_cast< std::size_t >( ZoneState::nZones ) );
+    }
+    Zone::globalGrids[ static_cast< std::size_t >( zid ) ].push_back( std::move( grid ) );
+}
+
 
 Grid * Zone::GetGrid( int zid, int gl )
 {
-    return ( * Zone::globalGrids[ zid ] )[ gl ];
+    return &Zone::GetGridReference( zid, gl );
+}
+
+Grid & Zone::GetGridReference( int zid, int gl )
+{
+    return GridAt( Zone::globalGrids[ static_cast< std::size_t >( zid ) ], gl );
 }
 
 Grid * Zone::GetGrid()
 {
-    return Zone::GetGrid( ZoneState::zid, GridState::gridLevel );
+    return &Zone::GetGridReference();
+}
+
+Grid & Zone::GetGridReference()
+{
+    return Zone::GetGridReference( ZoneState::zid, GridState::gridLevel );
 }
 
 UnsGrid * Zone::GetUnsGrid()
@@ -90,7 +132,7 @@ UnsGrid * Zone::GetUnsGrid()
 Grid * Zone::GetCGrid( Grid * grid )
 {
     int level = grid->level + 1;
-    int ngrid = ( * Zone::globalGrids[ ZoneState::zid ] ).size();
+    int ngrid = static_cast< int >( Zone::globalGrids[ static_cast< std::size_t >( ZoneState::zid ) ].size() );
     if ( level >= ngrid ) return 0;
     return Zone::GetGrid( ZoneState::zid, level );
 }
@@ -104,11 +146,30 @@ Grid * Zone::GetFGrid( Grid * grid )
 
 void Zone::InitLayout( StringField & fileNameList )
 {
+    Zone::InitLayout( fileNameList, std::string() );
+}
+
+void Zone::InitLayout(
+    StringField & fileNameList,
+    const std::string & caseDir )
+{
     int nTZones = 0;
     for ( int iFile = 0; iFile < fileNameList.size(); ++ iFile )
     {
         std::fstream file;
-        PIO::OpenPrjFile( file, fileNameList[ iFile ], std::ios_base::in|std::ios_base::binary );
+
+        if ( caseDir.empty() )
+        {
+            PIO::OpenPrjFile(
+                file, fileNameList[ iFile ],
+                std::ios_base::in|std::ios_base::binary );
+        }
+        else
+        {
+            PIO::OpenCaseFile(
+                file, caseDir, fileNameList[ iFile ],
+                std::ios_base::in|std::ios_base::binary );
+        }
 
         int nZones = 0;
 
@@ -138,41 +199,42 @@ void Zone::NormalizeLayout()
 
 void Zone::ReadGrid( StringField & fileNameList )
 {
-    Zone::InitLayout( fileNameList );
+    const std::string sourceCaseDir = GridConfig::GetSourceCaseDir();
+    Zone::ReadGrid( fileNameList, sourceCaseDir );
+}
+
+void Zone::ReadGrid(
+    StringField & fileNameList,
+    const std::string & caseDir )
+{
+    Zone::InitLayout( fileNameList, caseDir );
     int zid = 0;
     for ( int iFile = 0; iFile < fileNameList.size(); ++ iFile )
     {
-        GridGroup * gridGroup = new GridGroup( zid );
-        gridGroup->ReadGrid( fileNameList[ iFile ] );
+        auto gridGroup = std::make_unique< GridGroup >( zid );
+
+        if ( caseDir.empty() )
+        {
+            gridGroup->ReadGrid( fileNameList[ iFile ] );
+        }
+        else
+        {
+            gridGroup->ReadGrid( fileNameList[ iFile ], caseDir );
+        }
+
         zid += gridGroup->nZones;
-        delete gridGroup;
     }
     Zone::NormalizeLayout();
 }
 
-void Zone::AddScalarGrid( int zid, ScalarGrid * grid )
-{
-    ScalarZone::AddGrid( zid, grid );
-}
-
-ScalarGrid * Zone::GetScalarGrid( int iZone )
-{
-    return ScalarZone::GetGrid( iZone );
-}
-
-ScalarGrid * Zone::GetScalarGrid()
-{
-    return ScalarZone::GetGrid();
-}
-
 int Zone::GetNumberOfZoneNeighbors( int zoneId )
 {
-    return interFaceTopo.data[ zoneId ].size();
+    return Zone::GetInterfaceTopo().data[ zoneId ].size();
 }
 
 int Zone::GetNeighborZoneId( int zoneId, int iNeighbor )
 {
-    return interFaceTopo.data[ zoneId ][ iNeighbor ];
+    return Zone::GetInterfaceTopo().data[ zoneId ][ iNeighbor ];
 }
 
 EndNameSpace

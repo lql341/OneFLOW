@@ -76,9 +76,9 @@ FaceSearch::~FaceSearch()
     ;
 }
 
-void FaceSearch::CalcNewFaceId( IFaceLink * iFaceLink )
+void FaceSearch::CalcNewFaceId( IFaceLink & iFaceLink )
 {
-    this->iFaceLink = iFaceLink;
+    this->iFaceLink = &iFaceLink;
     int nFaces = this->faceArray.size();
     this->status.resize( nFaces, -1 );
     this->cFaceId.resize( nFaces );
@@ -220,7 +220,7 @@ void FaceSearch::GetTriId( const IntField & nodeId, LinkField & localTriId, Link
 
 bool FaceSearch::GetLine( const IntField & nodeId, LinkField & localLineId, LinkField & localLineFlag, LinkField & lineId )
 {
-    PointLocator * point_search = this->iFaceLink->point_search;
+    PointLocator * point_search = this->iFaceLink->point_search.get();
     int p0 = nodeId[ 0 ];
     int p1 = nodeId[ 1 ];
     RealField coor0( 3 ), coor1( 3 ), coor2( 3 );
@@ -238,10 +238,10 @@ bool FaceSearch::GetLine( const IntField & nodeId, LinkField & localLineId, Link
         Fatal( "impossible" );
     }
     int zoneIndex = this->iFaceLink->gI2Zid[ this->gFid ][ 0 ];
-    Grid * grid = ( this->iFaceLink->grids )[ zoneIndex ];
-    int nNodes = grid->nodeMesh->GetNumberOfNodes();
+    Grid & grid = this->iFaceLink->GetGrid( zoneIndex );
+    int nNodes = grid.nodeMesh->GetNumberOfNodes();
     int pId = nNodes;
-    grid->nodeMesh->AddPoint( coor2[ 0 ], coor2[ 1 ], coor2[ 2 ] );
+    grid.nodeMesh->AddPoint( coor2[ 0 ], coor2[ 1 ], coor2[ 2 ] );
     int p2 = point_search->AddPoint( coor2[ 0 ], coor2[ 1 ], coor2[ 2 ] );
 
     IntField id1( 2 ), id2( 2 );

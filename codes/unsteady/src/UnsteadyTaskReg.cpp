@@ -17,7 +17,6 @@ License
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
-
 \*---------------------------------------------------------------------------*/
 
 #include "UnsteadyTaskReg.h"
@@ -31,13 +30,12 @@ License
 #include "UnsteadyImp.h"
 #include "Update.h"
 #include "FieldWrap.h"
-#include "FieldAlloc.h"
 #include "CmxTask.h"
 #include "DataBase.h"
 #include "DataBook.h"
 #include "Lusgs.h"
 #include "Lhs.h"
-#include "FieldImp.h"
+#include "FieldManager.h"
 #include "SolverState.h"
 #include "Zone.h"
 #include "Grid.h"
@@ -67,17 +65,15 @@ void UpdateUnsteadyFlow( StringField & data )
 {
     int solverType = SolverState::solverType;
 
-    Unsteady * unsteady = CreateUnsteady( solverType );
-    unsteady->UpdateUnsteady( solverType );
-    delete unsteady;
+    auto unsteady = CreateUnsteady( solverType );
+    unsteady->UpdateUnsteady();
 }
 
 void CalcUnsteadyCriterion( StringField & data )
 {
     int solverType = SolverState::solverType;
-    Unsteady * unsteady = CreateUnsteady( solverType );
+    auto unsteady = CreateUnsteady( solverType );
     unsteady->CalcUnsteadyCriterion();
-    delete unsteady;
 }
 
 EndNameSpace

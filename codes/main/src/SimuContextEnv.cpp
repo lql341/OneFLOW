@@ -1,4 +1,4 @@
-/*---------------------------------------------------------------------------*\
+/*---------------------------------------------------------------------------*\\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
 -------------------------------------------------------------------------------
@@ -11,14 +11,14 @@ License
     (at your option) any later version.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
     for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 
-\*---------------------------------------------------------------------------*/
+\\*---------------------------------------------------------------------------*/
 // Production environment bootstrap for SimuContext.
 // Delegates to existing globals (compatibility layer for phase 2).
 
@@ -31,29 +31,78 @@ License
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
+#include "SolverMap.h"
+#include "SolverNameList.h"
+#include "Zone.h"
+#include "FieldManager.h"
+#include "DataBase.h"
+#include "HeatFlux.h"
+#include "NsCom.h"
+#include "NsSolver.h"
+#include "INsSolver.h"
+#include "TurbSolver.h"
+#include "TurbCom.h"
+#include "Tolerance.h"
+#include "LogFile.h"
+#include "ActionState.h"
+#include "Iteration.h"
 #include <iostream>
 
 BeginNameSpace( ONEFLOW )
 
-void SimuContext::ProcessCommandLine()
+SimuContext::SimuContext( const std::string& caseDir, bool debug )
+    : caseDir_( Prj::ResolveCaseDir( caseDir ) )
 {
-    Prj::ProcessCmdLineArgs( args_ );
+    Prj::hx_debug = debug;
+    Prj::run_from_ide = debug;
 }
 
-void SimuContext::SetupEnvironment()
+void SimuContext::ProcessCommandLine()
+{
+    // Keep the selected case directory as explicit case input.
+    const CmdLineOptions opt = Prj::ParseCmdLineArgs( args_ );
+    // Store the resolved path in the case context so it remains valid even
+    // when a later case updates the legacy Prj static state.
+    caseDir_ = Prj::ResolveCaseDir( opt.caseDir );
+
+    // Command-line mode is process-wide; case directory binding belongs to
+    // SetupCaseEnvironment() so each case owns its legacy IO binding.
+    Prj::hx_debug = opt.debug;
+    Prj::run_from_ide = opt.debug;
+}
+
+void SimuContext::SetupProcessEnvironment()
 {
     std::cout << " OneFLOW is running\n";
     ONEFLOW::SetUpParallelEnvironment();
-    ONEFLOW::ReadControlInfo();
 
     rank_ = Parallel::GetPid();
     size_ = Parallel::GetNProc();
 
     ONEFLOW::InitializeAccelRuntime( rank_, size_ );
-    envReady_ = true;
+    processReady_ = true;
 }
 
-void SimuContext::TeardownEnvironment()
+void SimuContext::SetupCaseEnvironment()
+{
+    // Mark case setup as active so exception cleanup can release partial
+    // case state if control-file initialization fails halfway through.
+    envReady_ = true;
+
+    // Bind legacy case-relative IO to the explicit case before reading it.
+    Prj::SetPrjBaseDir( caseDir_ );
+
+    logFile.SetCaseDir( caseDir_ );
+    ONEFLOW::ReadControlInfo( caseDir_ );
+}
+
+void SimuContext::SetupEnvironment()
+{
+    SetupProcessEnvironment();
+    SetupCaseEnvironment();
+}
+
+void SimuContext::TeardownCase()
 {
     // Device-backed states and shared HIP solver buffers must release
     // allocations while the selected accelerator runtime is still alive.
@@ -61,9 +110,45 @@ void SimuContext::TeardownEnvironment()
 #ifdef ONEFLOW_ENABLE_HIP
     HipFluxBackend::ReleaseShared();
 #endif
+    SolverMap::FreeSolverMap();
+    SolverNameClass::Reset();
+    heat_flux.DeAllocate();
+    nscom.Reset();
+    NsSolver::Reset();
+    INsSolver::Reset();
+    TurbSolver::Reset();
+    turbcom.Reset();
+    Tolerance::Reset();
+    Zone::Reset();
+    ActionState::Reset();
+    Iteration::Reset();
+    FieldManagerRegistry::FreeFieldManager();
+    DataBase & dataBase = RequireGlobalDataBase();
+    dataBase.RequireDataField().Clear();
+    dataBase.RequireDataPara().Clear();
+    logFile.ClearCaseDir();
+    Prj::ClearPrjBaseDir();
+
+    // Clear context-owned case state so the same process can bind a new case
+    // without carrying task or solver-name state from the previous case.
+    task_ = TaskEnum::SOLVE_FIELD;
+    taskName_ = "Solve";
+    taskResolved_ = false;
+    expandedSolverNames_.clear();
+    envReady_ = false;
+}
+
+void SimuContext::FinalizeEnvironment()
+{
     ONEFLOW::FinalizeAccelRuntime();
     HXFinalize();
-    envReady_ = false;
+    processReady_ = false;
+}
+
+void SimuContext::TeardownEnvironment()
+{
+    TeardownCase();
+    FinalizeEnvironment();
 }
 
 void SimuContext::ResolveTaskFromControl()

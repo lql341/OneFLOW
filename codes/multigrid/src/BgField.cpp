@@ -21,6 +21,8 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "BgField.h"
+#include <memory>
+#include <utility>
 #include "Zone.h"
 #include "ZoneState.h"
 #include "SolverState.h"
@@ -60,8 +62,7 @@ void BasicBgField::Init()
             {
                 GridState::gridLevel = gl;
                 
-                FieldWrap * fieldWrap = FieldHome::CreateField();
-                this->data[ solverIndex ][ fid ][ gl ] = fieldWrap;
+                this->data[ solverIndex ][ fid ][ gl ] = FieldHome::CreateField();
             }
         }
     }
@@ -70,25 +71,11 @@ void BasicBgField::Init()
 
 void BasicBgField::Free()
 {
-    int numberOfSolvers = this->data.size();
-
-    for ( int solverIndex = 0; solverIndex < numberOfSolvers; ++ solverIndex )
-    {
-        int nFields = this->data[ solverIndex ].size();
-
-        for ( int fid = 0; fid < nFields; ++ fid )
-        {
-            int nGrids = this->data[ solverIndex ][ fid ].size();
-
-            for ( int gl = 0; gl < nGrids; ++ gl )
-            {
-                delete this->data[ solverIndex ][ fid ][ gl ];
-            }
-        }
-    }
+    // unique_ptr elements destroy FieldWrap (and owned MRField) on clear.
+    this->data.clear();
 }
 
-HXVector< BasicBgField * > BgField::data;
+HXVector< std::unique_ptr< BasicBgField > > BgField::data;
 bool BgField::flag = false;
 
 BgField::BgField()
@@ -111,23 +98,21 @@ void BgField::Init()
         if ( ! ZoneState::IsValidZone( iZone ) ) continue;
 
         ZoneState::zid = iZone;
-        BasicBgField * bbgField = new BasicBgField();
+        auto bbgField = std::make_unique< BasicBgField >();
         bbgField->Init();
-        BgField::data[ iZone ] = bbgField;
+        BgField::data[ iZone ] = std::move( bbgField );
     }
 }
 
 void BgField::Free()
 {
-    for ( int iZone = 0; iZone < BgField::data.size(); ++ iZone )
-    {
-        delete BgField::data[ iZone ];
-    }
+    BgField::data.clear();
+    BgField::flag = false;
 }
 
 FieldWrap * BgField::GetFieldWrap( int zid, int solverIndex, int fid, int gl )
 {
-    return BgField::data[ zid ]->data[ solverIndex ][ fid ][ gl ];
+    return BgField::data[ zid ]->data[ solverIndex ][ fid ][ gl ].get();
 }
 
 EndNameSpace

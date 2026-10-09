@@ -22,6 +22,7 @@ License
 
 #pragma once
 #include "NamespaceMacros.h"
+#include <memory>
 #include <unordered_map>
 #include <string>
 #include <fstream>
@@ -33,37 +34,47 @@ class DataObject;
 class DataEntry
 {
 public:
-    DataEntry();
-    DataEntry( const std::string & name, int type, int size, DataObject * data );
+    DataEntry( const std::string & name, int type, int size, std::unique_ptr<DataObject> data );
     ~DataEntry();
+private:
+    const std::string name;
+    const int type;
+    const int size;
+    std::unique_ptr<DataObject> data;
 public:
-    std::string  name;
-    int          type;
-    int          size;
-    DataObject * data;
-public:
-    void Copy( DataEntry * inputData );
-    void Dump( std::fstream & file );
+    const std::string & GetName() const { return name; }
+    int GetType() const { return type; }
+    int GetSize() const { return size; }
+    DataObject & GetDataObject() { return *data; }
+    const DataObject & GetDataObject() const { return *data; }
+
+    void Copy( const DataEntry & inputData );
+    void Dump( std::fstream & file ) const;
 };
 
 class DataPara
 {
 public:
     // Use unordered_map for O(1) average lookup
-    using DataMap = std::unordered_map< std::string, DataEntry * >;
+    using DataMap = std::unordered_map< std::string, std::unique_ptr<DataEntry> >;
 public:
     DataPara();
     ~DataPara();
 protected:
-    DataMap * dataMap;
+    DataMap dataMap;
 public:
-    void UpdateDataPointer( DataEntry * data );
-    DataEntry * GetDataPointer( const std::string & name );
-    void DeleteDataPointer( const std::string & name );
+    // Takes ownership of data.
+    void SetDataEntry( std::unique_ptr<DataEntry> data );
+    DataEntry * FindDataEntry( const std::string & name );
+    const DataEntry * FindDataEntry( const std::string & name ) const;
+    void RemoveDataEntry( const std::string & name );
 
-    DataMap * GetDataMap() { return dataMap; }
+    // Release all case-local parameter entries while keeping the database alive.
+    void Clear();
 
-    void DumpData( std::fstream & file );
+    const DataMap & GetDataMap() const { return dataMap; }
+
+    void DumpData( std::fstream & file ) const;
 };
 
 EndNameSpace

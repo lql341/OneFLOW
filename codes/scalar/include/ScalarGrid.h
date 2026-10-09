@@ -28,6 +28,7 @@ License
 #include "metis.h"
 #include <vector>
 #include <fstream>
+#include <memory>
 
 
 BeginNameSpace( ONEFLOW )
@@ -40,7 +41,7 @@ public:
 public:
     std::vector< Real > data;
 public:
-    size_t GetNElements();
+    size_t GetNElements() const;
     void AddData( Real value );
     Real operator [] ( int i ) const
     {
@@ -73,7 +74,7 @@ public:
 public:
     std::vector< int > data;
 public:
-    size_t GetNElements();
+    size_t GetNElements() const;
     void AddData( int value );
 
     int operator [] ( int i ) const
@@ -101,11 +102,16 @@ public:
 public:
     std::vector< std::vector< int > > data;
 public:
-    size_t GetNElements();
+    size_t GetNElements() const;
     void AddElem( IntList &elem );
-    void AddElem( std::vector< int > &elem );
+    void AddElem( const std::vector< int > &elem );
 
     std::vector< int > & operator [] ( int i )
+    {
+        return data[ i ];
+    }
+
+    const std::vector< int > & operator [] ( int i ) const
     {
         return data[ i ];
     }
@@ -136,7 +142,7 @@ public:
 public:
     void PushBoundaryFace( int pt, int eType );
     void AddBcPoint( int bcVertex );
-    void ScanBcFace( ScalarGrid * grid );
+    void ScanBcFace( ScalarGrid & grid );
     void ProcessVertexBc( IntSet & bcVertex );
 };
 
@@ -146,10 +152,10 @@ public:
     ScalarBccos();
     ~ScalarBccos();
 public:
-    std::vector< ScalarBcco * > bccos;
+    std::vector< std::unique_ptr< ScalarBcco > > bccos;
 public:
-    void AddBcco( ScalarBcco * scalarBcco );
-    void ScanBcFace( ScalarGrid * grid );
+    void AddBcco( std::unique_ptr< ScalarBcco > scalarBcco );
+    void ScanBcFace( ScalarGrid & grid );
 };
 
 class DataBase;
@@ -164,6 +170,11 @@ class ScalarGrid
 public:
     ScalarGrid();
     ~ScalarGrid();
+public:
+    DataBase * GetDataBase();
+    const DataBase * GetDataBase() const;
+    DataBase & RequireDataBase();
+    const DataBase & RequireDataBase() const;
 public:
     int nNodes, nCells, nBFaces, nFaces;
     int nTCells;
@@ -196,21 +207,23 @@ public:
     IntList fBcTypes;
     IntList bcTypes;
     IntList bcNameIds;
-    ScalarBccos * scalarBccos;
-    DataBase * dataBase;
-    ScalarIFace * scalarIFace;
+    std::unique_ptr< ScalarBccos > scalarBccos;
+    std::unique_ptr< ScalarIFace > scalarIFace;
     int type, level;
     int id;
     int localId;
     int volBcType;
+private:
+    void ResetMeshData();
+    void ResetTopologyData();
+    void ResetGeometryData();
+    std::unique_ptr< DataBase > dataBase;
 public:
-    DataBase * GetDataBase() { return dataBase; };
-public:
-    int GetNNodes();
-    int GetNCells();
-    int GetNFaces();
-    int GetNBFaces();
-    int GetNTCells();
+    int GetNNodes() const;
+    int GetNCells() const;
+    int GetNFaces() const;
+    int GetNBFaces() const;
+    int GetNTCells() const;
     void GenerateGrid( int ni, Real xmin, Real xmax );
     void CalcTopology();
     void PushElement( int p1, int p2, int eType );
@@ -232,8 +245,8 @@ public:
     void DumpCgnsGrid();
     void SetCgnsZone( CgnsZone * cgnsZone );
 public:
-    void CalcVolumeSection( SectionManager * volumeSectionManager );
-    void CalcBoundarySection( SectionManager * bcSectionManager );
+    void CalcVolumeSection( SectionManager & volumeSectionManager );
+    void CalcBoundarySection( SectionManager & bcSectionManager );
 public:
     void CalcMetrics1D();
     void CalcFaceCenter1D();
@@ -243,7 +256,7 @@ public:
     void CalcFaceNormal1D();
     void CalcGhostCellCenterVol1D();
 public:
-    void CalcC2C( EList & c2c );
+    void CalcC2C( EList & c2c ) const;
     void CalcInterfaceToBcFace();
     void Normalize();
 public:
@@ -269,7 +282,7 @@ public:
     void AddPhysicalBcFace( int global_face_id, int bctype, int lcell, int rcell );
     void AddInnerFace( int global_face_id, int bctype, int lcell, int rcell );
     void AddInterfaceBcFace( int global_face_id, int bctype, int lcell, int rcell, int nei_zoneid, int nei_cellid );
-    void ReconstructNode( ScalarGrid * ggrid );
+    void ReconstructNode( const ScalarGrid & ggrid );
 
 };
 

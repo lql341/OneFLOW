@@ -56,9 +56,9 @@ void UNsLusgs::SingleSweep()
 void UNsLusgs::Init()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
-    FaceTopo * faceTopo = grid->faceTopo;
-    CellTopo * cellTopo = grid->cellMesh->cellTopo;
-    cellTopo->CalcC2f( faceTopo );
+    FaceTopo & faceTopo = grid->GetFaceTopo();
+    CellTopo & cellTopo = grid->GetCellMesh().GetCellTopo();
+    cellTopo.CalcC2f( faceTopo );
     ug.Init();
     nslu.Init();
     unsf.Init();
@@ -67,9 +67,8 @@ void UNsLusgs::Init()
 
 void UNsLusgs::CalcSpectrum()
 {
-    UNsSpectrum * unsSpectrum = new UNsSpectrum();
-    unsSpectrum->CalcImplicitSpectrum();
-    delete unsSpectrum;
+    UNsSpectrum unsSpectrum;
+    unsSpectrum.CalcImplicitSpectrum();
 }
 
 void UNsLusgs::LowerSweep()
@@ -79,11 +78,6 @@ void UNsLusgs::LowerSweep()
     for ( int cId = 0; cId < ug.nCells; ++ cId )
     {
         ug.cId = cId;
-        if ( cId == 32 )
-        {
-            int kkk = 1;
-        }
-
         gcom.blank = ( * ug.blankf )[ ug.cId ];
 
         if ( this->IsOversetCell() )
@@ -198,11 +192,6 @@ bool UNsLusgs::CanNotUpperSolve( int fId )
 void UNsLusgs::Solve( int fId, int signValue )
 {
     ug.fId = fId;
-
-    if ( fId == 147489 )
-    {
-        int kkk = 1;
-    }
 
     ug.lc = ( * ug.lcf )[ ug.fId ];
     ug.rc = ( * ug.rcf )[ ug.fId ];

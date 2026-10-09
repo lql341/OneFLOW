@@ -136,17 +136,6 @@ void LimField::GetQlQr()
         ug.lc = ( * ug.lcf )[ ug.fId ];
         ug.rc = ( * ug.rcf )[ ug.fId ];
 
-        if ( fId == 24 )
-        {
-            std::vector< Real > tmp1, tmp2;
-            for ( int iEqu = 0; iEqu < this->nEqu; ++ iEqu )
-            {
-                tmp1.push_back( ( * this->q )[ iEqu ][ ug.lc ] );
-                tmp2.push_back( ( * this->q )[ iEqu ][ ug.rc ] );
-            }
-            int kkk = 1;
-        }
-
         for ( int iEqu = 0; iEqu < this->nEqu; ++ iEqu )
         {
             ( * this->qf1 )[ iEqu ][ ug.fId ] = ( * this->q )[ iEqu ][ ug.lc ];
@@ -187,11 +176,6 @@ void LimField::CalcFaceValue()
         ug.fId = fId;
         ug.lc = ( * ug.lcf )[ ug.fId ];
         ug.rc = ( * ug.rcf )[ ug.fId ];
-
-        if ( fId == 24 )
-        {
-            int kkk = 1;
-        }
 
         Real dx = ( * ug.xfc )[ ug.fId ] - ( * ug.xcc )[ ug.lc ];
         Real dy = ( * ug.yfc )[ ug.fId ] - ( * ug.ycc )[ ug.lc ];
@@ -366,19 +350,24 @@ void LimField::CalcFaceValueWeighted()
 
 Limiter::Limiter()
 {
-    lim = new Lim();
+    // FIX: Use std::make_unique
+    lim = std::make_unique<Lim>();
 }
 
 Limiter::~Limiter()
 {
-    delete lim;
+    // std::unique_ptr automatically cleans up
 }
 
 void Limiter::CalcLimiter()
 {
     ug.Init();
     limf->Init();
-    Alloc();
+
+    // FIX: Use std::make_unique instead of new
+    lim->minvf = std::make_unique<RealField>( ug.nTCell );
+    lim->maxvf = std::make_unique<RealField>( ug.nTCell );
+
     for ( int iEqu = 0; iEqu < limf->nEqu; ++ iEqu )
     {
         lim->limiter = & ( * limf->limiter )[ iEqu ];
@@ -389,19 +378,9 @@ void Limiter::CalcLimiter()
         this->SetInitValue();
         this->CalcLimiterScalar();
     }
-    DeAlloc();
-}
-
-void Limiter::Alloc()
-{
-    lim->minvf = new RealField( ug.nTCell );
-    lim->maxvf = new RealField( ug.nTCell );
-}
-
-void Limiter::DeAlloc()
-{
-    delete lim->minvf;
-    delete lim->maxvf;
+    // FIX: Use reset() instead of delete
+    lim->minvf.reset();
+    lim->maxvf.reset();
 }
 
 void Limiter::SetInitValue()
@@ -646,6 +625,32 @@ void Limiter::CalcMinMaxDiff()
         lim->qmax = MAX( lim->qmax, ( * lim->maxvf )[ cId ] );
     }
 }
+
+MRField * Limiter::GetLeftField() const
+{
+    return limf->qf1.get();
+}
+
+MRField * Limiter::GetRightField() const
+{
+    return limf->qf2.get();
+}
+
+void Limiter::CalcFaceValue()
+{
+    limf->CalcFaceValue();
+}
+
+void Limiter::GetQlQr()
+{
+    limf->GetQlQr();
+}
+
+void Limiter::BcQlQrFix()
+{
+    limf->BcQlQrFix();
+}
+
 
 bool NoCheck( RealField & q )
 {

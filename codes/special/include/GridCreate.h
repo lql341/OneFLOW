@@ -27,14 +27,9 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-class GridCreate
-{
-public:
-    GridCreate();
-    ~GridCreate();
-public:
-    void Run( int igene );
-    void GenePlate();
-};
+struct GridConfig;
+
+// Generate a grid from the configured layout file.
+void GenerateLayoutGrid( const GridConfig & config );
 
 EndNameSpace

@@ -40,6 +40,7 @@ License
 #include "DataBase.h"
 #include "StageProfiler.h"
 #include <iomanip>
+#include <memory>
 
 
 BeginNameSpace( ONEFLOW )
@@ -70,9 +71,9 @@ void NsInitFinal( StringField & data )
 
     NsCalcBoundary( data );
 
-    Grid * grid = Zone::GetGrid();
+    Grid & grid = Zone::GetGridReference();
 
-    if ( Zone::GetCGrid( grid ) )
+    if ( Zone::GetCGrid( &grid ) )
     {
         //RestrictAllQ( NS_SOLVER, FLOW_FIELD_INDEX );
 
@@ -117,16 +118,14 @@ void NsCalcBoundary( StringField & data )
 
 void NsCalcTimeStep( StringField & data )
 {
-    UTimeStep * uTimeStep = new UTimeStep();
+    auto uTimeStep = std::make_unique<UTimeStep>();
     uTimeStep->CalcTimeStep();
-    delete uTimeStep;
 }
 
 void NsUpdateResiduals( StringField & data )
 {
-    Rhs * rhs = new NsRhs();
+    auto rhs = std::make_unique<NsRhs>();
     rhs->UpdateResiduals();
-    delete rhs;
 }
 
 void NsImplicitMethod( StringField & data )

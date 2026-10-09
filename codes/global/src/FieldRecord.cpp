@@ -31,15 +31,19 @@ FieldRecord::~FieldRecord()
 {
 }
 
-void FieldRecord::AddField( MRField * field, int nEqu )
+void FieldRecord::AddField( MRField * field )
 {
-    this->nEquList.push_back( nEqu );
     this->fields.push_back( field );
 }
 
 MRField * FieldRecord::GetField( int id )
 {
     return this->fields[ id ];
+}
+
+int FieldRecord::Size() const
+{
+    return this->fields.size();
 }
 
 

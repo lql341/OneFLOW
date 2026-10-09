@@ -11,18 +11,17 @@ License
     (at your option) any later version.
 
     OneFLOW is distributed in the hope that it will be useful, but WITHOUT
-    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
-    for more details.
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+    or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+    License for more details.
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
-
 \*---------------------------------------------------------------------------*/
-
 
 #pragma once
 #include "Unsteady.h"
+#include "UnsteadyConvergence.h"
 
 BeginNameSpace( ONEFLOW )
 
@@ -30,15 +29,41 @@ class UUnsteady : public Unsteady
 {
 public:
     UUnsteady();
-    virtual ~UUnsteady();
 public:
+    void SetEquationCount( int equationCount );
+    int GetEquationCount() const;
     void UpdateDualTimeStepResidual();
     void UpdateDualTimeStepSource();
     void StoreOldResidual();
     void PrepareResidual();
     void CalcDualTimeResidual();
     void CalcDualTimeSrc();
+    void CalcCellDualTimeResidual();
+    void CalcCellDualTimeSrc();
     void CalcUnsteadyCriterion() override;
+
+public:
+    RealField & GetPrimitive(
+        Unsteady::HistoryLevel level );
+
+    RealField & GetConservative(
+        Unsteady::HistoryLevel level );
+
+protected:
+    using USDFunc = void( * )( UUnsteady * unst );
+    void SetSourceFunction( USDFunc function );
+    void SetCriterionFunction( USDFunc function );
+
+private:
+    USDFunc srcFun;
+    USDFunc criFun;
+    int nEqu;
+    UnsteadyConvergence convergence;
+    RealField res, res1, res2;
+    RealField prim, prim1, prim2;
+    RealField q, q1, q2;
+    RealField dualtimeRes;
+    RealField dualtimeSrc;
 };
 
 EndNameSpace

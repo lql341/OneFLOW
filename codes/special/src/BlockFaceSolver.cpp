@@ -41,7 +41,7 @@ License
 #include "Prj.h"
 #include "HXCgns.h"
 #include "Dimension.h"
-#include "GridPara.h"
+#include "GridTypes.h"
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
@@ -57,54 +57,68 @@ BlkFaceSolver::BlkFaceSolver()
     this->init_flag = false;
 }
 
-BlkFaceSolver::~BlkFaceSolver()
+BlkFaceSolver::~BlkFaceSolver() = default;
+
+void BlkFaceSolver::Reset()
 {
-    DeletePointer( blkList );
-    DeletePointer( sDomainList );
-    DeletePointer( slineList );
+    blkset.clear();
+    blkList.clear();
+    blkList2d.clear();
+    flag = false;
+    init_flag = false;
+    lineList.clear();
+    faceList.clear();
+    faceLinePosList.clear();
+    lineLookup.Clear();
+    faceLookup.Clear();
+    faceset.clear();
+    line2Face.clear();
+    face2Block.clear();
+    sDomainList.clear();
+    slineList.clear();
 }
 
-Face2D * BlkFaceSolver::GetBlkFace( int blk, int face_id )
+const Face2D * BlkFaceSolver::GetBlkFace( int blk, int face_id ) const
 {
-    Block3D * blk3d = this->blkList[ blk ];
+    const Block3D * blk3d = this->blkList[ blk ].get();
     int nFaces = blk3d->facelist.size();
     for ( int i = 0; i < nFaces; ++ i )
     {
-        Face2D * face2d = blk3d->facelist[ i ];
+        const Face2D * face2d = blk3d->facelist[ i ].get();
         int fid = face2d->face_id;
         if ( fid == face_id )
         {
             return face2d;
         }
     }
-    return 0;
+    return nullptr;
 }
 
-Face2D * BlkFaceSolver::GetBlkFace2D( int blk, int face_id )
+const Face2D * BlkFaceSolver::GetBlkFace2D( int blk, int face_id ) const
 {
-    Block2D * blk2d = this->blkList2d[ blk ];
+    const Block2D * blk2d = this->blkList2d[ blk ].get();
     int nFaces = blk2d->facelist.size();
     for ( int i = 0; i < nFaces; ++ i )
     {
-        Face2D * face2d = blk2d->facelist[ i ];
+        const Face2D * face2d = blk2d->facelist[ i ].get();
         int fid = face2d->face_id;
         if ( fid == face_id )
         {
             return face2d;
         }
     }
-    return 0;
+    return nullptr;
 }
 
-void BlkFaceSolver::MyFaceBuildSDomainList()
+void BlkFaceSolver::BuildSurfaceDomainList()
 {
     int nFaces = this->face2Block.size();
     this->sDomainList.resize( nFaces );
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        SDomain * sDomain = new SDomain();
+        auto sDomain = std::make_unique< SDomain >();
         sDomain->domain_id = iFace;
-        this->sDomainList[ iFace ] = sDomain;
+        this->sDomainList[ iFace ] = std::move( sDomain );
     }
 
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
@@ -112,24 +126,24 @@ void BlkFaceSolver::MyFaceBuildSDomainList()
         IntField & lineList = this->faceList[ iFace ];
         IntField & posList = this->faceLinePosList[ iFace ];
 
-        SDomain * sDomain = this->sDomainList[ iFace ];
+        SDomain * sDomain = this->sDomainList[ iFace ].get();
         sDomain->SetDomain( iFace, lineList, posList );
         sDomain->ConstructSDomainCtrlPoint();
         sDomain->ConstructDomainTopo();
         sDomain->CalcDim2D();
         sDomain->ConstructLocalTopoAsBlk2D();
     }
-    int kkk = 1;
+
 }
 
-void BlkFaceSolver::MyFaceGenerateFaceMesh()
+void BlkFaceSolver::GenerateSurfaceFaceMesh()
 {
     int nFaces = this->faceList.size();
     std::fstream file;
     Prj::OpenPrjFile( file, "grid/facemesh_tecplot.dat", std::ios_base::out );
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        SDomain * sDomain = this->sDomainList[ iFace ];
+        SDomain * sDomain = this->sDomainList[ iFace ].get();
         sDomain->Alloc();
         sDomain->SetDomainBcMesh();
         sDomain->GenerateSDomainMesh( file );
@@ -137,18 +151,19 @@ void BlkFaceSolver::MyFaceGenerateFaceMesh()
     Prj::CloseFile( file );
 }
 
-void BlkFaceSolver::MyFaceGenerateLineMesh()
+void BlkFaceSolver::GenerateSurfaceLineMesh()
 {
-    int nLine = line_Machine.curveInfoList.size();
+    int nLine = line_Machine.GetNLine();
     slineList.resize( nLine );
     for ( int iSLine = 0; iSLine < nLine; ++ iSLine )
     {
-        SLine * sLine = new SLine();
-        slineList[ iSLine ] = sLine;
+        auto sLine = std::make_unique< SLine >();
         sLine->line_id = iSLine + 1;
-        sLine->ni = line_Machine.dimList[ iSLine ];
+        sLine->ni = line_Machine.GetDimension( sLine->line_id );
         sLine->Alloc();
-        sLine->CopyMesh();
+        const CurveMesh * curveMesh = line_Machine.GetCurveMesh( sLine->line_id );
+        sLine->CopyMesh( *curveMesh );
+        slineList[ iSLine ] = std::move( sLine );
     }
 }
 
@@ -182,7 +197,7 @@ void BlkFaceSolver::CreateFaceList()
     }
 
     this->face2Block.resize( nFaces );
-    // Register existing faces to faceLookup (key ¡ú id).
+    // Register existing faces to faceLookup (key Â¡Ãº id).
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
         IntField & face = this->faceList[ iFace ];
@@ -197,19 +212,55 @@ IntField & BlkFaceSolver::GetLine( int line_id )
     return lineList[ id ];
 }
 
-int BlkFaceSolver::FindLineId( IntField & line )
+const IntField & BlkFaceSolver::GetLine( int line_id ) const
+{
+    int id = line_id - 1;
+    return lineList[ id ];
+}
+
+BlkF2C & BlkFaceSolver::GetLineToFace( int line_id )
+{
+    return line2Face[ line_id - 1 ];
+}
+
+const BlkF2C & BlkFaceSolver::GetLineToFace( int line_id ) const
+{
+    return line2Face[ line_id - 1 ];
+}
+
+BlkF2C & BlkFaceSolver::GetFaceToBlock( int faceIndex )
+{
+    return face2Block[ faceIndex ];
+}
+
+const BlkF2C & BlkFaceSolver::GetFaceToBlock( int faceIndex ) const
+{
+    return face2Block[ faceIndex ];
+}
+
+SDomain * BlkFaceSolver::GetSDomain( int domainIndex )
+{
+    return sDomainList[ domainIndex ].get();
+}
+
+SLine * BlkFaceSolver::GetSLine( int lineIndex )
+{
+    return slineList[ lineIndex ].get();
+}
+
+int BlkFaceSolver::FindLineId( const IntField & line ) const
 {
     return this->lineLookup.Find(line);
 }
 
-void BlkFaceSolver::MyFaceAlloc()
+void BlkFaceSolver::InitializeLineTopology()
 {
     if ( init_flag ) return;
     init_flag = true;
-    int nLine = line_Machine.curveInfoList.size();
+    int nLine = line_Machine.GetNLine();
     for ( int i = 0; i < nLine; ++ i )
     {
-        CurveInfo * curveInfo = line_Machine.GetCurveInfo( i + 1 );
+        const CurveInfo * curveInfo = line_Machine.GetCurveInfo( i + 1 );
         IntField line;
         line.push_back( curveInfo->p1 );
         line.push_back( curveInfo->p2 );
@@ -228,7 +279,7 @@ void BlkFaceSolver::MyFaceAlloc()
 
 void BlkFaceSolver::AddLineToFace( int faceid, int pos, int lineid )
 {
-    this->MyFaceAlloc();
+    this->InitializeLineTopology();
 
     int id = lineid - 1;
     BlkF2C & line_struct = this->line2Face[ id ];
@@ -267,7 +318,7 @@ void BlkFaceSolver::SetBoundary()
     int nFaces = this->face2Block.size();
     for ( int iFace = 0; iFace < nFaces; ++ iFace )
     {
-        int bcType = domain_Machine.bctypeList[ iFace ];
+        int bcType = domain_Machine.GetBcType( iFace + 1 );
         BlkF2C & face_struct = this->face2Block[ iFace ];
         face_struct.bctype = bcType;
     }
@@ -279,8 +330,8 @@ void BlkFaceSolver::BuildBlkFace()
     this->blkList.resize( nBlock );
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block3D * blk3d = new Block3D();
-        this->blkList[ iBlk ] = blk3d;
+        auto blk3d = std::make_unique< Block3D >();
+        this->blkList[ iBlk ] = std::move( blk3d );
     }
 
     int nFaces = this->face2Block.size();
@@ -297,9 +348,9 @@ void BlkFaceSolver::BuildBlkFace()
             int blk_id = face_struct.cellList[ i ] - 1;
             int face_pos_in_blk = face_struct.posList[ i ];
 
-            Block3D * blk3d = this->blkList[ blk_id ];
+            Block3D * blk3d = this->blkList[ blk_id ].get();
             blk3d->blk_id = blk_id;
-            MDomain * mDomain = blk3d->mDomainList[ face_pos_in_blk ];
+            MDomain * mDomain = blk3d->mDomainList[ face_pos_in_blk ].get();
             mDomain->AddSubDomain( iFace, lineList, lineposList );
         }
     }
@@ -311,8 +362,8 @@ void BlkFaceSolver::BuildBlkFace2D()
     this->blkList2d.resize( nBlock );
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = new Block2D();
-        this->blkList2d[ iBlk ] = blk2d;
+        auto blk2d = std::make_unique< Block2D >();
+        this->blkList2d[ iBlk ] = std::move( blk2d );
     }
 
     int nFaces = this->face2Block.size();
@@ -329,10 +380,10 @@ void BlkFaceSolver::BuildBlkFace2D()
             int blk_id = face_struct.cellList[ i ] - 1;
             int face_pos_in_blk = face_struct.posList[ i ] - 1;
 
-            Block2D * blk2d = this->blkList2d[ blk_id ];
+            Block2D * blk2d = this->blkList2d[ blk_id ].get();
             blk2d->blk_id = blk_id;
 
-            MDomain * mDomain = blk2d->mDomainList[ face_pos_in_blk ];
+            MDomain * mDomain = blk2d->mDomainList[ face_pos_in_blk ].get();
             mDomain->AddSubDomain( iFace, lineList, lineposList );
         }
     }
@@ -344,13 +395,13 @@ void BlkFaceSolver::ConstructBlockInfo()
 
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block3D * blk3d = this->blkList[ iBlk ];
+        Block3D * blk3d = this->blkList[ iBlk ].get();
         blk3d->ConstructTopo();
     }
 
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block3D * blk3d = this->blkList[ iBlk ];
+        Block3D * blk3d = this->blkList[ iBlk ].get();
         blk3d->SetInterfaceBc();
     }
 }
@@ -361,13 +412,13 @@ void BlkFaceSolver::ConstructBlockInfo2D()
 
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->ConstructTopo();
     }
 
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->SetInterfaceBc();
     }
 }
@@ -378,19 +429,21 @@ void BlkFaceSolver::DumpBcInp()
     int flowSolverIndex = 1;
     int width = 5;
 
+    const GridConfig config = GridConfig::FromDataBase();
+
     std::fstream file;
-    Prj::OpenPrjFile( file, grid_para.bcFile, std::ios_base::out );
+    Prj::OpenPrjFile( file, config.bcFile, std::ios_base::out );
 
     file << std::setw( width ) << flowSolverIndex << std::endl;
     file << std::setw( width ) << nBlock << std::endl;
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block3D * blk3d = this->blkList[ iBlk ];
+        Block3D * blk3d = this->blkList[ iBlk ].get();
         blk3d->DumpInp( file );
     }
 
     Prj::CloseFile( file );
-    int kkk = 1;
+
 }
 
 void BlkFaceSolver::DumpBcInp2D()
@@ -399,19 +452,21 @@ void BlkFaceSolver::DumpBcInp2D()
     int flowSolverIndex = 1;
     int width = 5;
 
+    const GridConfig config = GridConfig::FromDataBase();
+
     std::fstream file;
-    Prj::OpenPrjFile( file, grid_para.bcFile, std::ios_base::out );
+    Prj::OpenPrjFile( file, config.bcFile, std::ios_base::out );
 
     file << std::setw( width ) << flowSolverIndex << std::endl;
     file << std::setw( width ) << nBlock << std::endl;
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->DumpInp( file );
     }
 
     Prj::CloseFile( file );
-    int kkk = 1;
+
 }
 
 void BlkFaceSolver::DumpBlkScript()
@@ -431,7 +486,7 @@ void BlkFaceSolver::DumpBlkScript()
     BlkElem * blkHexa = bbElemHome.GetBlkElem( ONEFLOW::HEXA_8 );
     DumpBlkScript( file, blkHexa, ctrlpoints );
     Prj::CloseFile( file );
-    int kkk = 1;
+
 }
 
 void BlkFaceSolver::DumpBlkScript( std::fstream & file, BlkElem * blkHexa, IntField & ctrlpoints )
@@ -467,7 +522,7 @@ void BlkFaceSolver::GenerateBlkMesh()
     int nBlock = this->blkList.size();
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block3D * blk3d = this->blkList[ iBlk ];
+        Block3D * blk3d = this->blkList[ iBlk ].get();
         blk3d->Alloc();
         blk3d->CreateBlockMesh();
     }
@@ -478,7 +533,7 @@ void BlkFaceSolver::GenerateBlkMesh2D()
     int nBlock = this->blkList2d.size();
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->Alloc();
         blk2d->CreateBlockMesh2D();
     }
@@ -488,7 +543,7 @@ void BlkFaceSolver::GenerateBlkMesh2D()
 
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->DumpBlockMesh2D( file );
     }
     Prj::CloseFile( file );
@@ -496,14 +551,14 @@ void BlkFaceSolver::GenerateBlkMesh2D()
 
 void BlkFaceSolver::GenerateFaceMesh()
 {
-    this->MyFaceBuildSDomainList();
-    this->MyFaceGenerateFaceMesh();
+    this->BuildSurfaceDomainList();
+    this->GenerateSurfaceFaceMesh();
 }
 
 void BlkFaceSolver::GenerateLineMesh()
 {
     line_Machine.GenerateAllLineMesh();
-    this->MyFaceGenerateLineMesh();
+    this->GenerateSurfaceLineMesh();
 }
 
 void BlkFaceSolver::DumpStandardGrid()
@@ -511,16 +566,14 @@ void BlkFaceSolver::DumpStandardGrid()
     int nBlock = this->blkList.size();
 
     Grids strGridList( nBlock );
-    strGridList.SetDeleteFlag( true );
-
+    
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Grid * gridstr = ONEFLOW::CreateGrid( ONEFLOW::SMESH );
-        StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
+        auto owned = ONEFLOW::CreateGridUnique( ONEFLOW::SMESH );
+        StrGrid * grid = ONEFLOW::StrGridCast( owned.get() );
+        strGridList[ static_cast< std::size_t >( iBlk ) ] = std::move( owned );
 
-        strGridList[ iBlk ] = grid;
-
-        Block3D * blk3d = this->blkList[ iBlk ];
+        Block3D * blk3d = this->blkList[ iBlk ].get();
         blk3d->FillStrGrid( grid, iBlk );
 
     }
@@ -534,16 +587,14 @@ void BlkFaceSolver::DumpStandardGrid2D()
     int nBlock = this->blkList2d.size();
 
     Grids strGridList( nBlock );
-    strGridList.SetDeleteFlag( true );
-
+    
     for ( int iBlk = 0; iBlk < nBlock; ++ iBlk )
     {
-        Grid * gridstr = ONEFLOW::CreateGrid( ONEFLOW::SMESH );
-        StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
+        auto owned = ONEFLOW::CreateGridUnique( ONEFLOW::SMESH );
+        StrGrid * grid = ONEFLOW::StrGridCast( owned.get() );
+        strGridList[ static_cast< std::size_t >( iBlk ) ] = std::move( owned );
 
-        strGridList[ iBlk ] = grid;
-
-        Block2D * blk2d = this->blkList2d[ iBlk ];
+        Block2D * blk2d = this->blkList2d[ iBlk ].get();
         blk2d->FillStrGrid( grid, iBlk );
 
     }
@@ -553,14 +604,16 @@ void BlkFaceSolver::DumpStandardGrid2D()
 
 void BlkFaceSolver::DumpStandardGrid( Grids & strGridList )
 {
+    const GridConfig config = GridConfig::FromDataBase();
+
     std::fstream file;
-    Prj::OpenPrjFile( file, grid_para.gridFile, std::ios_base::out | std::ios_base::binary );
+    Prj::OpenPrjFile( file, config.sourceFile, std::ios_base::out | std::ios_base::binary );
 
     int nZone = strGridList.size();
     HXWrite( & file, nZone );
     for ( int iBlock = 0; iBlock < nZone; ++ iBlock )
     {
-        Grid * gridstr = strGridList[ iBlock ];
+        Grid * gridstr = &GridAt( strGridList, iBlock  );
         StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
         int ni = grid->ni;
         int nj = grid->nj;
@@ -572,7 +625,7 @@ void BlkFaceSolver::DumpStandardGrid( Grids & strGridList )
 
     for ( int iBlock = 0; iBlock < nZone; ++ iBlock )
     {
-        Grid * gridstr = strGridList[ iBlock ];
+        Grid * gridstr = &GridAt( strGridList, iBlock  );
         StrGrid * grid = ONEFLOW::StrGridCast( gridstr );
         HXWrite( & file, grid->nodeMesh->xN );
         HXWrite( & file, grid->nodeMesh->yN );
@@ -583,7 +636,7 @@ void BlkFaceSolver::DumpStandardGrid( Grids & strGridList )
 
 }
 
-void BlkFaceSolver::GenerateFaceBlockLink()
+void BlkFaceSolver::GenerateGrid()
 {
     if ( Dim::dimension == ONEFLOW::THREE_D )
     {
@@ -610,9 +663,5 @@ void BlkFaceSolver::GenerateFaceBlockLink()
     }
 }
 
-IntField GlobalGetLine( int line_id )
-{
-    return blkFaceSolver.GetLine( line_id );
-}
 
 EndNameSpace

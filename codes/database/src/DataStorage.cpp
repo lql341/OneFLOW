@@ -21,18 +21,28 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "DataStorage.h"
+#include <memory>
 #include "DataBase.h"
 
 BeginNameSpace( ONEFLOW )
 
 DataStorage::DataStorage()
+    : dataBase( std::make_unique<DataBase>() )
 {
-    dataBase = new DataBase();
 }
 
 DataStorage::~DataStorage()
 {
-    delete dataBase;
+}
+
+void DataStorage::InitializeDataBase()
+{
+    dataBase = std::make_unique< DataBase >();
+}
+
+void DataStorage::ResetDataBase() noexcept
+{
+    dataBase.reset();
 }
 
 EndNameSpace

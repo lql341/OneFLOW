@@ -64,7 +64,7 @@ void SolverMap::BuildSolversInBucket(
     for ( int solverIndex = 0; solverIndex < nSolver; ++ solverIndex )
     {
         // SafeClone returns a raw owning pointer; take ownership immediately.
-        std::unique_ptr< Solver > solver( Solver::SafeClone( solverNameList[ solverIndex ] ) );
+        std::unique_ptr< Solver > solver = Solver::SafeCloneUnique( solverNameList[ solverIndex ] );
         solver->solverIndex = solverIndex;
         solver->gridType = gridType;
         solver->StaticInit();
@@ -140,6 +140,8 @@ void SolverMap::FreeSolverMap()
     SolverMap::FreeSolverMap( ONEFLOW::UMESH );
     SolverMap::FreeSolverMap( ONEFLOW::SMESH );
     SolverMap::ClearIndexMaps();
+    LusgsState::Reset();
+    SolverState::Reset();
 }
 
 // Index-map / SelectSolverNames implementations: SolverMapIndex.cpp

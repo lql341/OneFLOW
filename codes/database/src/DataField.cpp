@@ -22,82 +22,75 @@ License
 
 #include "DataField.h"
 #include "DataPointer.h"
+#include <memory>
 
 BeginNameSpace( ONEFLOW )
 
 FieldEntry::FieldEntry()
 {
     this->name = "";
-    this->data = nullptr;
 }
 
-FieldEntry::FieldEntry( const std::string & name, PointerWrap * data )
+FieldEntry::FieldEntry( const std::string & name, std::unique_ptr<PointerWrap> data )
 {
     this->name = name;
-    this->data = data;
+    this->data = std::move( data );
 }
 
 FieldEntry::~FieldEntry()
 {
-    // data is owned and deleted by DataField
 }
 
 DataField::DataField()
 {
-    dataMap = new DataMap;
 }
 
 DataField::~DataField()
 {
-    for ( auto & pair : *dataMap )
-    {
-        delete pair.second->data;   // Delete the owned PointerWrap.
-        delete pair.second;         // Delete the owned FieldEntry.
-    }
-    dataMap->clear();
-    delete dataMap;
+    Clear();
 }
 
-void DataField::UpdateFieldEntry( FieldEntry * fieldEntry )
+void DataField::Clear()
+{
+    dataMap.clear();
+}
+
+void DataField::UpdateFieldEntry( std::unique_ptr<FieldEntry> fieldEntry )
 {
     if ( fieldEntry == nullptr ) return;
 
-    auto it = dataMap->find( fieldEntry->name );
-    if ( it == dataMap->end() )
+    const std::string name = fieldEntry->GetName();
+    auto it = dataMap.find( name );
+    if ( it == dataMap.end() )
     {
-        // Not exist ¡ú take ownership
-        ( *dataMap )[ fieldEntry->name ] = fieldEntry;
+        dataMap[ name ] = std::move( fieldEntry );
     }
-    else
-    {
-        // Already exist ¡ú discard the new one
-        if ( it->second != fieldEntry )
-        {
-            delete fieldEntry->data;
-            delete fieldEntry;
-        }
-    }
+    // else: already exists - discard the new entry (unique_ptr destroys it)
 }
 
 FieldEntry * DataField::GetFieldEntry( const std::string & name )
 {
-    auto it = dataMap->find( name );
-    if ( it != dataMap->end() )
+    auto it = dataMap.find( name );
+    if ( it != dataMap.end() )
     {
-        return it->second;
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+const FieldEntry * DataField::GetFieldEntry( const std::string & name ) const
+{
+    auto it = dataMap.find( name );
+    if ( it != dataMap.end() )
+    {
+        return it->second.get();
     }
     return nullptr;
 }
 
 void DataField::DeleteFieldEntry( const std::string & name )
 {
-    auto it = dataMap->find( name );
-    if ( it != dataMap->end() )
-    {
-        delete it->second->data;
-        delete it->second;
-        dataMap->erase( it );
-    }
+    dataMap.erase( name );
 }
 
 EndNameSpace

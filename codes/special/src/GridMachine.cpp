@@ -21,16 +21,12 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "GridMachine.h"
+#include "GridLayout.h"
+#include "GridLayoutParser.h"
 #include "PointMachine.h"
 #include "LineMachine.h"
 #include "DomainMachine.h"
 #include "BlockMachine.h"
-#include "Dimension.h"
-#include "DataBase.h"
-#include "GridPara.h"
-#include "TextFileParser.h"
-#include "HXMath.h"
-#include <iostream>
 
 
 BeginNameSpace( ONEFLOW )
@@ -45,94 +41,80 @@ GridMachine::~GridMachine()
 {
 }
 
-void GridMachine::Run()
+void GridMachine::Run( const std::string & fileName )
 {
-    std::string fileName = GetDataValue< std::string >( "gridLayoutFileName" );
-    this->ReadScript( fileName );
-    this->GeneGrid();
-}
-
-void GridMachine::ReadScript( const std::string & fileName )
-{
-    std::string separator = " =\r\n\t#$,;\"(){}";
-
-    TextFileParser textFileParser;
-
-    textFileParser.OpenPrjFile( fileName, std::ios_base::in );
-    textFileParser.SetDefaultSeparator( separator );
-
-    while ( ! textFileParser.ReachTheEndOfFile() )
+    this->ResetState();
+    try
     {
-        bool resultFlag = textFileParser.ReadNextMeaningfulLine();
-        if ( ! resultFlag ) break;
-
-        std::string keyWord = textFileParser.ReadNextWord();
-        std::string word;
-
-        if ( keyWord == "Point" )
-        {
-            int id = textFileParser.ReadNextDigit< int >();
-
-            Real x = textFileParser.ReadNextDigit< Real >();
-            Real y = textFileParser.ReadNextDigit< Real >();
-            Real z = textFileParser.ReadNextDigit< Real >();
-
-            point_Machine.AddPoint( x, y, z, id );
-        }
-        else if ( keyWord == "Line" )
-        {
-            int id = textFileParser.ReadNextDigit< int >();
-            int p1 = textFileParser.ReadNextDigit< int >();
-            int p2 = textFileParser.ReadNextDigit< int >();
-
-            line_Machine.AddLine( p1, p2, id );
-        }
-        else if ( keyWord == "Circle" )
-        {
-            int id = textFileParser.ReadNextDigit< int >();
-            int p1 = textFileParser.ReadNextDigit< int >();
-            int pc = textFileParser.ReadNextDigit< int >();
-            int p2 = textFileParser.ReadNextDigit< int >();
-
-            line_Machine.AddCircle( p1, pc, p2, id );
-        }
-        else if ( keyWord == "Dim" )
-        {
-            line_Machine.AddDimension( & textFileParser );
-        }
-        else if ( keyWord == "Ds" )
-        {
-            line_Machine.AddDs( & textFileParser );
-        }
-        else if ( keyWord == "Boundary" )
-        {
-            domain_Machine.AddBcType( & textFileParser );
-        }
-        else if ( keyWord == "Add" )
-        {
-            block_Machine.AddFaceToBlock( & textFileParser );
-        }
-        
-    };
-
-    textFileParser.CloseFile();
+        const GridLayout layout = GridLayoutParser().Parse( fileName );
+        this->ApplyLayout( layout );
+        this->GenerateGrid();
+    }
+    catch ( ... )
+    {
+        this->ResetState();
+        throw;
+    }
+    this->ResetState();
 }
 
-void GridMachine::GeneGrid()
+void GridMachine::ResetState()
 {
-    GenerateAllLineMesh();
-    GenerateFaceBlockLink();
+    block_Machine.Reset();
+    line_Machine.Reset();
+    point_Machine.Reset();
+    domain_Machine.Reset();
 }
 
-void GridMachine::GenerateFaceBlockLink()
+void GridMachine::ApplyLayout( const GridLayout & layout )
 {
-    block_Machine.GenerateFaceBlockLink();
+    for ( const auto & point : layout.points )
+    {
+        point_Machine.AddPoint( point.x, point.y, point.z, point.id );
+    }
+
+    for ( const auto & line : layout.lines )
+    {
+        line_Machine.AddLine( line.p1, line.p2, line.id );
+    }
+
+    for ( const auto & circle : layout.circles )
+    {
+        line_Machine.AddCircle( circle.p1, circle.pc, circle.p2, circle.id );
+    }
+
+    for ( const auto & dimension : layout.dimensions )
+    {
+        line_Machine.SetDimension( dimension.id, dimension.pointCount );
+    }
+
+    for ( const auto & distribution : layout.distributions )
+    {
+        line_Machine.SetDistribution( distribution );
+    }
+
+    for ( const auto & boundary : layout.boundaries )
+    {
+        domain_Machine.SetBcType( boundary.id, boundary.boundaryType );
+    }
+
+    for ( const auto & relation : layout.lineToFaces )
+    {
+        block_Machine.AddLineToFace(
+            relation.faceId, relation.position, relation.lineId );
+    }
+
+    for ( const auto & relation : layout.faceToBlocks )
+    {
+        block_Machine.AddFaceToBlock(
+            relation.blockId, relation.position, relation.faceId );
+    }
 }
 
-void GridMachine::GenerateAllLineMesh()
+void GridMachine::GenerateGrid()
 {
-    line_Machine.GenerateAllLineMesh();
+    // BlockFaceSolver owns the complete mesh-generation sequence.
+    block_Machine.GenerateGrid();
 }
-
 
 EndNameSpace

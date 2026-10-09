@@ -1,3 +1,4 @@
+#include "GridHandles.h"
 /*---------------------------------------------------------------------------*\
     OneFLOW - LargeScale Multiphysics Scientific Simulation Environment
     Copyright (C) 2017-2026 He Xin and the OneFLOW contributors.
@@ -43,22 +44,15 @@ License
 BeginNameSpace( ONEFLOW )
 #ifdef ENABLE_CGNS
 
-CgnsZbc::CgnsZbc( CgnsZone * cgnsZone )
+CgnsZbc::CgnsZbc( CgnsZone & cgnsZone )
+    : cgnsZbcConn( std::make_unique< CgnsZbcConn >( cgnsZone ) ),
+      cgnsZbc1to1( std::make_unique< CgnsZbc1to1 >( cgnsZone ) ),
+      cgnsZbcBoco( std::make_unique< CgnsZbcBoco >( cgnsZone ) ),
+      cgnsZone( cgnsZone )
 {
-    this->cgnsZone = cgnsZone;
-
-    this->cgnsZbcConn = new CgnsZbcConn( cgnsZone );
-    this->cgnsZbc1to1 = new CgnsZbc1to1( cgnsZone );
-    this->cgnsZbcBoco = new CgnsZbcBoco( cgnsZone );
-
 }
 
-CgnsZbc::~CgnsZbc()
-{
-    delete this->cgnsZbcConn;
-    delete this->cgnsZbc1to1;
-    delete this->cgnsZbcBoco;
-}
+CgnsZbc::~CgnsZbc() = default;
 
 void CgnsZbc::ConvertToInnerDataStandard()
 {
@@ -71,9 +65,9 @@ void CgnsZbc::ConvertToInnerDataStandard()
     this->cgnsZbcBoco->ShiftBcRegion();
 }
 
-void CgnsZbc::ScanBcFace( FaceSolver * face_solver )
+void CgnsZbc::ScanBcFace( FaceSolver & faceSolver )
 {
-    this->cgnsZbcBoco->ScanBcFace( face_solver );
+    this->cgnsZbcBoco->ScanBcFace( faceSolver );
 }
 
 void CgnsZbc::ReadCgnsGridBoundary()
@@ -139,7 +133,7 @@ void CgnsZbc::FillBcPoints3D( int * start, int * end, cgsize_t * bcpnts )
 
 void CgnsZbc::FillRegion( TestRegion * r, cgsize_t * ipnts, int dimension )
 {
-    //int dimension = cgnsZone->cgnsBase->celldim;
+    //int dimension = cgnsZone.cgnsBase.celldim;
     int icount = 0;
     //lower point of receiver range
     ipnts[ icount ++ ] = r->p1[ 0 ];
@@ -175,22 +169,22 @@ void CgnsZbc::FillInterface( BcRegion * bcRegion, cgsize_t * ipnts, cgsize_t * i
     std::cout << "\n";
 }
 
-void CgnsZbc::DumpCgnsGridBoundary( Grid * gridIn )
+void CgnsZbc::DumpCgnsGridBoundary( Grid * gridIn, const Grids & grids )
 {
     StrGrid * grid = StrGridCast( gridIn );
 
-    BcRegionGroup * bcRegionGroup = grid->bcRegionGroup;
+    BcRegionGroup * bcRegionGroup = grid->bcRegionGroup.get();
 
-    int nBcRegions = bcRegionGroup->regions->size();
+    int nBcRegions = bcRegionGroup->regions.size();
 
-    int fileId = cgnsZone->cgnsBase->cgnsFile->fileId;
-    int baseId = cgnsZone->cgnsBase->baseId;
-    int zoneId = cgnsZone->zId;
+    int fileId = cgnsZone.cgnsBase.cgnsFile->fileId;
+    int baseId = cgnsZone.cgnsBase.baseId;
+    int zoneId = cgnsZone.zId;
 
     std::cout << " fildId = " << fileId << " baseId = " << baseId << " zoneId = " << zoneId << "\n";
 
-    BcTypeMap * bcTypeMap = new BcTypeMap();
-    bcTypeMap->Init();
+    BcTypeMap bcTypeMap;
+    bcTypeMap.Init();
 
     cgsize_t ipnts[ 6 ], ipntsdonor[ 6 ];
     int itranfrm[ 3 ];
@@ -199,14 +193,14 @@ void CgnsZbc::DumpCgnsGridBoundary( Grid * gridIn )
     {
         BcRegion * bcRegion = bcRegionGroup->GetBcRegion( ir );
 
-        BCType_t bctype = static_cast< BCType_t >( bcTypeMap->OneFlow2Cgns( bcRegion->bcType ) );
-        int dimension = cgnsZone->cgnsBase->celldim;
+        BCType_t bctype = static_cast< BCType_t >( bcTypeMap.OneFlow2Cgns( bcRegion->bcType ) );
+        int dimension = cgnsZone.cgnsBase.celldim;
         if ( bctype == BCTypeNull )
         {
             FillInterface( bcRegion, ipnts, ipntsdonor, itranfrm, dimension );
             int zid = bcRegion->t->zid - 1;
-            Grid * tGrid = GlobalGrid::GetGrid( zid );
-            std::string & donorName = tGrid->name;
+            const Grid & tGrid = GridAt( grids, zid );
+            const std::string & donorName = tGrid.name;
             // write 1-to-1 info
             int index_conn = -1;
             cg_1to1_write( fileId, baseId, zoneId, bcRegion->regionName.c_str(), donorName.c_str(), ipnts, ipntsdonor,itranfrm, & index_conn );
@@ -214,7 +208,7 @@ void CgnsZbc::DumpCgnsGridBoundary( Grid * gridIn )
         }
         else
         {
-            BasicRegion * s = bcRegion->s;
+            BasicRegion * s = bcRegion->s.get();
             FillBcPoints( s->start, s->end, ipnts, dimension );
             //FillBcPoints3D( s->start, s->end, ipnts );
             int bcId = -1;
@@ -223,7 +217,6 @@ void CgnsZbc::DumpCgnsGridBoundary( Grid * gridIn )
         }
     }
 
-    delete bcTypeMap;
 }
 
 void CgnsZbc::CreateCgnsZbc( CgnsZbc * cgnsZbcIn )

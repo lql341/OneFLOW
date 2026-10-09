@@ -36,16 +36,97 @@ BeginNameSpace( ONEFLOW )
 
 FaceTopo::FaceTopo()
 {
-    this->grid = 0;
-    this->bcManager = new BcManager();
+    this->bcManager = std::make_unique< BcManager >();
 }
 
-FaceTopo::~FaceTopo()
+void FaceTopo::BindGrid( Grid & grid )
 {
-    delete this->bcManager;
+    this->grid = &grid;
 }
 
-HXSize_t FaceTopo::CalcTotalFaceNodes()
+Grid & FaceTopo::GetGrid()
+{
+    return *this->grid;
+}
+
+const Grid & FaceTopo::GetGrid() const
+{
+    return *this->grid;
+}
+
+BcRecord & FaceTopo::GetBcRecord()
+{
+    return *this->bcManager->bcRecord;
+}
+
+const BcRecord & FaceTopo::GetBcRecord() const
+{
+    return *this->bcManager->bcRecord;
+}
+
+IntField & FaceTopo::GetFaceFlags()
+{
+    return this->faceFlags;
+}
+
+const IntField & FaceTopo::GetFaceFlags() const
+{
+    return this->faceFlags;
+}
+
+IntField & FaceTopo::GetLeftCells()
+{
+    return this->lCells;
+}
+
+const IntField & FaceTopo::GetLeftCells() const
+{
+    return this->lCells;
+}
+
+IntField & FaceTopo::GetRightCells()
+{
+    return this->rCells;
+}
+
+const IntField & FaceTopo::GetRightCells() const
+{
+    return this->rCells;
+}
+
+LinkField & FaceTopo::GetFaces()
+{
+    return this->faces;
+}
+
+const LinkField & FaceTopo::GetFaces() const
+{
+    return this->faces;
+}
+
+IntField & FaceTopo::GetFaceTypes()
+{
+    return this->fTypes;
+}
+
+const IntField & FaceTopo::GetFaceTypes() const
+{
+    return this->fTypes;
+}
+
+void FaceTopo::PrepareBoundaryConditions()
+{
+    this->bcManager->PreProcess();
+}
+
+bool FaceTopo::HasInterfaceBoundary() const
+{
+    return this->bcManager->ExistInterface();
+}
+
+FaceTopo::~FaceTopo() = default;
+
+HXSize_t FaceTopo::CalcTotalFaceNodes() const
 {
     HXSize_t totalNumFaceNodes = 0;
     HXSize_t nFaces = this->GetNFaces();
@@ -56,7 +137,7 @@ HXSize_t FaceTopo::CalcTotalFaceNodes()
     return totalNumFaceNodes;
 }
 
-HXSize_t FaceTopo::GetNBFaces()
+HXSize_t FaceTopo::GetNBFaces() const
 {
     return this->bcManager->bcRecord->GetNBFace();
 }
@@ -75,13 +156,13 @@ void FaceTopo::ResizeAll()
     this->rPosition.resize( nFaces );
 }
 
-void FaceTopo::ModifyFaceNodeId( IFaceLink * iFaceLink )
+void FaceTopo::ModifyFaceNodeId( IFaceLink & iFaceLink )
 {
     this->SetNewFace2Node( iFaceLink );
     this->SetNewFace2Cell( iFaceLink );
 }
 
-void FaceTopo::SetNewFace2Node( IFaceLink * iFaceLink )
+void FaceTopo::SetNewFace2Node( IFaceLink & iFaceLink )
 {
     int nBFaces = this->bcManager->bcRecord->GetNBFace();
     this->facesNew.resize( 0 );
@@ -96,8 +177,8 @@ void FaceTopo::SetNewFace2Node( IFaceLink * iFaceLink )
 
         if ( BC::IsInterfaceBc( bcType ) )
         {
-            int gFid   = iFaceLink->l2g[ this->grid->id ][ localFid ];
-            int nCFace = iFaceLink->face_search->cFaceId[ gFid ].size();
+            int gFid   = iFaceLink.l2g[ this->GetGrid().id ][ localFid ];
+            int nCFace = iFaceLink.face_search->cFaceId[ gFid ].size();
 
             if ( nCFace > 0 )
             {
@@ -105,25 +186,25 @@ void FaceTopo::SetNewFace2Node( IFaceLink * iFaceLink )
                 {
                     //this->lCellNew.push_back( this->lCell[ iFace ] );
 
-                    int cFid = iFaceLink->face_search->cFaceId[ gFid ][ iCFace ];
+                    int cFid = iFaceLink.face_search->cFaceId[ gFid ][ iCFace ];
 
-                    int nCNode = iFaceLink->face_search->rCNodeId[ cFid ].size();
+                    int nCNode = iFaceLink.face_search->rCNodeId[ cFid ].size();
 
                     tmpVector.resize( 0 );
 
                     for ( int iNode = 0; iNode < nCNode; ++ iNode )
                     {
-                        int flag = iFaceLink->face_search->rCNodeFlag[ cFid ][ iNode ];
+                        int flag = iFaceLink.face_search->rCNodeFlag[ cFid ][ iNode ];
                         int nodeIndex;
                         if ( flag == 1 )
                         {
-                            int rNId = iFaceLink->face_search->rCNodeId[ cFid ][ iNode ];
+                            int rNId = iFaceLink.face_search->rCNodeId[ cFid ][ iNode ];
                             nodeIndex = this->faces[ iFace ][ rNId ];
                         }
                         else
                         {
                             //At this time, the storage is not a relative value, but an absolute new punctuation
-                            nodeIndex = iFaceLink->face_search->rCNodeId[ cFid ][ iNode ];
+                            nodeIndex = iFaceLink.face_search->rCNodeId[ cFid ][ iNode ];
                         }
                         tmpVector.push_back( nodeIndex );
                     }
@@ -167,7 +248,7 @@ void FaceTopo::SetNewFace2Node( IFaceLink * iFaceLink )
     }
 }
 
-void FaceTopo::SetNewFace2Cell( IFaceLink * iFaceLink )
+void FaceTopo::SetNewFace2Cell( IFaceLink & iFaceLink )
 {
     int nBFaces = this->bcManager->bcRecord->GetNBFace();
 
@@ -182,8 +263,8 @@ void FaceTopo::SetNewFace2Cell( IFaceLink * iFaceLink )
 
         if ( BC::IsInterfaceBc( bcType ) )
         {
-            int gFid   = iFaceLink->l2g[ this->grid->id ][ localFid ];
-            int nCFace = iFaceLink->face_search->cFaceId[ gFid ].size();
+            int gFid   = iFaceLink.l2g[ this->GetGrid().id ][ localFid ];
+            int nCFace = iFaceLink.face_search->cFaceId[ gFid ].size();
 
             if ( nCFace > 0 )
             {
@@ -206,7 +287,7 @@ void FaceTopo::SetNewFace2Cell( IFaceLink * iFaceLink )
 
     int nBFaceNew = this->lCellsNew.size();
 
-    int nCells = this->grid->nCells;
+    int nCells = this->GetGrid().nCells;
 
     for ( int iFace = 0; iFace < nBFaceNew; ++ iFace )
     {
@@ -223,7 +304,7 @@ void FaceTopo::SetNewFace2Cell( IFaceLink * iFaceLink )
 }
 
 
-void FaceTopo::ModifyBoundaryInformation( IFaceLink * iFaceLink )
+void FaceTopo::ModifyBoundaryInformation( IFaceLink & iFaceLink )
 {
     //find the new number of boundary faces
     int nBFaces = this->bcManager->bcRecord->GetNBFace();
@@ -248,33 +329,30 @@ void FaceTopo::ModifyBoundaryInformation( IFaceLink * iFaceLink )
 
     int nIFaceNew = nIFaces;
 
-    //iFaceLink->nChild.resize( nIFaces, 0 );
-    iFaceLink->nChild.resize( nIFaces );
+    iFaceLink.nChild.resize( nIFaces );
 
     for ( int iFid = 0; iFid < nIFaces; ++ iFid )
     {
-        int gFid   = iFaceLink->l2g[ this->grid->id ][ iFid ];
-        int nCFace = iFaceLink->face_search->cFaceId[ gFid ].size();
+        int gFid   = iFaceLink.l2g[ this->GetGrid().id ][ iFid ];
+        int nCFace = iFaceLink.face_search->cFaceId[ gFid ].size();
 
         if ( nCFace > 0 )
         {
-            iFaceLink->nChild[ this->grid->id ][ iFid ] = nCFace;
+            iFaceLink.nChild[ this->GetGrid().id ][ iFid ] = nCFace;
             for ( int iCFace = 0; iCFace < nCFace; ++ iCFace )
             {
-                int cFid = iFaceLink->face_search->cFaceId[ gFid ][ iCFace ];
-                //iFaceLink->l2gNew.push_back( cFid );
+                int cFid = iFaceLink.face_search->cFaceId[ gFid ][ iCFace ];
                 // Correctly push back a 1D IntField containing the single element 'cFid'
-                iFaceLink->l2gNew.push_back( ONEFLOW::IntField{ cFid } );
+                iFaceLink.l2gNew.push_back( ONEFLOW::IntField{ cFid } );
 
-                iFaceLink->nChild[ this->grid->id ].push_back( 0 );
+                iFaceLink.nChild[ this->GetGrid().id ].push_back( 0 );
             }
             ++ nIFaceNew;
         }
         else
         {
-            //iFaceLink->l2gNew.push_back( gFid );
             // Correctly push back a 1D IntField containing the single element 'gFid'
-            iFaceLink->l2gNew.push_back( ONEFLOW::IntField{ gFid } );
+            iFaceLink.l2gNew.push_back( ONEFLOW::IntField{ gFid } );
         }
     }
     std::cout << "original number of interfaces = " << nIFaces << " new number of interfaces = " << nIFaceNew << std::endl;
@@ -282,7 +360,7 @@ void FaceTopo::ModifyBoundaryInformation( IFaceLink * iFaceLink )
     this->ResetNumberOfBoundaryCondition( iFaceLink );
 }
 
-void FaceTopo::ResetNumberOfBoundaryCondition( IFaceLink * iFaceLink )
+void FaceTopo::ResetNumberOfBoundaryCondition( IFaceLink & iFaceLink )
 {
     int nBFaces = this->bcManager->bcRecord->GetNBFace();
 
@@ -296,8 +374,8 @@ void FaceTopo::ResetNumberOfBoundaryCondition( IFaceLink * iFaceLink )
         int bcType = this->bcManager->bcRecord->bcType[ iFace ];
         if ( BC::IsInterfaceBc( bcType ) )
         {
-            int gFid   = iFaceLink->l2g[ this->grid->id ][ localIid ];
-            int nCFace = iFaceLink->face_search->cFaceId[ gFid ].size();
+            int gFid   = iFaceLink.l2g[ this->GetGrid().id ][ localIid ];
+            int nCFace = iFaceLink.face_search->cFaceId[ gFid ].size();
 
             if ( nCFace > 0 )
             {
@@ -325,26 +403,25 @@ void FaceTopo::ResetNumberOfBoundaryCondition( IFaceLink * iFaceLink )
     this->ConstructNewInterfaceMap( iFaceLink );
 }
 
-void FaceTopo::ConstructNewInterfaceMap( IFaceLink * iFaceLink )
+void FaceTopo::ConstructNewInterfaceMap( IFaceLink & iFaceLink )
 {
-    int nIFaceNew = iFaceLink->l2gNew[ this->grid->id ].size();
+    int nIFaceNew = iFaceLink.l2gNew[ this->GetGrid().id ].size();
 
     for ( int localIFid = 0; localIFid < nIFaceNew; ++ localIFid )
     {
-        int gIFid = iFaceLink->l2gNew[ this->grid->id ][ localIFid ];
-
-        int oldSize = iFaceLink->gI2ZidNew.size();
+        int gIFid = iFaceLink.l2gNew[ this->GetGrid().id ][ localIFid ];
+        int oldSize = iFaceLink.gI2ZidNew.size();
         int newSize = ONEFLOW::MAX( gIFid + 1, oldSize );
 
-        iFaceLink->gI2ZidNew.resize( newSize );
-        iFaceLink->g2lNew.resize( newSize );
+        iFaceLink.gI2ZidNew.resize( newSize );
+        iFaceLink.g2lNew.resize( newSize );
 
-        int nFZone = iFaceLink->gI2ZidNew[ gIFid ].size();
+        int nFZone = iFaceLink.gI2ZidNew[ gIFid ].size();
 
         if ( nFZone < 2 )
         {
-            iFaceLink->gI2ZidNew[ gIFid ].push_back( this->grid->id );
-            iFaceLink->g2lNew   [ gIFid ].push_back( localIFid );
+            iFaceLink.gI2ZidNew[ gIFid ].push_back( this->GetGrid().id );
+            iFaceLink.g2lNew   [ gIFid ].push_back( localIFid );
         }
     }
 }
@@ -357,7 +434,7 @@ void FaceTopo::UpdateOtherTopologyTerm()
     this->faces = this->facesNew;
 }
 
-void FaceTopo::GenerateI2B( InterFace * interFace )
+void FaceTopo::GenerateI2B( InterFace & interFace )
 {
     this->bcManager->bcRecord->GenerateI2B( interFace );
 }
@@ -382,7 +459,7 @@ void FaceTopo::CalcC2C( LinkField & c2c )
 {
     if ( c2c.size() != 0 ) return;
 
-    int nCells = this->grid->nCells;
+    int nCells = this->GetGrid().nCells;
     int nBFaces = this->GetNBFaces();
     int nFaces = this->GetNFaces();
 
@@ -407,6 +484,50 @@ void FaceTopo::CalcC2C( LinkField & c2c )
         c2c[ lc ].push_back( rc );
         c2c[ rc ].push_back( lc );
     }
+}
+
+void FaceTopo::ReorderLink()
+{
+    FaceTopo & faceTopo = *this;
+
+    int nFaces = faceTopo.fTypes.size();
+
+    IntField f1map( nFaces ), f2map( nFaces );
+    int iCount = 0;
+    for ( int iFace = 0; iFace < nFaces; ++ iFace )
+    {
+        int rc = faceTopo.GetRightCells()[ iFace ];
+        if ( rc == INVALID_INDEX )
+        {
+            f1map[ iFace ] = iCount;
+            f2map[ iCount ] = iFace;
+            ++ iCount;
+        }
+    }
+
+    for ( int iFace = 0; iFace < nFaces; ++ iFace )
+    {
+        int rc = faceTopo.GetRightCells()[ iFace ];
+        if ( rc != INVALID_INDEX )
+        {
+            f1map[ iFace ] = iCount;
+            f2map[ iCount ] = iFace;
+            ++ iCount;
+        }
+    }
+    faceTopo.facesNew.resize( nFaces );
+    faceTopo.lCellsNew.resize( nFaces );
+    faceTopo.rCellsNew.resize( nFaces );
+    for ( int iFace = 0; iFace < nFaces; ++ iFace )
+    {
+        int jFace = f2map[ iFace ];
+        faceTopo.facesNew[ iFace ] = faceTopo.faces[ jFace ];
+        faceTopo.lCellsNew[ iFace ] = faceTopo.GetLeftCells()[ jFace ];
+        faceTopo.rCellsNew[ iFace ] = faceTopo.GetRightCells()[ jFace ];
+    }
+    faceTopo.faces = faceTopo.facesNew;
+    faceTopo.lCells = faceTopo.lCellsNew;
+    faceTopo.rCells = faceTopo.rCellsNew;
 }
 
 EndNameSpace

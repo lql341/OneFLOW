@@ -32,22 +32,22 @@ License
 BeginNameSpace( ONEFLOW )
 #ifdef ENABLE_CGNS
 
-CgnsCoor::CgnsCoor( CgnsZone * cgnsZone )
+CgnsCoor::CgnsCoor( CgnsZone & cgnsZone )
+    : cgnsZone( cgnsZone )
 {
-    this->cgnsZone = cgnsZone;
     this->ndim = 3;
     this->typeList.resize( this->ndim );
     this->coor.resize( this->ndim );
+    this->coordinateBuffers.resize( this->ndim );
     this->nCoor = this->coor.size();
     this->nNodeList.resize( this->ndim );
     this->coorNameList.resize( this->ndim );
-    this->nodeMesh = new NodeMesh();
+    this->nodeMesh = std::make_unique< NodeMesh >();
 }
 
 CgnsCoor::~CgnsCoor()
 {
     DeAlloc();
-    delete this->nodeMesh;
 }
 
 CgInt CgnsCoor::GetNNode()
@@ -72,13 +72,18 @@ void CgnsCoor::SetNCell( CgInt nCells )
 
 void CgnsCoor::Alloc( int iCoor, int nNodes, DataType_t data_type )
 {
+    CoordinateBuffer & buffer = this->coordinateBuffers[ iCoor ];
     if ( data_type == RealSingle )
     {
-        this->coor[ iCoor ] = new float [ nNodes ];
+        buffer.doublePrecision.reset();
+        buffer.singlePrecision = std::make_unique< float[] >( nNodes );
+        this->coor[ iCoor ] = buffer.singlePrecision.get();
     }
     else
     {
-        this->coor[ iCoor ] = new double [ nNodes ];
+        buffer.singlePrecision.reset();
+        buffer.doublePrecision = std::make_unique< double[] >( nNodes );
+        this->coor[ iCoor ] = buffer.doublePrecision.get();
     }
 }
 
@@ -188,26 +193,18 @@ void CgnsCoor::DeAlloc()
 {
     for ( int iCoor = 0; iCoor < this->ndim; ++ iCoor )
     {
-        int data_type = this->typeList[ iCoor ];
-        if ( data_type == RealSingle )
-        {
-            float * data  = static_cast< float * >( this->coor[ iCoor ] );
-            delete [] data;
-        }
-        else
-        {
-            double * data = static_cast< double * >( this->coor[ iCoor ] );
-            delete [] data;
-        }
+        this->coordinateBuffers[ iCoor ].singlePrecision.reset();
+        this->coordinateBuffers[ iCoor ].doublePrecision.reset();
+        this->coor[ iCoor ] = nullptr;
     }
 }
 
 void CgnsCoor::ReadCgnsGridCoordinates()
 {
     //Determine the number and names of the coordinates.
-    int fileId = this->cgnsZone->cgnsBase->cgnsFile->fileId;
-    int baseId = this->cgnsZone->cgnsBase->baseId;
-    int zoneId = this->cgnsZone->zId;
+    int fileId = this->cgnsZone.cgnsBase.cgnsFile->fileId;
+    int baseId = this->cgnsZone.cgnsBase.baseId;
+    int zoneId = this->cgnsZone.zId;
 
     cg_ncoords( fileId, baseId, zoneId, & this->nCoor );
     std::cout << "   this->nCoor = " << this->nCoor << "\n";
@@ -238,9 +235,9 @@ void CgnsCoor::ReadCgnsGridCoordinates()
 void CgnsCoor::ReadCgnsGridCoordinates( CgnsCoor * cgnsCoorIn )
 {
     //Determine the number and names of the coordinates.
-    int fileId = this->cgnsZone->cgnsBase->cgnsFile->fileId;
-    int baseId = this->cgnsZone->cgnsBase->baseId;
-    int zoneId = this->cgnsZone->zId;
+    int fileId = this->cgnsZone.cgnsBase.cgnsFile->fileId;
+    int baseId = this->cgnsZone.cgnsBase.baseId;
+    int zoneId = this->cgnsZone.zId;
 
     std::cout << " this->nCoor = " << this->nCoor << "\n";
     this->nCoor = cgnsCoorIn->nCoor;
@@ -264,9 +261,9 @@ void CgnsCoor::ReadCgnsGridCoordinates( CgnsCoor * cgnsCoorIn )
 void CgnsCoor::DumpCgnsGridCoordinates()
 {
     //Determine the number and names of the coordinates.
-    int fileId = this->cgnsZone->cgnsBase->cgnsFile->fileId;
-    int baseId = this->cgnsZone->cgnsBase->baseId;
-    int zoneId = this->cgnsZone->zId;
+    int fileId = this->cgnsZone.cgnsBase.cgnsFile->fileId;
+    int baseId = this->cgnsZone.cgnsBase.baseId;
+    int zoneId = this->cgnsZone.zId;
 
      std::cout << "   this->nCoor = " << this->nCoor << "\n";
 
@@ -283,13 +280,12 @@ void CgnsCoor::DumpCgnsGridCoordinates()
 
 void CgnsCoor::FreeMesh()
 {
-    delete this->nodeMesh;
-    this->nodeMesh = 0;
+    this->nodeMesh.reset();
 }
 
 NodeMesh * CgnsCoor::GetNodeMesh()
 {
-    return this->nodeMesh;
+    return this->nodeMesh.get();
 }
 
 void CgnsCoor::SetDimension()
@@ -304,9 +300,9 @@ void CgnsCoor::SetDimension()
         }
     }
 
-    CgInt * isize = this->cgnsZone->isize;
+    CgInt * isize = this->cgnsZone.isize;
 
-    if ( this->cgnsZone->cgnsZoneType == CGNS_ENUMV( Structured ) )
+    if ( this->cgnsZone.cgnsZoneType == CGNS_ENUMV( Structured ) )
     {
         this->SetDimensionStr();
     }
@@ -320,7 +316,7 @@ void CgnsCoor::SetDimension()
 
 void CgnsCoor::SetDimensionStr()
 {
-    CgInt * isize = this->cgnsZone->isize;
+    CgInt * isize = this->cgnsZone.isize;
 
     // lower range index
     irmin[ 0 ] = 1;
@@ -341,14 +337,14 @@ void CgnsCoor::SetDimensionStr()
     int j = 0;
     irmax[ 0 ] = isize[ j ++ ];
     irmax[ 1 ] = isize[ j ++ ];
-    if ( this->cgnsZone->cgnsBase->celldim == THREE_D )
+    if ( this->cgnsZone.cgnsBase.celldim == THREE_D )
     {
         irmax[ 2 ] = isize[ j ++ ];
     }
     // cell size
     this->cellSize[ 0 ] = isize[ j ++ ];
     this->cellSize[ 1 ] = isize[ j ++ ];
-    if ( this->cgnsZone->cgnsBase->celldim == THREE_D )
+    if ( this->cgnsZone.cgnsBase.celldim == THREE_D )
     {
         cellSize[ 2 ] = isize[ j ++ ];
     }
@@ -364,7 +360,7 @@ void CgnsCoor::SetDimensionStr()
 
 void CgnsCoor::SetDimensionUns()
 {
-    CgInt * isize = this->cgnsZone->isize;
+    CgInt * isize = this->cgnsZone.isize;
     irmin[ 0 ] = 1;
     irmin[ 1 ] = 0;
     irmin[ 2 ] = 0;
@@ -383,7 +379,7 @@ void CgnsCoor::SetDimensionUns()
 
 void CgnsCoor::SetDimension( CgnsCoor * cgnsCoorIn )
 {
-    CgInt * isize = this->cgnsZone->isize;
+    CgInt * isize = this->cgnsZone.isize;
 
     isize[ 0 ] = cgnsCoorIn->GetNNode();
     isize[ 1 ] = cgnsCoorIn->GetNCell();
@@ -401,7 +397,7 @@ void CgnsCoor::SetDimension( CgnsCoor * cgnsCoorIn )
     this->SetNNode( irmax[ 0 ] );
     this->SetNCell( cellSize[ 0 ] );
 
-    this->cgnsZone->InitLgMapping();
+    this->cgnsZone.InitLgMapping();
 
     std::cout << "   numberOfNodes = " << this->GetNNode() << " numberOfCells = " << this->GetNCell() << "\n";
 }

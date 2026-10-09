@@ -20,9 +20,6 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-
-#pragma once
-
 #include "GridUtils.h"
 #include "BcRecord.h"
 #include "Boundary.h"
@@ -32,12 +29,12 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-int GetNumberOfSolidCells( UnsGrid * grid )
+int GetNumberOfSolidCells( UnsGrid & grid )
 {
-    BcRecord * bcRecord = grid->faceTopo->bcManager->bcRecord;
+    BcRecord * bcRecord = &grid.GetFaceTopo().GetBcRecord();
     bcRecord->CreateBcTypeRegion();
 
-    BcInfo * bcInfo = bcRecord->bcInfo;
+    BcInfo * bcInfo = bcRecord->bcInfo.get();
 
     int nRegion = bcInfo->bcType.size();
 

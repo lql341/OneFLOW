@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "BlockFaceSolver.h"
+#include <memory>
 #include "BlkMesh.h"
 #include "Block2D.h"
 #include "Block3D.h"
@@ -42,38 +43,29 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-SDomain::SDomain( MDomain * mDomain )
+SDomain::SDomain( CoorMap * coorMap )
 {
-    if ( mDomain )
+    if ( coorMap )
     {
-        this->coorMap = mDomain->coorMap;
-        freecoorMap = 0;
+        this->coorMap = coorMap;
     }
     else
     {
-        this->coorMap = new CoorMap();
-        freecoorMap = 1;
+        this->ownedCoorMap = std::make_unique< CoorMap >();
+        this->coorMap = this->ownedCoorMap.get();
     }
 
     int nMLine = 4;
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = new MLine( this );
+        auto mLine = std::make_unique< MLine >( this->coorMap );
         mLine->pos = iMLine;
-        mLineList.push_back( mLine );
+        mLineList.push_back( std::move( mLine ) );
     }
-    localCoorMap = new CoorMap();
+    localCoorMap = std::make_unique< CoorMap >();
 }
 
-SDomain::~SDomain()
-{
-    DeletePointer( mLineList );
-    delete localCoorMap;
-    if ( freecoorMap )
-    {
-        delete this->coorMap;
-    }
-}
+SDomain::~SDomain() = default;
 
 void SDomain::Alloc()
 {
@@ -90,7 +82,7 @@ void SDomain::SetDomain( int fid, IntField & lineList, IntField & posList )
     {
         int line_id = lineList[ iLine ];
         int pos = posList[ iLine ] - 1;
-        MLine * mLine = mLineList[ pos ];
+        MLine * mLine = mLineList[ pos ].get();
         mLine->AddSubLine( line_id );
     }
 }
@@ -100,8 +92,10 @@ void SDomain::ConstructSDomainCtrlPoint()
     int nMLine = mLineList.size();
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
-        mLine->ConstructPointToDomainMap();
+        MLine * mLine = mLineList[ iMLine ].get();
+        LinkField pointIdLink;
+        this->GetPointIdLink( mLine->lineList, pointIdLink );
+        mLine->ConstructPointToDomainMap( pointIdLink );
         mLine->ConstructCtrlPoint();
         mLine->ConstructSLineCtrlPoint();
     }
@@ -110,8 +104,8 @@ void SDomain::ConstructSDomainCtrlPoint()
     {
         int iMLine1 = iMLine - 1;
         if ( iMLine1 < 0 ) iMLine1 = nMLine - 1;
-        MLine * mLine1 = mLineList[ iMLine1 ];
-        MLine * mLine2 = mLineList[ iMLine  ];
+        MLine * mLine1 = mLineList[ iMLine1 ].get();
+        MLine * mLine2 = mLineList[ iMLine  ].get();
         int pt;
         GetCommonPoint( mLine1, mLine2, pt );
         this->ctrlpoints.push_back( pt );
@@ -119,7 +113,7 @@ void SDomain::ConstructSDomainCtrlPoint()
 
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine  ];
+        MLine * mLine = mLineList[ iMLine  ].get();
         int p1 = this->ctrlpoints[ iMLine ];
         int p2 = this->ctrlpoints[ ( iMLine + 1 ) % nMLine ];
         mLine->ctrlpoints.push_back( p1 );
@@ -127,7 +121,7 @@ void SDomain::ConstructSDomainCtrlPoint()
     }
 }
 
-void SDomain::GetCommonPoint( MLine * mLine1, MLine * mLine2, int & pt )
+void SDomain::GetCommonPoint( const MLine * mLine1, const MLine * mLine2, int & pt ) const
 {
     int p1 = mLine1->candidate_ctrlpoints[ 0 ];
     int p2 = mLine1->candidate_ctrlpoints[ 1 ];
@@ -224,7 +218,7 @@ void SDomain::ConstructPointToPointMap( std::map< int, IntSet > & pointToPointMa
 {
     for ( int iMLine = 0; iMLine < mLineList.size(); ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         LinkField pointIdLink;
         this->GetPointIdLink( mLine->lineList, pointIdLink );
 
@@ -236,8 +230,10 @@ void SDomain::ConstructPointToLineMap( std::map< int, IntSet > & pointToLineMap 
 {
     for ( int iMLine = 0; iMLine < mLineList.size(); ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
-        mLine->ConstructPointToLineMap( pointToLineMap );
+        MLine * mLine = mLineList[ iMLine ].get();
+        LinkField pointIdLink;
+        this->GetPointIdLink( mLine->lineList, pointIdLink );
+        mLine->ConstructPointToLineMap( pointIdLink, pointToLineMap );
     }
 }
 
@@ -246,12 +242,12 @@ void SDomain::ConstructPointToDomainMap()
     this->ConstructPointToDomainMap( this->pointToDomainMap );
 }
 
-void SDomain::GetPointIdLink( IntField & lineList, LinkField & pointIdLink )
+void SDomain::GetPointIdLink( const IntField & lineList, LinkField & pointIdLink ) const
 {
     for ( int iLine = 0; iLine < lineList.size(); ++ iLine )
     {
         int line_id = lineList[ iLine ] - 1;
-        IntField & pointIdList = blkFaceSolver.lineList[ line_id ];
+        const IntField & pointIdList = blkFaceSolver.GetLine( line_id + 1 );
         pointIdLink.push_back( pointIdList );
     }
 }
@@ -260,7 +256,7 @@ void SDomain::ConstructPointToDomainMap( std::map< int, IntSet > & pointToDomain
 {
     for ( int iMLine = 0; iMLine < mLineList.size(); ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         LinkField pointIdLink;
         this->GetPointIdLink( mLine->lineList, pointIdLink );
 
@@ -277,7 +273,7 @@ void SDomain::ConstructLineToDomainMap( std::map< int, IntSet > & lineToDomainMa
 {
     for ( int iMLine = 0; iMLine < mLineList.size(); ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         ONEFLOW::ConstructLineToDomainMap( this->domain_id, mLine->lineList, lineToDomainMap );
     }
 }
@@ -320,7 +316,7 @@ void SDomain::ConstructLocalTopoAsBlk2D()
     int nMLine = mLineList.size();
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         mLine->ConstructDomainTopo();
         mLine->CalcDim1D();
         mLine->CalcCoor();
@@ -333,7 +329,7 @@ void SDomain::SetBlkBcMesh( Block3D * blk3d )
     RealField3D & y3d = blk3d->y3d;
     RealField3D & z3d = blk3d->z3d;
 
-    SDomain * sDomain = blkFaceSolver.sDomainList[ this->domain_id ];
+    SDomain * sDomain = blkFaceSolver.GetSDomain( this->domain_id );
 
     RealField2D & x2d = sDomain->x2d;
     RealField2D & y2d = sDomain->y2d;
@@ -403,7 +399,7 @@ void SDomain::SetBlkBcMesh( Block3D * blk3d )
             z3d[ ii ][ jj ][ kk ] = zm;
         }
     }
-    int kkk = 1;
+
 }
 
 void SDomain::SetBlkBcMesh( Block2D * blk2d )
@@ -412,7 +408,7 @@ void SDomain::SetBlkBcMesh( Block2D * blk2d )
     RealField2D & block_y2d = blk2d->y2d;
     RealField2D & block_z2d = blk2d->z2d;
 
-    SDomain * sDomain = blkFaceSolver.sDomainList[ this->domain_id ];
+    SDomain * sDomain = blkFaceSolver.GetSDomain( this->domain_id );
 
     RealField2D & x2d = sDomain->x2d;
     RealField2D & y2d = sDomain->y2d;
@@ -482,7 +478,7 @@ void SDomain::SetBlkBcMesh( Block2D * blk2d )
             block_z2d[ ii ][ jj ] = zm;
         }
     }
-    int kkk = 1;
+
 }
 
 void SDomain::SetDomainBcMesh()
@@ -490,7 +486,7 @@ void SDomain::SetDomainBcMesh()
     int nMLine = mLineList.size();
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         mLine->SetDomainBcMesh( this );
     }
 }
@@ -519,24 +515,24 @@ void SDomain::GenerateSDomainMesh( std::fstream & file )
     }
 }
 
-void SDomain::CreateInpFaceList( HXVector< Face2D * > &facelist )
+void SDomain::CreateInpFaceList( HXVector< std::unique_ptr<Face2D> > &facelist )
 {
     SDomain * sDomain = this;
-    Face2D * face2d = new Face2D();
+    auto face2d = std::make_unique<Face2D>();
     face2d->face_id = sDomain->domain_id;
     face2d->ctrlpoints = sDomain->ctrlpoints;
-    BlkF2C & face_struct = blkFaceSolver.face2Block[ face2d->face_id - 1 ];
+    BlkF2C & face_struct = blkFaceSolver.GetFaceToBlock( face2d->face_id - 1 );
     face2d->bcType = face_struct.bctype;
     face2d->CalcStEd( coorMap );
-    facelist.push_back( face2d );
+    facelist.push_back( std::move( face2d ) );
 }
 
-void SDomain::CreateInpFaceList1D( HXVector< Face2D * > &facelist )
+void SDomain::CreateInpFaceList1D( HXVector< std::unique_ptr<Face2D> > &facelist )
 {
     int nMLine = mLineList.size();
     for ( int iMLine = 0; iMLine < nMLine; ++ iMLine )
     {
-        MLine * mLine = mLineList[ iMLine ];
+        MLine * mLine = mLineList[ iMLine ].get();
         mLine->CreateInpFaceList1D( facelist );
     }
 }

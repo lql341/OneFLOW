@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "LineMachine.h"
+#include "GridLayout.h"
 #include "SegmentCtrl.h"
 #include "CurveInfo.h"
 #include "LineInfo.h"
@@ -41,35 +42,45 @@ LineMachine::LineMachine()
 {
 }
 
-LineMachine::~LineMachine()
-{
-    for ( int i = 0; i < curveInfoList.size(); ++ i )
-    {
-        delete curveInfoList[ i ];
-    }
+LineMachine::~LineMachine() = default;
 
-    for ( int i = 0; i < segmentCtrlList.size(); ++ i )
-    {
-        delete segmentCtrlList[ i ];
-    }
+void LineMachine::Reset()
+{
+    segmentCtrlList.clear();
+    curveInfoList.clear();
+    curveMeshList.clear();
+    lineLookup.Clear();
+    lineList.clear();
 }
 
 SegmentCtrl * LineMachine::GetSegmentCtrl( int id )
 {
     int idx = ABS( id ) - 1;
-    return this->segmentCtrlList[ idx ];
+    return this->segmentCtrlList[ idx ].get();
+}
+
+const SegmentCtrl * LineMachine::GetSegmentCtrl( int id ) const
+{
+    int idx = ABS( id ) - 1;
+    return this->segmentCtrlList[ idx ].get();
 }
 
 CurveMesh * LineMachine::GetCurveMesh( int id )
 {
     int idx = ABS( id ) - 1;
-    return this->curveMeshList[ idx ];
+    return this->curveMeshList[ idx ].get();
 }
 
 CurveInfo * LineMachine::GetCurveInfo( int id )
 {
     int idx = ABS( id ) - 1;
-    return this->curveInfoList[ idx ];
+    return this->curveInfoList[ idx ].get();
+}
+
+const CurveInfo * LineMachine::GetCurveInfo( int id ) const
+{
+    int idx = ABS( id ) - 1;
+    return this->curveInfoList[ idx ].get();
 }
 
 int LineMachine::AddLine(int p1, int p2)
@@ -89,40 +100,92 @@ int LineMachine::AddLine(int p1, int p2)
 
 void LineMachine::AddLine( int p1, int p2, int id )
 {
-    int idd = this->AddLine( p1, p2 );
-    CurveInfo * line = new LineInfo( p1, p2, id );
-    this->curveInfoList.push_back( line );
+    this->AddLine( p1, p2 );
+    auto line = std::make_unique< LineInfo >( p1, p2, id );
+    this->curveInfoList.push_back( std::move( line ) );
 
-    SegmentCtrl * segmentCtrl = new SegmentCtrl();
+    auto segmentCtrl = std::make_unique< SegmentCtrl >();
     segmentCtrl->id = id;
-    this->segmentCtrlList.push_back( segmentCtrl );
+    this->segmentCtrlList.push_back( std::move( segmentCtrl ) );
 }
 
 void LineMachine::AddCircle( int p1, int pc, int p2, int id )
 {
-    int idd = this->AddLine( p1, p2 );
-    CurveInfo * circle = new CircleInfo( p1, pc, p2, id );
-    this->curveInfoList.push_back( circle );
+    this->AddLine( p1, p2 );
+    auto circle = std::make_unique< CircleInfo >( p1, pc, p2, id );
+    this->curveInfoList.push_back( std::move( circle ) );
 
-    SegmentCtrl * segmentCtrl = new SegmentCtrl();
+    auto segmentCtrl = std::make_unique< SegmentCtrl >();
     segmentCtrl->id = id;
-    this->segmentCtrlList.push_back( segmentCtrl );
+    this->segmentCtrlList.push_back( std::move( segmentCtrl ) );
 }
 
-void LineMachine::AddDimension( TextFileParser * textFileParser )
+void LineMachine::AddDimension( TextFileParser & textFileParser )
 {
-    int id = textFileParser->ReadNextDigit< int >();
-    int dim = textFileParser->ReadNextDigit< int >();
-    this->dimList.push_back( dim );
+    int id = textFileParser.ReadNextDigit< int >();
+    int dim = textFileParser.ReadNextDigit< int >();
     SegmentCtrl * segmentCtrl = this->GetSegmentCtrl( id );
     segmentCtrl->nPoint = dim;
 }
 
-void LineMachine::AddDs( TextFileParser * textFileParser )
+void LineMachine::AddDs( TextFileParser & textFileParser )
 {
-    int id = textFileParser->ReadNextDigit< int >();
+    int id = textFileParser.ReadNextDigit< int >();
     SegmentCtrl * segmentCtrl = this->GetSegmentCtrl( id );
-    segmentCtrl->Read( textFileParser );
+    segmentCtrl->Read( & textFileParser );
+}
+
+void LineMachine::SetDimension( int id, int pointCount )
+{
+    SegmentCtrl * segmentCtrl = this->GetSegmentCtrl( id );
+    segmentCtrl->nPoint = pointCount;
+}
+
+int LineMachine::GetDimension( int id ) const
+{
+    return this->GetSegmentCtrl( id )->nPoint;
+}
+
+int LineMachine::GetNLine() const
+{
+    return this->curveInfoList.size();
+}
+
+void LineMachine::SetDistribution( const GridDistributionDefinition & definition )
+{
+    SegmentCtrl * segmentCtrl = this->GetSegmentCtrl( definition.lineId );
+
+    switch ( definition.type )
+    {
+    case GridDistributionType::Ratio:
+        segmentCtrl->distribution = SegmentCtrl::DistributionType::Ratio;
+        segmentCtrl->ratio1 = definition.startValue;
+        segmentCtrl->ratio2 = definition.endValue;
+        break;
+    case GridDistributionType::Distance:
+        segmentCtrl->distribution = SegmentCtrl::DistributionType::Distance;
+        segmentCtrl->ds1 = definition.startValue;
+        segmentCtrl->ds2 = definition.endValue;
+        break;
+    case GridDistributionType::Tanh:
+        segmentCtrl->distribution = SegmentCtrl::DistributionType::Tanh;
+        segmentCtrl->ds1 = definition.startValue;
+        segmentCtrl->ds2 = definition.endValue;
+        break;
+    case GridDistributionType::Copy:
+    {
+        segmentCtrl->distribution = SegmentCtrl::DistributionType::Copy;
+        segmentCtrl->segmentCopy = std::make_unique< SegmentCopy >();
+        segmentCtrl->segmentCopy->lineList = definition.copyLineIds;
+        break;
+    }
+    case GridDistributionType::Exponential:
+        segmentCtrl->distribution = SegmentCtrl::DistributionType::Exponential;
+        segmentCtrl->cA1 = 0.5;
+        segmentCtrl->cA2 = 1.0e-4;
+        segmentCtrl->cA3 = 0.5;
+        break;
+    }
 }
 
 void LineMachine::CreateAllLineMesh()
@@ -130,11 +193,10 @@ void LineMachine::CreateAllLineMesh()
     int nLine = curveInfoList.size();
     for ( int iLine = 0; iLine < nLine; ++ iLine )
     {
-        CurveInfo * curveInfo = curveInfoList[ iLine ];
-        int lineType = curveInfo->type;
-        CurveMesh * curveMesh = CreateLineMesh( curveInfo );
+        CurveInfo * curveInfo = curveInfoList[ iLine ].get();
+        auto curveMesh = CreateLineMesh( curveInfo );
         curveMesh->segmentCtrl = this->GetSegmentCtrl( curveInfo->id );
-        this->curveMeshList.push_back( curveMesh );
+        this->curveMeshList.push_back( std::move( curveMesh ) );
     }
 }
 
@@ -148,7 +210,7 @@ void LineMachine::GenerateAllLineMesh()
         int nLine = curveInfoList.size();
         for ( int iLine = 0; iLine < nLine; ++ iLine )
         {
-            CurveMesh * curveMesh = this->curveMeshList[ iLine ];
+            CurveMesh * curveMesh = this->curveMeshList[ iLine ].get();
             curveMesh->GenerateLineMesh();
 
             if ( curveMesh->state == 1 ) nCount ++;
@@ -164,42 +226,42 @@ CurveMesh * LineMachine::GetLineMeshByTwoPoint( const int & p1, const int & p2, 
 
     for ( int iLine = 0; iLine < nLine; ++ iLine )
     {
-        CurveInfo * curveInfo = curveInfoList[ iLine ];
+        CurveInfo * curveInfo = curveInfoList[ iLine ].get();
         if ( curveInfo->p1 == p1 &&
              curveInfo->p2 == p2 )
         {
             direction = 1;
-            int & lineId = curveInfo->id;
+            const int lineId = curveInfo->id;
             return this->GetCurveMesh( lineId );
         }
         else if ( curveInfo->p2 == p1 &&
                   curveInfo->p1 == p2 )
         {
             direction = - 1;
-            int & lineId = curveInfo->id;
+            const int lineId = curveInfo->id;
             return this->GetCurveMesh( lineId );
         }
     }
     return 0;
 }
 
-int LineMachine::GetLineIdByTwoPoint( const int & p1, const int & p2 )
+int LineMachine::GetLineIdByTwoPoint( const int & p1, const int & p2 ) const
 {
     int nLine = curveInfoList.size();
 
     for ( int iLine = 0; iLine < nLine; ++ iLine )
     {
-        CurveInfo * curveInfo = curveInfoList[ iLine ];
+        const CurveInfo * curveInfo = curveInfoList[ iLine ].get();
         if ( curveInfo->p1 == p1 &&
             curveInfo->p2 == p2 )
         {
-            int & lineId = curveInfo->id;
+            const int lineId = curveInfo->id;
             return lineId;
         }
         else if ( curveInfo->p2 == p1 &&
             curveInfo->p1 == p2 )
         {
-            int & lineId = curveInfo->id;
+            const int lineId = curveInfo->id;
             return lineId;
         }
     }
