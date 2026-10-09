@@ -15,6 +15,7 @@
 - `plans/`：living TODO、路线图、优化计划和 porting checklist。
 
 - `handoff/`：项目交接、会话交接和阶段进度补充。
+  - [开发交接提示词（2026-10-09）](handoff/oneflow-development-handoff-prompt-20261009.md)
 
 - `runbooks/`：构建、集群、DCU porting 等操作流程。
 
