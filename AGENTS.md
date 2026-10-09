@@ -25,8 +25,9 @@ branches separate:
 
 - **Baseline branch** (`master` in the usual layout) — kept identical to the
   upstream default branch and treated as a read-only PR baseline. Do not
-  develop on it. Sync it with
-  `git fetch upstream && git merge --ff-only upstream/master`.
+  develop on it. Run `scripts/sync-master.sh` manually to fast-forward
+  `origin/master` to `upstream/master`. The script never changes local `master`
+  or `dev`; if `origin/master` has diverged, it stops for manual review.
 - **Working branch** (`dev`, when the checkout has one) — the long-lived branch
   for daily work, in-progress features and notes. Pushing it to the fork is the
   backup step. Keep it current by **merging** the upstream default branch into
@@ -48,8 +49,9 @@ branches separate:
 
 - **Baseline branch** (`master` in the usual layout) — kept identical to the
   upstream default branch and treated as a read-only PR baseline. Do not
-  develop on it. Sync it with
-  `git fetch upstream && git merge --ff-only upstream/master`.
+  develop on it. Run `scripts/sync-master.sh` manually to fast-forward
+  `origin/master` to `upstream/master`. The script never changes local `master`
+  or `dev`; if `origin/master` has diverged, it stops for manual review.
 - **Working branch** (`dev`, when the checkout has one) — the long-lived branch
   for daily work, in-progress features and notes. Pushing it to the fork is the
   backup step. Keep it current by **merging** the upstream default branch into
