@@ -161,7 +161,9 @@ if ( ONEFLOW_1D_ENABLE_HIP )
         OneDEuler.cpp
         OneDEuler.hip
         OneDEulerBackend.cpp
-        OneDEulerPersistent.hip )
+        OneDEulerPersistent.hip
+        OneDWeno5.cpp
+        OneDWeno5.hip )
     target_compile_definitions( oneflow_1d_euler_hip PRIVATE ONEFLOW_1D_USE_HIP=1 )
     target_compile_options( oneflow_1d_euler_hip PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_hip )
@@ -185,11 +187,19 @@ if ( ONEFLOW_1D_ENABLE_HIP )
         EulerBenchmark.cpp
         OneDEuler.cpp
         OneDEulerBackend.cpp
+        OneDWeno5.cpp
         OneDEulerProfile.hip )
     target_compile_options( oneflow_1d_euler_benchmark PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_benchmark )
 
-    add_executable( oneflow_1d_euler_stateful_benchmark EulerStatefulBenchmark.cpp OneDEuler.cpp OneDEulerBackend.cpp OneDEulerPersistent.hip )
+    add_executable(
+        oneflow_1d_euler_stateful_benchmark
+        EulerStatefulBenchmark.cpp
+        OneDEuler.cpp
+        OneDEulerBackend.cpp
+        OneDEulerPersistent.hip
+        OneDWeno5.cpp
+        OneDWeno5.hip )
     target_compile_definitions( oneflow_1d_euler_stateful_benchmark PRIVATE ONEFLOW_1D_USE_HIP=1 )
     target_compile_options( oneflow_1d_euler_stateful_benchmark PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_stateful_benchmark )
@@ -209,7 +219,14 @@ if ( ONEFLOW_1D_ENABLE_HIP )
         oneflow_1d_euler_domain_adapter_benchmark
         PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_domain_adapter_benchmark )
-    add_executable( oneflow_1d_euler_gpu_only_benchmark EulerGpuOnlyBenchmark.cpp OneDEuler.cpp OneDEulerBackend.cpp OneDEulerPersistent.hip )
+    add_executable(
+        oneflow_1d_euler_gpu_only_benchmark
+        EulerGpuOnlyBenchmark.cpp
+        OneDEuler.cpp
+        OneDEulerBackend.cpp
+        OneDEulerPersistent.hip
+        OneDWeno5.cpp
+        OneDWeno5.hip )
     target_compile_definitions( oneflow_1d_euler_gpu_only_benchmark PRIVATE ONEFLOW_1D_USE_HIP=1 )
     target_compile_options( oneflow_1d_euler_gpu_only_benchmark PRIVATE -ffp-contract=off )
     oneflow_accel_attach( oneflow_1d_euler_gpu_only_benchmark )
