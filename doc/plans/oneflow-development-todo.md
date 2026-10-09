@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-09（P0 upstream PR 跟进完成；PR #159/#160 已合并，fork topic 分支已清理。技术路线快照仍以各节记录日期为准）
+> 最后更新：2026-10-09（upstream PR #203 已提交，等待 review 和 Linux/Windows CI；PR #159/#160 已合并。技术路线快照仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -16,10 +16,13 @@
 | `origin/dev` / 本地 `dev` | 已同步到当前 checkpoint；`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
 | PR #159 `pr/agents-branch-model` | **MERGED**（2026-09-19，review approved）；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端 |
 | PR #160 `pr/euler-weno5-unified` | **MERGED**（2026-09-19，review approved）；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
+| PR #203 `pr/database-type-map-init` | **OPEN**；数据库类型映射首次访问时初始化；昆山冷启动回归 1/1 通过；2026-10-09 最近检查时 deploy CI 已通过、Linux/Windows CI 运行中，等待 review |
 
-两个 PR 都从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档；均已合并。#160 在 PR 分支实跑规则 1 的两个门禁（昆山 T1 + T2）；#159 为 docs-only。2026-10-09 已确认 origin 上的两个 topic branch 删除，本地也无对应分支。
+PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档，已合并；#160 在 PR 分支实跑昆山 T1 + T2，#159 为 docs-only。对应 topic branch 已清理。PR #203 也基于 upstream master 单独提交，尚未合并；不得提前删除其 topic branch。
 
-**当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。这闭合了当前受限 seam 的目标节点验收，但不等同于完整 MPI/halo、多 zone、viscous/turbulence 或 GPU-resident 性能完成。仍保留每次 gradient 的 q H2D 与 gradient D2H CPU oracle，更新后的内部 cell `q` 暂回传 host 供现有 boundary/下一 stage 语义使用；没有做正式 timing，也不更新正式性能报告。
+**当前交接事项**：先跟进 PR #203（https://github.com/eric2003/OneFLOW/pull/203）的 CI 与 review。改动在 `DataBaseType::GetIndex()` 和 `GetName()` 首次访问时调用 `Init()`，并新增独立进程测试，验证静态映射尚未初始化时的首次访问。Kunshan OpenAPI 使用 GCC 16.2.0、OpenMPI 5.0.11、CMake 4.4.3，`DataBaseTypeInitTest.AccessorsInitializeMappingsOnFirstUse` 通过（1/1）。最近一次 GitHub 状态为 `MERGEABLE`、`REVIEW_REQUIRED`，deploy 成功，Linux/Windows checks 运行中；接手时应刷新实时状态。
+
+**当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。同 basis 探索性 timing 已记录，但没有足够的配对重复来形成稳定性能结论或更新正式报告。该验收不等同于完整 MPI/halo、多 zone、viscous/turbulence 或全链路 GPU residency；gradient 的 q H2D、gradient D2H，以及现有 boundary/下一 stage 所需的 host state 路径仍是后续工作。
 
 **Kunshan 默认测试依赖（2026-10-09 起）**：所有新 CPU、CPU MPI 与 root main-solver 测试使用 GCC `16.2.0`（`gcc/16.2.0`）、OpenMPI `5.0.11`（`openmpi/5.0.11`）、CMake `4.4.3`（`cmake/4.4.3`），MPI 测试设置 `OMPI_MCA_coll=^hcoll`，并在运行证据中记录实际版本与 MPI 路径。旧 GCC 9/OpenMPI 4/CMake 3.25 记录只作为历史结果；DTK/HIP 测试如确需兼容工具链，必须作为明确的 HIP 专用例外记录，不能用于 CPU/MPI 验证。权威说明见 [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)。
 
@@ -478,6 +481,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 - [x] **PR #159**（`pr/agents-branch-model`）：已 review approved 并于 2026-09-19 合并；CI 4/4 通过。
 - [x] **PR #160**（`pr/euler-weno5-unified`）：已 review approved 并于 2026-09-19 合并；PR 分支自身 T1 `cpu-regression` + T2 `dcu-single` 门禁通过，CI 4/4 通过。
 - [x] 两个 PR 合并后清理对应 topic 分支：本地无分支，2026-10-09 已删除 origin 上的两个分支。
+- [ ] **PR #203**（`pr/database-type-map-init`）：修复 `DataBaseType` 映射在首次访问前未初始化的问题；Kunshan 冷启动回归 1/1 通过。等待 Linux/Windows CI 与 review；通过后再按 upstream 结果收口并清理 topic branch。
 
 ### P0 — dev 融合基线
 
@@ -485,7 +489,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 - [x] 协同开发 Phase 1-3、旧架构 contract/StateRegistry 已统一恢复到本地 `dev`。
 - [x] standalone CPU、根工程、根 CTest、CPU bridge 已完成本机验证。
 - [x] 完成融合后 dev 的 contract/adapter 验证并更新 `origin/dev`。
-- [x] 已将 `upstream/master` `a6c81105` 合并到 dev；保留 mutable `SimuContext&` 与 StateRegistry 生命周期，并吸收 upstream 的分阶段 `FieldSimu`、policy 和 parser 测试。
+- [x] 已将 upstream master 合并到 dev；保留 mutable `SimuContext&` 与 StateRegistry 生命周期，并吸收 upstream 的分阶段 `FieldSimu`、policy 和 parser 测试。2026-10-09 核对时本地 `master` 与 `origin/master`、`upstream/master` 一致，本地 `dev` 与 `origin/dev` 一致；具体 commit 以当前 refs 为准。
 
 ### P1 — 主 solver CPU vertical slice（按序）
 
@@ -604,12 +608,12 @@ git show dev:doc/plans/oneflow-development-todo.md
   - [x] 同 basis 单作业显示 HIP `gradient` 由约 `1046.610 ms` 降为 `176.883 ms`，端到端 HIP/legacy 为 `1.160129x`。
   - 边界：当前仍每次 q H2D、gradient D2H，且 device buffers 尚未由 `Ns3DDeviceState` 唯一持有。
 
-- [ ] **P2.6：HIP reconstruction vertical slice**
+- [x] **P2.6：HIP reconstruction vertical slice（受限主路径已闭环；扩展 contract 继续跟踪）**
   - [x] **P2.6.1：** 完成 limiter-off reconstruction 的 MRField/device contract、face ownership、boundary reconstruction 顺序与 trace oracle 只读盘点；不先写仍需 gradient D2H + qf H2D 的孤立 kernel。
   - [x] **P2.6.2：** 建立 backend-neutral cell/face reconstruction view，并把首批 q/gradient/qf1/qf2/geometry/connectivity/residual 的 ownership、generation 与失效边界纳入按 solver/zone/grid/backend/device key 管理的 state-owned contract；CPU/HIP 类型仍通过 opaque seam 隔离。
   - [x] **P2.6.3：** production gradient 的 HIP state/geometry/connectivity DeviceBuffer 已迁入上述 state-owned backend-specific seam；qf1/qf2、flux/residual/state update 已接入连续 device chain，并在目标节点完成编译、accuracy 与 stability 验收。
   - [x] **P2.6.4：** 当前垂直切片严格限制为单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid；未同时迁移 limiter、RK algorithm 或 viscous/turbulence。
-  - [ ] **P2.6.5：** 按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序验收。
+  - [x] **P2.6.5：** 已按 3-step accuracy → fixed-CFL 50-step stability → 同 basis timing 顺序完成受限路径验收；2026-09-23 的探索性 timing 不作为稳定性能结论，也未更新正式报告。
   - [x] **P2.6.6：** 在最终 checkpoint 上修正/复核 stability wrapper，使用精确 diagnostic regex，已闭环 legacy、CPU batch、HIP reconstruction/state-update 三路 50-step 的 workload exit、diagnostic hits 和 scheduler state。
   - [ ] **P2.6.7：** 补齐 interface、periodic、solid-surface `bc_q`、ordinary boundary、ghost gradient copy 与 generation/token cache invalidation 小 case contract。
   - [ ] **P2.6.8：** 继续比较 qf1、qf2、invflux、residual、state 和 connectivity/geometry metadata；NoTrace 不下载完整诊断数组。
@@ -651,7 +655,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 说明：清理临时分支和工作区，并把验证后的协作流程沉淀回技能与文档。
 
 
-- [ ] **P3.1：** 本地分支清理：`pr/agents-branch-model`、`pr/euler-weno5-unified` 在对应 PR 合并/关闭后删除（本地 + origin）；`fix/contract-test-cmake-path` 已于 2026-09-19 删除（内容早经 PR #149 合入 master）。dev 上已无其他遗留分支。
+- [ ] **P3.1：** PR #203 合并/关闭后清理其 topic branch（本地 + origin）；PR #159/#160 对应 topic branch 已于 2026-10-09 清理，`fix/contract-test-cmake-path` 已于 2026-09-19 删除。
 - [ ] **P3.2：** 昆山 `<workspace>/work/`、`tmp/` 定期清理（均可重建）。
 - [ ] **P3.3：** `oneflow-dev` 技能更新流程：改技能仓库 → `git push` → 各环境 `git pull`。
 
@@ -693,6 +697,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 日期 | 事项 | 证据 |
 |---|---|---|
+| 2026-10-09 | 修复数据库类型映射冷启动初始化，并向 upstream 提交 PR #203；补充独立进程回归测试 | Kunshan OpenAPI：GCC `16.2.0` / OpenMPI `5.0.11` / CMake `4.4.3`，`DataBaseTypeInitTest.AccessorsInitializeMappingsOnFirstUse` 1/1 通过；PR `MERGEABLE`、等待 review，Linux/Windows CI 最近检查时运行中 |
 | 2026-10-09 | 在 Kunshan 使用 GCC `16.2.0` / CMake `4.4.3` / OpenMPI `5.0.11` 完成 `tests/adt`、`tests/database`、`tests/task`、`tests/register` 全套回归 | CTest `adt 9/9`、`database 49/49`、`task 58/58`、`register 29/29`，合计 `145/145`；Slurm `COMPLETED/0:0` |
 | 2026-10-09 | 完成 P0 upstream PR 跟进：PR #159/#160 均已 review approved、合并且 CI 4/4 通过；核验并删除 fork `origin` 上的两个已合并 topic branch，本地对应分支已不存在 | [PR #159](https://github.com/eric2003/OneFLOW/pull/159)、[PR #160](https://github.com/eric2003/OneFLOW/pull/160)；`git ls-remote --heads origin` 确认两个分支引用均已清除 |
 | 2026-09-24 | 完成 1D `EulerBackend` → shared `EulerDomainBackend` 的 CPU/HIP 薄 adapter，并增加 direct/shared stateful paired benchmark；收紧 backend kind/device identity，adapter 不持有第二份 CPU/GPU state | Kunshan CPU root build、adapter `3/3`、normal/strict 各 `5/5`；standalone HIP GoogleTest/CTest `15/15`；root HIP build/smoke、GoogleTest `15/15`、hardware CTest `16/16`；NoTrace、FullTrace、stats、device identity、lifecycle reuse 全通过。`nx=1048576,steps=100,repeats=5,warmup=2` 的 direct/shared advance 为 `420.163270/420.126780 ms`，ratio `0.999913`，最终误差 `0`、launch/sync 完全一致；所有成功作业均 `COMPLETED/0:0` |
