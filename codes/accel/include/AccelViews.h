@@ -234,8 +234,8 @@ struct CellGradientView
 
 // Boundary update is separate from reconstruction. The solver provides
 // host-owned primitive state and boundary metadata; an accelerator backend may
-// mirror the state, evaluate supported local boundary models, and copy only
-// the ghost/interface results needed by the CPU oracle.
+// reuse a compatible resident state, evaluate supported local boundary models,
+// and copy only the ghost/interface results needed by the CPU oracle.
 struct BoundaryStateView
 {
     int nCells = 0;
@@ -255,6 +255,10 @@ struct BoundaryStateView
     Real gamma = 1.4;
     int faceOuterNormal = 1;
     const void * cacheKey = nullptr;
+    // Reuse the bound device state when it is current and compatible.  The
+    // backend falls back to the host primitive arrays during initialization or
+    // after any host-only update.
+    bool preferResidentState = false;
 };
 
 inline void ValidateBoundaryStateView( const BoundaryStateView & view )
@@ -496,6 +500,10 @@ struct CellStateUpdateView
     FieldLayout layout = FieldLayout::EquationMajor;
     FieldRepresentation representation = FieldRepresentation::Primitive;
     const void * cacheKey = nullptr;
+    // Keep the updated device state available for the following local boundary
+    // update and RK stage.  Host mirroring remains controlled by the backend
+    // call so legacy task consumers can stay authoritative during migration.
+    bool retainResidentState = false;
 };
 
 inline void ValidateCellStateUpdateView(

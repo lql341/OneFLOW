@@ -151,6 +151,13 @@ bool UseHipDeviceStateUpdate( int solverType )
 #endif
 }
 
+bool RetainHipStateForBoundary()
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
+    return enabled != nullptr && enabled[ 0 ] == '1';
+}
+
 }
 
 void UNsUpdate::UpdateFlowField( int solverType )
@@ -171,6 +178,7 @@ void UNsUpdate::UpdateFlowField( int solverType )
         view.gamma = nscom.gama_ref;
         view.rkCoefficient = 1.0;
         view.cacheKey = grid;
+        view.retainResidentState = RetainHipStateForBoundary();
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             view.primitive[ equation ] = ( * unsf.q )[ equation ].data();

@@ -120,6 +120,7 @@ void CalcHipBoundary()
     view.gamma = nscom.gama_ref;
     view.faceOuterNormal = nscom.faceOuterNormal;
     view.cacheKey = grid;
+    view.preferResidentState = true;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         view.q[ equation ] = ( * unsf.q )[ equation ].data();

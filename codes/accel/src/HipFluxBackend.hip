@@ -1151,16 +1151,34 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
 
     const int totalCells = view.nCells + view.nGhostCells;
     storage->cellState.Resize( view.nEquations * totalCells );
+    const void * ownerToken =
+        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    bool residentStateUsable =
+        view.preferResidentState
+        && storage->residentStateReady
+        && storage->cachedStateOwnerToken == ownerToken
+        && storage->cachedStateCells == view.nCells
+        && storage->cachedStateGhostCells == view.nGhostCells;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
-        AccelRuntime::Instance().Backend().Copy(
-            storage->cellState.Data() + equation * totalCells,
-            view.q[ equation ], totalCells * sizeof( Real ),
-            AccelCopyKind::HostToDevice );
+        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
+            residentStateUsable = false;
+    }
+    if ( ! residentStateUsable )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage->cellState.Data() + equation * totalCells,
+                view.q[ equation ], totalCells * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
         storage->cachedStateQ[ equation ] = view.q[ equation ];
     }
-    storage->cachedStateOwnerToken =
-        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    storage->cachedStateOwnerToken = ownerToken;
     storage->cachedStateCells = view.nCells;
     storage->cachedStateGhostCells = view.nGhostCells;
 
@@ -1588,7 +1606,7 @@ void HipFluxBackend::UpdatePrimitiveState(
     }
     owner->MarkFieldChanged();
     storage.residualValid = false;
-    storage.residentStateReady = false;
+    storage.residentStateReady = view.retainResidentState;
 }
 
 HipFluxBackend & HipFluxBackend::Shared()

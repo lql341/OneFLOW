@@ -846,11 +846,6 @@ bool TestMainSolverStateUpdate()
         expected[ 4 * nCells + cell ] = updatedPressure;
     }
 
-    ONEFLOW::Real * updatedPrimitive[ nEq ] = {};
-    std::vector< std::vector< ONEFLOW::Real > > updated(
-        nEq, std::vector< ONEFLOW::Real >( nCells, 0.0 ) );
-    for ( int equation = 0; equation < nEq; ++ equation )
-        updatedPrimitive[ equation ] = updated[ equation ].data();
     ONEFLOW::CellStateUpdateView updateView;
     updateView.nCells = nCells;
     updateView.nGhostCells = nGhostCells;
@@ -858,14 +853,17 @@ bool TestMainSolverStateUpdate()
     updateView.timeStep = timeStep;
     updateView.cellVolume = cellVolume;
     for ( int equation = 0; equation < nEq; ++ equation )
-        updateView.primitive[ equation ] = updatedPrimitive[ equation ];
+    {
+        updateView.primitive[ equation ] =
+            primitive.data() + equation * nTotalCells;
+    }
     updateView.gamma = gamma;
     updateView.rkCoefficient = rkCoefficient;
     updateView.cacheKey = cacheKey;
+    updateView.retainResidentState = true;
 
     backend.ScaleCurrentResidual( updateView );
     backend.UpdatePrimitiveState( updateView, true );
-    backend.UnbindState( cacheKey );
 
     double error = 0.0;
     for ( int equation = 0; equation < nEq; ++ equation )
@@ -873,7 +871,8 @@ bool TestMainSolverStateUpdate()
             error = std::max(
                 error,
                 static_cast< double >(
-                    std::abs( updated[ equation ][ cell ]
+                    std::abs(
+                        primitive[ equation * nTotalCells + cell ]
                         - expected[ equation * nCells + cell ] ) ) );
     if ( error > 2.0e-12 )
     {
@@ -881,10 +880,70 @@ bool TestMainSolverStateUpdate()
             stderr, "Main solver HIP state update FAIL: %.3e\n", error );
         return false;
     }
+
+    // Prove that the boundary update consumes the state retained by the
+    // preceding device update.  Corrupting the host internal values would
+    // contaminate the ghosts if UpdateBoundaryState uploaded q again.
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        primitive[ equation * nTotalCells + 0 ] = 10.0 + equation;
+        primitive[ equation * nTotalCells + 1 ] = 20.0 + equation;
+    }
+    const int boundaryType[ nBoundaryFaces ] = { 1, 1 };
+    const ONEFLOW::Real boundaryMeshVelocity[ nBoundaryFaces ] = {
+        0.0, 0.0 };
+    const ONEFLOW::Real inflow[ nEq ] = {
+        1.0, 0.0, 0.0, 0.0, 1.0 };
+    ONEFLOW::BoundaryStateView boundaryView;
+    boundaryView.nCells = nCells;
+    boundaryView.nGhostCells = nGhostCells;
+    boundaryView.nBoundaryFaces = nBoundaryFaces;
+    boundaryView.nEquations = nEq;
+    boundaryView.leftCell = leftCell;
+    boundaryView.rightCell = rightCell;
+    boundaryView.boundaryType = boundaryType;
+    boundaryView.xNormal = xNormal;
+    boundaryView.yNormal = yNormal;
+    boundaryView.zNormal = zNormal;
+    boundaryView.meshVelocityNormal = boundaryMeshVelocity;
+    boundaryView.inflow = inflow;
+    boundaryView.gamma = gamma;
+    boundaryView.cacheKey = cacheKey;
+    boundaryView.preferResidentState = true;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        boundaryView.q[ equation ] =
+            primitive.data() + equation * nTotalCells;
+    }
+    backend.UpdateBoundaryState( boundaryView );
+    backend.UnbindState( cacheKey );
+
+    double residentBoundaryError = 0.0;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        for ( int face = 0; face < nBoundaryFaces; ++ face )
+        {
+            residentBoundaryError = std::max(
+                residentBoundaryError,
+                static_cast< double >( std::abs(
+                    primitive[
+                        equation * nTotalCells + rightCell[ face ] ]
+                    - expected[
+                        equation * nCells + leftCell[ face ] ] ) ) );
+        }
+    }
+    if ( residentBoundaryError > 2.0e-12 )
+    {
+        std::fprintf(
+            stderr,
+            "Main solver HIP resident boundary handoff FAIL: %.3e\n",
+            residentBoundaryError );
+        return false;
+    }
     std::printf(
-        "OneFLOW HIP main solver state update: PASS "
-        "(max error %.3e, %d cells, %d equations)\n",
-        error, nCells, nEq );
+        "OneFLOW HIP main solver state/boundary residency: PASS "
+        "(state %.3e, boundary %.3e, %d cells, %d equations)\n",
+        error, residentBoundaryError, nCells, nEq );
     return true;
 }
 
