@@ -70,7 +70,7 @@ bool HipBoundarySupported()
 #ifndef ONEFLOW_ENABLE_HIP
     return false;
 #else
-    const AccelRuntime & runtime = AccelRuntime::Instance();
+    AccelRuntime & runtime = AccelRuntime::Instance();
     if ( ! runtime.IsInitialized()
          || runtime.Backend().Kind() != AccelBackendKind::HIP )
         return false;
@@ -78,13 +78,13 @@ bool HipBoundarySupported()
          || vis_model.vismodel != 0 || ctrl.ilim != 0 )
         return false;
     UnsGrid * grid = Zone::GetUnsGrid();
-    if ( grid == nullptr || grid->nBFaces <= 0
-         || grid->nTCell - grid->nCells != grid->nBFaces
-         || grid->bcRecord == nullptr )
+    if ( grid == nullptr || ug.nBFaces <= 0
+         || ug.nTCell - ug.nCells != ug.nBFaces
+         || ug.bcRecord == nullptr )
         return false;
-    for ( int face = 0; face < grid->nBFaces; ++ face )
+    for ( int face = 0; face < ug.nBFaces; ++ face )
     {
-        const int type = grid->bcRecord->bcType[ face ];
+        const int type = ug.bcRecord->bcType[ face ];
         if ( type < 0 || type == BC::PERIODIC || type == BC::OVERSET
              || type == BC::EXTRAPOLATION || type == BC::SOLID_SURFACE
              || type == BC::SYMMETRY || type == BC::FARFIELD
