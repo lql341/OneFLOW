@@ -154,6 +154,10 @@ TEST( AccelViewsContract, ValidatesDeviceReconstructionContract )
         ReconstructionBoundaryOperation::Preserve,
         ReconstructionBoundaryOperation::SolidOverride,
         ReconstructionBoundaryOperation::Preserve };
+    BoundaryGhostUpdatePolicy boundaryGhostPolicy[ 3 ] = {
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::LocalBoundaryModel,
+        BoundaryGhostUpdatePolicy::ExternalHalo };
     int owner = 0;
 
     CellFaceReconstructionView view;
@@ -172,6 +176,7 @@ TEST( AccelViewsContract, ValidatesDeviceReconstructionContract )
     view.rightCell = right;
     view.boundaryMask = boundaryMask;
     view.boundaryOperation = boundaryOperation;
+    view.boundaryGhostPolicy = boundaryGhostPolicy;
     view.memorySpace = MemorySpace::Device;
     view.limiterMode = ReconstructionLimiterMode::Disabled;
     view.hasSolidBoundary = true;
@@ -202,6 +207,10 @@ TEST( AccelViewsContract, RejectsStaleOrIncompleteReconstructionContract )
     int leftCells[ 3 ] = { 0, 1, 0 };
     int rightCells[ 3 ] = { 2, 3, 1 };
     ReconstructionBoundaryOperation boundaryOperation[ 3 ] = {};
+    BoundaryGhostUpdatePolicy boundaryGhostPolicy[ 3 ] = {
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::ExternalHalo };
     int owner = 0;
     CellFaceReconstructionView view;
     view.nCells = 2;
@@ -218,6 +227,7 @@ TEST( AccelViewsContract, RejectsStaleOrIncompleteReconstructionContract )
     view.leftCell = leftCells;
     view.rightCell = rightCells;
     view.boundaryOperation = boundaryOperation;
+    view.boundaryGhostPolicy = boundaryGhostPolicy;
     view.ownerToken = &owner;
     view.topologyGeneration = 1;
     view.fieldGeneration = 1;
@@ -250,6 +260,10 @@ TEST( AccelViewsContract, ValidatesReconstructionBoundaryOwnership )
     int right[ 3 ] = { 2, 1, 3 };
     unsigned char boundaryMask[ 3 ] = { 1, 0, 1 };
     ReconstructionBoundaryOperation operations[ 3 ] = {};
+    BoundaryGhostUpdatePolicy boundaryGhostPolicy[ 3 ] = {
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::ExternalHalo };
     int owner = 0;
 
     CellFaceReconstructionView view;
@@ -268,6 +282,7 @@ TEST( AccelViewsContract, ValidatesReconstructionBoundaryOwnership )
     view.rightCell = right;
     view.boundaryMask = boundaryMask;
     view.boundaryOperation = operations;
+    view.boundaryGhostPolicy = boundaryGhostPolicy;
     view.ownerToken = &owner;
     view.topologyGeneration = 1;
     view.fieldGeneration = 1;
@@ -297,6 +312,62 @@ TEST( AccelViewsContract, ValidatesReconstructionBoundaryOwnership )
     left[ 1 ] = 2;
     EXPECT_THROW(
         ValidateCellFaceReconstructionView( view ), std::invalid_argument );
+}
+
+TEST( AccelViewsContract, RejectsAmbiguousGhostOwnership )
+{
+    Real cellValues[ 4 ] = {};
+    Real faceValues[ 2 ] = {};
+    int left[ 2 ] = { 0, 0 };
+    int right[ 2 ] = { 1, 0 };
+    ReconstructionBoundaryOperation operations[ 2 ] = {
+        ReconstructionBoundaryOperation::Average,
+        ReconstructionBoundaryOperation::Preserve };
+    BoundaryGhostUpdatePolicy policies[ 2 ] = {
+        BoundaryGhostUpdatePolicy::ExternalHalo,
+        BoundaryGhostUpdatePolicy::ExternalHalo };
+    int owner = 0;
+
+    CellFaceReconstructionView view;
+    view.nCells = 1;
+    view.nGhostCells = 1;
+    view.nFaces = 2;
+    view.nBoundaryFaces = 1;
+    view.nEquations = 3;
+    view.xFace = faceValues;
+    view.yFace = faceValues;
+    view.zFace = faceValues;
+    view.xCell = cellValues;
+    view.yCell = cellValues;
+    view.zCell = cellValues;
+    view.leftCell = left;
+    view.rightCell = right;
+    view.boundaryOperation = operations;
+    view.boundaryGhostPolicy = policies;
+    view.ownerToken = &owner;
+    view.topologyGeneration = 1;
+    view.fieldGeneration = 1;
+    view.physicality = ReconstructionPhysicalityPolicy::None;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        view.q[ equation ] = cellValues;
+        view.dqdx[ equation ] = cellValues;
+        view.dqdy[ equation ] = cellValues;
+        view.dqdz[ equation ] = cellValues;
+        view.qLeft[ equation ] = faceValues;
+        view.qRight[ equation ] = faceValues;
+    }
+
+    EXPECT_THROW(
+        ValidateCellFaceReconstructionView( view ), std::invalid_argument );
+
+    policies[ 0 ] = BoundaryGhostUpdatePolicy::LocalBoundaryModel;
+    operations[ 0 ] = ReconstructionBoundaryOperation::Average;
+    EXPECT_NO_THROW( ValidateCellFaceReconstructionView( view ) );
+
+    policies[ 0 ] = BoundaryGhostUpdatePolicy::ExternalHalo;
+    operations[ 0 ] = ReconstructionBoundaryOperation::Preserve;
+    EXPECT_NO_THROW( ValidateCellFaceReconstructionView( view ) );
 }
 
 TEST( AccelViewsContract, RejectsUnsupportedStateAndGeometryContracts )

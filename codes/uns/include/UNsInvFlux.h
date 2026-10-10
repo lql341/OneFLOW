@@ -74,6 +74,7 @@ public:
     // across RK stages.  Keep the host containers stable so the HIP backend
     // can detect and skip redundant operation metadata uploads.
     std::vector< ReconstructionBoundaryOperation > hipBoundaryOperation;
+    std::vector< BoundaryGhostUpdatePolicy > hipBoundaryGhostPolicy;
     std::vector< Real > hipBoundaryQ;
     const UnsGrid * hipBoundaryGrid = nullptr;
     const BcRecord * hipBoundaryRecord = nullptr;

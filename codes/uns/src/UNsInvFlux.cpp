@@ -231,6 +231,8 @@ void UNsInvFlux::CalcInvFace()
         {
             hipBoundaryOperation.assign(
                 nFaces, ReconstructionBoundaryOperation::Preserve );
+            hipBoundaryGhostPolicy.assign(
+                nFaces, BoundaryGhostUpdatePolicy::ExternalHalo );
             hipBoundaryHasSolid = false;
             for ( int face = 0; face < ug.nBFaces; ++ face )
             {
@@ -250,6 +252,11 @@ void UNsInvFlux::CalcInvFace()
                 {
                     hipBoundaryOperation[ face ] =
                         ReconstructionBoundaryOperation::Average;
+                }
+                if ( bcType != BC::INTERFACE && bcType != BC::PERIODIC )
+                {
+                    hipBoundaryGhostPolicy[ face ] =
+                        BoundaryGhostUpdatePolicy::LocalBoundaryModel;
                 }
             }
             hipBoundaryGrid = grid;
@@ -290,6 +297,7 @@ void UNsInvFlux::CalcInvFace()
         view.zCell = ug.zcc->data();
         view.leftCell = ug.lcf->data();
         view.rightCell = ug.rcf->data();
+        view.boundaryGhostPolicy = hipBoundaryGhostPolicy.data();
         view.boundaryOperation = hipBoundaryOperation.data();
         view.limiterMode = ReconstructionLimiterMode::Disabled;
         view.physicality = ReconstructionPhysicalityPolicy::PositiveDensityPressure;

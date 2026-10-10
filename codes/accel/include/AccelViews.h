@@ -62,6 +62,16 @@ enum class ReconstructionBoundaryOperation : unsigned char
     SolidOverride
 };
 
+// Ghost ownership is separate from face reconstruction. ExternalHalo means
+// interface/periodic data is supplied by an exchange path; a local boundary
+// kernel must not overwrite that ghost. LocalBoundaryModel means the
+// solver-owned boundary model computes the ghost and face boundary state.
+enum class BoundaryGhostUpdatePolicy : unsigned char
+{
+    ExternalHalo,
+    LocalBoundaryModel
+};
+
 enum class ReconstructionPhysicalityPolicy
 {
     None,
@@ -273,6 +283,7 @@ struct CellFaceReconstructionView
     const int * rightCell = nullptr;
     const unsigned char * boundaryMask = nullptr;
     const ReconstructionBoundaryOperation * boundaryOperation = nullptr;
+    const BoundaryGhostUpdatePolicy * boundaryGhostPolicy = nullptr;
     const Real * bcQ[ 5 ] = {};
     Real * qLeft[ 5 ] = {};
     Real * qRight[ 5 ] = {};
@@ -305,7 +316,8 @@ inline void ValidateCellFaceReconstructionView(
          || view.yCell == nullptr || view.zCell == nullptr
          || view.leftCell == nullptr || view.rightCell == nullptr
          || ( view.nBoundaryFaces > 0
-              && view.boundaryOperation == nullptr )
+              && ( view.boundaryOperation == nullptr
+                   || view.boundaryGhostPolicy == nullptr ) )
          || view.layout != FieldLayout::EquationMajor
          || view.representation != FieldRepresentation::Primitive
          || view.ownerToken == nullptr || view.topologyGeneration == 0
@@ -372,6 +384,24 @@ inline void ValidateCellFaceReconstructionView(
                 {
                     throw std::invalid_argument(
                         "reconstruction boundary right-cell is not a ghost" );
+                }
+
+                const BoundaryGhostUpdatePolicy ghostPolicy =
+                    view.boundaryGhostPolicy[ face ];
+                const ReconstructionBoundaryOperation operation =
+                    view.boundaryOperation[ face ];
+                if ( ghostPolicy == BoundaryGhostUpdatePolicy::ExternalHalo
+                     && operation != ReconstructionBoundaryOperation::Preserve )
+                {
+                    throw std::invalid_argument(
+                        "external-halo boundary must preserve reconstruction" );
+                }
+                if ( ghostPolicy
+                         == BoundaryGhostUpdatePolicy::LocalBoundaryModel
+                     && operation == ReconstructionBoundaryOperation::Preserve )
+                {
+                    throw std::invalid_argument(
+                        "local boundary model cannot preserve reconstruction" );
                 }
             }
             else if ( rightCell < 0 || rightCell >= view.nCells )

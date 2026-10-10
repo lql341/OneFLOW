@@ -664,6 +664,10 @@ bool TestMainSolverStateUpdate()
         ONEFLOW::ReconstructionBoundaryOperation::Preserve,
         ONEFLOW::ReconstructionBoundaryOperation::Preserve,
         ONEFLOW::ReconstructionBoundaryOperation::Preserve };
+    const ONEFLOW::BoundaryGhostUpdatePolicy boundaryGhostPolicy[ nFaces ] = {
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo,
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo,
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo };
     const ONEFLOW::Real xCell[ nTotalCells ] = { 0.0, 1.0, -1.0, 2.0 };
     const ONEFLOW::Real yCell[ nTotalCells ] = { 0.0, 0.2, 0.0, 0.2 };
     const ONEFLOW::Real zCell[ nTotalCells ] = { 0.0, 0.1, 0.0, 0.1 };
@@ -762,6 +766,7 @@ bool TestMainSolverStateUpdate()
     reconstructionView.rightCell = rightCell;
     reconstructionView.boundaryMask = boundaryMask;
     reconstructionView.boundaryOperation = boundaryOperation;
+    reconstructionView.boundaryGhostPolicy = boundaryGhostPolicy;
     reconstructionView.memorySpace = ONEFLOW::MemorySpace::Host;
     reconstructionView.limiterMode =
         ONEFLOW::ReconstructionLimiterMode::Disabled;
