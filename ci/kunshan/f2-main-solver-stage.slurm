@@ -77,6 +77,7 @@ for mode in legacy cpu_batch hip_batch; do
     fi
     if [ -n "${ONEFLOW_F2_STAGE_CFL:-}" ]; then
         sed -i -E "s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${ONEFLOW_F2_STAGE_CFL};/" "$trace_root/$mode/script/cfd.txt"
+        sed -i -E "s/^Real[[:space:]]+cfled[[:space:]]*=.*/Real cfled = ${ONEFLOW_F2_STAGE_CFL};/" "$trace_root/$mode/script/cfd.txt"
     fi
     if [ "${ONEFLOW_F2_STAGE_DISABLE_LIMITER:-0}" = 1 ]; then
         sed -i -E 's/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0; \/\/ F stage limiter gate/' \
