@@ -156,6 +156,7 @@ config_file="$stability_root/configuration.tsv"
     printf 'hip_gradient\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}"
     printf 'hip_reconstruction\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_RECONSTRUCTION:-0}"
     printf 'hip_state_update\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-0}"
+    printf 'hip_boundary\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-0}"
 } > "$config_file"
 overall=0
 
@@ -170,7 +171,8 @@ run_mode() {
         cd "$stability_root"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
-            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_UNS_STAGE_TRACE_FILE \
+            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
+            ONEFLOW_UNS_STAGE_TRACE_FILE \
             ONEFLOW_STAGE_BREAKDOWN_FILE || true
         app_prefix=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
@@ -187,6 +189,9 @@ run_mode() {
             fi
             if [ "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
+            fi
+            if [ "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
             fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
