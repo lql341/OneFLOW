@@ -227,6 +227,9 @@ struct CellGradientView
     Real * dqdy[ 5 ] = {};
     Real * dqdz[ 5 ] = {};
     const void * cacheKey = nullptr;
+    // Keep the device gradient resident for production HIP reconstruction.
+    // The default preserves host-oracle and diagnostic behavior.
+    bool downloadToHost = true;
 };
 
 inline void ValidateCellGradientView( const CellGradientView & view )

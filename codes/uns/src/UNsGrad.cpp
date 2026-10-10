@@ -34,6 +34,7 @@ License
 #include "CellTopo.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
+#include <cstdlib>
 #endif
 #include <stdexcept>
 
@@ -102,6 +103,10 @@ void UNsGrad::CalcGradHip()
     view.leftCell = ug.lcf->data();
     view.rightCell = ug.rcf->data();
     view.cacheKey = grid;
+    const char * deviceReconstruction =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
+    view.downloadToHost =
+        deviceReconstruction == nullptr || deviceReconstruction[ 0 ] != '1';
     for ( int equation = 0; equation < nEqu; ++ equation )
     {
         view.q[ equation ] = ( * q )[ equation ].data();
@@ -110,7 +115,7 @@ void UNsGrad::CalcGradHip()
         view.dqdz[ equation ] = ( * dqdz )[ equation ].data();
     }
     HipFluxBackend::Shared().CalcGradient( view );
-    this->SwapBcGrad();
+    if ( view.downloadToHost ) this->SwapBcGrad();
 #else
     throw std::runtime_error(
         "UNs HIP gradient was called without HIP support" );

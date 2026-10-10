@@ -942,6 +942,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     }
     CheckHip( hipGetLastError(), "gradient kernel launch" );
     CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
+    if ( ! view.downloadToHost ) return;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         const int base = equation * 3 * totalCells;
