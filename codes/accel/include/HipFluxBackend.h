@@ -35,6 +35,7 @@ struct HipGradientStorage
     DeviceBuffer< Real > xNormal;
     DeviceBuffer< Real > yNormal;
     DeviceBuffer< Real > zNormal;
+    DeviceBuffer< Real > meshVelocityNormal;
     DeviceBuffer< Real > faceArea;
     DeviceBuffer< Real > xCellCenter;
     DeviceBuffer< Real > yCellCenter;
@@ -57,6 +58,7 @@ struct HipGradientStorage
     const Real * cachedVolume = nullptr;
     const int * cachedLeftCell = nullptr;
     const int * cachedRightCell = nullptr;
+    const Real * cachedMeshVelocityNormal = nullptr;
     int cachedCells = 0;
     int cachedGhostCells = -1;
     int cachedFaces = 0;
@@ -70,6 +72,15 @@ struct HipGradientStorage
     DeviceBuffer< unsigned char > boundaryMask;
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
     DeviceBuffer< Real > bcQ;
+    DeviceBuffer< Real > boundaryFaceState;
+    DeviceBuffer< int > boundaryType;
+    DeviceBuffer< Real > inflow;
+    DeviceBuffer< Real > boundaryXNormal;
+    DeviceBuffer< Real > boundaryYNormal;
+    DeviceBuffer< Real > boundaryZNormal;
+    DeviceBuffer< Real > boundaryMeshVelocityNormal;
+    DeviceBuffer< int > boundaryLeftCell;
+    DeviceBuffer< int > boundaryRightCell;
     const ReconstructionBoundaryOperation * cachedBoundaryOperationHost =
         nullptr;
     std::size_t cachedBoundaryOperationCount = 0;
@@ -79,6 +90,11 @@ struct HipGradientStorage
     std::uint64_t cachedFieldGeneration = 0;
     bool boundaryMaskValid = false;
     bool residualValid = false;
+    bool residentStateReady = false;
+    const void * cachedStateOwnerToken = nullptr;
+    const Real * cachedStateQ[ 5 ] = {};
+    int cachedStateCells = 0;
+    int cachedStateGhostCells = -1;
 };
 
 std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
@@ -119,6 +135,9 @@ public:
         const void * cacheKey = nullptr );
 
     void CalcGradient( const CellGradientView & view );
+
+    // Update supported local inviscid boundary models on the resident state.
+    void UpdateBoundaryState( const BoundaryStateView & view );
 
     // Reconstruct face primitive values into state-owned device buffers. The
     // host view supplies metadata and optional diagnostic destinations; the

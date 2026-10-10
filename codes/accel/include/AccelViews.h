@@ -232,6 +232,53 @@ struct CellGradientView
     bool downloadToHost = true;
 };
 
+// Boundary update is separate from reconstruction. The solver provides
+// host-owned primitive state and boundary metadata; an accelerator backend may
+// mirror the state, evaluate supported local boundary models, and copy only
+// the ghost/interface results needed by the CPU oracle.
+struct BoundaryStateView
+{
+    int nCells = 0;
+    int nGhostCells = 0;
+    int nBoundaryFaces = 0;
+    int nEquations = 0;
+    Real * q[ 5 ] = {};
+    Real * bcQ[ 5 ] = {};
+    const int * leftCell = nullptr;
+    const int * rightCell = nullptr;
+    const int * boundaryType = nullptr;
+    const Real * xNormal = nullptr;
+    const Real * yNormal = nullptr;
+    const Real * zNormal = nullptr;
+    const Real * meshVelocityNormal = nullptr;
+    const Real * inflow = nullptr;
+    Real gamma = 1.4;
+    int faceOuterNormal = 1;
+    const void * cacheKey = nullptr;
+};
+
+inline void ValidateBoundaryStateView( const BoundaryStateView & view )
+{
+    if ( view.nCells <= 0 || view.nGhostCells != view.nBoundaryFaces
+         || view.nBoundaryFaces < 0 || view.nEquations != 5
+         || view.leftCell == nullptr || view.rightCell == nullptr
+         || view.boundaryType == nullptr || view.xNormal == nullptr
+         || view.yNormal == nullptr || view.zNormal == nullptr
+         || view.meshVelocityNormal == nullptr || view.inflow == nullptr
+         || view.gamma <= 1.0 || view.cacheKey == nullptr )
+    {
+        throw std::invalid_argument( "invalid solver boundary state view" );
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( view.q[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "boundary state view has a missing primitive component" );
+        }
+    }
+}
+
 inline void ValidateCellGradientView( const CellGradientView & view )
 {
     if ( view.nCells <= 0 || view.nGhostCells < 0

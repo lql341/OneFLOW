@@ -39,11 +39,101 @@ License
 #include "SolverRegister.h"
 #include "DataBase.h"
 #include "StageProfiler.h"
+#include "AccelRuntime.h"
+#include "SolverState.h"
+#include "Boundary.h"
+#include "BcRecord.h"
+#include "UNsCom.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
+#include <cstdlib>
+#include <string>
 #include <iomanip>
 #include <memory>
 
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+bool HipBoundaryRequested()
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
+    return enabled != nullptr && enabled[ 0 ] == '1';
+}
+
+bool HipBoundarySupported()
+{
+#ifndef ONEFLOW_ENABLE_HIP
+    return false;
+#else
+    const AccelRuntime & runtime = AccelRuntime::Instance();
+    if ( ! runtime.IsInitialized()
+         || runtime.Backend().Kind() != AccelBackendKind::HIP )
+        return false;
+    if ( SolverState::solverType != NS_SOLVER || nscom.nEqu != 5
+         || vis_model.vismodel != 0 || ctrl.ilim != 0 )
+        return false;
+    UnsGrid * grid = Zone::GetUnsGrid();
+    if ( grid == nullptr || grid->nBFaces <= 0
+         || grid->nTCell - grid->nCells != grid->nBFaces
+         || grid->bcRecord == nullptr )
+        return false;
+    for ( int face = 0; face < grid->nBFaces; ++ face )
+    {
+        const int type = grid->bcRecord->bcType[ face ];
+        if ( type < 0 || type == BC::PERIODIC || type == BC::OVERSET
+             || type == BC::EXTRAPOLATION || type == BC::SOLID_SURFACE
+             || type == BC::SYMMETRY || type == BC::FARFIELD
+             || type == BC::INFLOW || type == BC::OUTFLOW
+             || type == BC::POLE || type == BC::POLE1
+             || type == BC::POLE2 || type == BC::POLE3 )
+            continue;
+        return false;
+    }
+    return true;
+#endif
+}
+
+void CalcHipBoundary()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    UnsGrid * grid = Zone::GetUnsGrid();
+    ug.Init();
+    unsf.Init();
+    BoundaryStateView view;
+    view.nCells = ug.nCells;
+    view.nGhostCells = ug.nTCell - ug.nCells;
+    view.nBoundaryFaces = ug.nBFaces;
+    view.nEquations = nscom.nEqu;
+    view.leftCell = ug.lcf->data();
+    view.rightCell = ug.rcf->data();
+    view.boundaryType = ug.bcRecord->bcType.data();
+    view.xNormal = ug.xfn->data();
+    view.yNormal = ug.yfn->data();
+    view.zNormal = ug.zfn->data();
+    view.meshVelocityNormal = ug.vfn->data();
+    view.inflow = nscom.inflow.data();
+    view.gamma = nscom.gama_ref;
+    view.faceOuterNormal = nscom.faceOuterNormal;
+    view.cacheKey = grid;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        view.q[ equation ] = ( * unsf.q )[ equation ].data();
+        if ( unsf.bc_q != nullptr )
+            view.bcQ[ equation ] = ( * unsf.bc_q )[ equation ].data();
+    }
+    HipFluxBackend::Shared().UpdateBoundaryState( view );
+#else
+    throw std::runtime_error(
+        "HIP boundary update was requested without HIP support" );
+#endif
+}
+
+}
 
 void RegisterNsFunc()
 {
@@ -101,6 +191,19 @@ void NsCalcBoundary( StringField & data )
         ScopedStageTimer timer( "boundary_viscosity_inner" );
         CalcLaminarViscosity( F_INNER );
     }
+    const bool requested = HipBoundaryRequested();
+    if ( requested && ! HipBoundarySupported() )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1 is unsupported for the "
+            "current solver, boundary set, or runtime" );
+    }
+    if ( requested )
+    {
+        ScopedStageTimer timer( "boundary_device" );
+        CalcHipBoundary();
+    }
+    else
     {
         ScopedStageTimer timer( "boundary_bc" );
         NsCalcBc();

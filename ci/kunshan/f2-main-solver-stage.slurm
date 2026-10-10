@@ -50,6 +50,7 @@ mkdir -p "$trace_root"
     echo "mpirun=$(command -v mpirun)"
     echo "OMPI_MCA_coll=$OMPI_MCA_coll"
     echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
+    echo "hip_boundary=${ONEFLOW_F2_STAGE_HIP_BOUNDARY:-0}"
 } > "$trace_root/environment.txt"
 grep -q '16\.2\.0' "$trace_root/environment.txt"
 grep -q '4\.4\.3' "$trace_root/environment.txt"
@@ -98,7 +99,7 @@ run_case() {
         export ONEFLOW_UNS_STAGE_TRACE_FILE="$trace_root/$mode.stage"
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
-            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE || true
+            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
@@ -110,6 +111,9 @@ run_case() {
             fi
             if [ "${ONEFLOW_F2_STAGE_HIP_STATE_UPDATE:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
+            fi
+            if [ "${ONEFLOW_F2_STAGE_HIP_BOUNDARY:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
             fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
@@ -172,7 +176,8 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
         local mode=$1
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
-            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_UNS_STAGE_TRACE_FILE || true
+            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
+            ONEFLOW_UNS_STAGE_TRACE_FILE || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
@@ -184,6 +189,9 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
             fi
             if [ "${ONEFLOW_F2_STAGE_HIP_STATE_UPDATE:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
+            fi
+            if [ "${ONEFLOW_F2_STAGE_HIP_BOUNDARY:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
             fi
         else
             export ONEFLOW_ACCEL_BACKEND=CPU

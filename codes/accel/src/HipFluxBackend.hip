@@ -527,6 +527,157 @@ __global__ void GradientCopyBoundaryKernel(
     }
 }
 
+__device__ Real BoundaryPower( Real value, Real exponent, Real gamma )
+{
+    if ( gamma > 1.399999999999 && gamma < 1.400000000001
+         && exponent > 2.499999999999 && exponent < 2.500000000001 )
+    {
+        return value * value * sqrt( value );
+    }
+    return pow( value, exponent );
+}
+
+__global__ void UpdateBoundaryPrimitiveKernel(
+    Real * q,
+    Real * bcQ,
+    const int * leftCell,
+    const int * rightCell,
+    const int * boundaryType,
+    const Real * xNormal,
+    const Real * yNormal,
+    const Real * zNormal,
+    const Real * meshVelocityNormal,
+    const Real * inflow,
+    int faceOuterNormal,
+    int nCells,
+    int nBoundaryFaces,
+    int nEq,
+    Real gamma )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nBoundaryFaces ) return;
+
+    const int left = leftCell[ face ];
+    const int ghost = rightCell[ face ];
+    const int totalCells = nCells + nBoundaryFaces;
+    const int type = boundaryType[ face ];
+
+    // Interfaces, periodic faces, and overset faces are owned by an external
+    // exchange path. Never overwrite their ghost values locally.
+    if ( type < 0 || type == 99 || type >= 1000 ) return;
+
+    Real rho = q[ 0 * totalCells + left ];
+    Real u = q[ 1 * totalCells + left ];
+    Real v = q[ 2 * totalCells + left ];
+    Real w = q[ 3 * totalCells + left ];
+    Real pressure = q[ 4 * totalCells + left ];
+    Real ghostValues[ 5 ] = { rho, u, v, w, pressure };
+
+    if ( type == 5 ) // INFLOW
+    {
+        for ( int eq = 0; eq < nEq; ++ eq )
+            ghostValues[ eq ] = inflow[ eq ];
+    }
+    else if ( type == 1 || type == 6 || type == 7
+              || type == 71 || type == 72 || type == 73 ) // extrapolation/outflow/pole
+    {
+        // The CPU oracle uses the owner-cell primitive state for these models.
+    }
+    else if ( type == 2 || type == 3 ) // inviscid wall/symmetry
+    {
+        const Real nx = xNormal[ face ] * faceOuterNormal;
+        const Real ny = yNormal[ face ] * faceOuterNormal;
+        const Real nz = zNormal[ face ] * faceOuterNormal;
+        const Real vn = nx * u + ny * v + nz * w
+            - meshVelocityNormal[ face ];
+        ghostValues[ 1 ] = u - 2.0 * nx * vn;
+        ghostValues[ 2 ] = v - 2.0 * ny * vn;
+        ghostValues[ 3 ] = w - 2.0 * nz * vn;
+    }
+    else if ( type == 4 ) // FARFIELD
+    {
+        const Real rref = inflow[ 0 ];
+        const Real uref = inflow[ 1 ];
+        const Real vref = inflow[ 2 ];
+        const Real wref = inflow[ 3 ];
+        const Real pref = inflow[ 4 ];
+        const Real nx = xNormal[ face ] * faceOuterNormal;
+        const Real ny = yNormal[ face ] * faceOuterNormal;
+        const Real nz = zNormal[ face ] * faceOuterNormal;
+        const Real vnin = nx * u + ny * v + nz * w
+            - meshVelocityNormal[ face ];
+        const Real vnref = nx * uref + ny * vref + nz * wref
+            - meshVelocityNormal[ face ];
+        const Real cref = sqrt( fabs( gamma * pref / rref ) );
+        const Real cin = sqrt( fabs( gamma * pressure / rho ) );
+        const Real gamm1 = gamma - 1.0;
+        const Real velocity = sqrt( u * u + v * v + w * w );
+
+        if ( velocity > cin )
+        {
+            if ( vnin < 0.0 )
+            {
+                for ( int eq = 0; eq < nEq; ++ eq )
+                    ghostValues[ eq ] = inflow[ eq ];
+            }
+        }
+        else
+        {
+            const Real riemp = vnin + 2.0 * cin / gamm1;
+            const Real riemm = vnref - 2.0 * cref / gamm1;
+            const Real vnb = 0.5 * ( riemp + riemm );
+            const Real cb = 0.25 * ( riemp - riemm ) * gamm1;
+            Real entropy;
+            Real vtx;
+            Real vty;
+            Real vtz;
+            if ( vnb >= 0.0 )
+            {
+                entropy = pressure / BoundaryPower( rho, gamma, gamma );
+                vtx = u - nx * vnin;
+                vty = v - ny * vnin;
+                vtz = w - nz * vnin;
+            }
+            else
+            {
+                entropy = pref / BoundaryPower( rref, gamma, gamma );
+                vtx = uref - nx * vnref;
+                vty = vref - ny * vnref;
+                vtz = wref - nz * vnref;
+            }
+            const Real rhoBoundary = BoundaryPower(
+                cb * cb / ( entropy * gamma ), 1.0 / gamm1, gamma );
+            const Real ub = vtx + nx * vnb;
+            const Real vb = vty + ny * vnb;
+            const Real wb = vtz + nz * vnb;
+            ghostValues[ 0 ] = rhoBoundary;
+            ghostValues[ 1 ] = ub;
+            ghostValues[ 2 ] = vb;
+            ghostValues[ 3 ] = wb;
+            ghostValues[ 4 ] = cb * cb * rhoBoundary / gamma;
+        }
+    }
+    else
+    {
+        return;
+    }
+
+    for ( int eq = 0; eq < nEq; ++ eq )
+        q[ eq * totalCells + ghost ] = ghostValues[ eq ];
+
+    if ( type == 2 )
+    {
+        // NsBcSolver::SymmetryBc writes the face state as the average of the
+        // owner and reflected ghost values; the limiter uses this for both
+        // reconstructed sides on solid surfaces.
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            bcQ[ eq * nBoundaryFaces + face ] =
+                0.5 * ( q[ eq * totalCells + left ] + ghostValues[ eq ] );
+        }
+    }
+}
+
 
 __global__ void ReconstructFaceEulerKernel(
     const Real * q,
@@ -839,15 +990,34 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     const int totalState = view.nEquations * totalCells;
     const int totalGradient = view.nEquations * 3 * totalCells;
     storage->cellState.Resize( totalState );
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
-    {
-        AccelRuntime::Instance().Backend().Copy(
-            storage->cellState.Data() + equation * totalCells,
-            view.q[ equation ], totalCells * sizeof( Real ),
-            AccelCopyKind::HostToDevice );
-    }
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    const bool residentStateMatches =
+        storage->residentStateReady
+        && storage->cachedStateOwnerToken == ownerToken
+        && storage->cachedStateCells == view.nCells
+        && storage->cachedStateGhostCells == view.nGhostCells;
+    bool residentStateUsable = residentStateMatches;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
+            residentStateUsable = false;
+    }
+    if ( ! residentStateUsable )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage->cellState.Data() + equation * totalCells,
+                view.q[ equation ], totalCells * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+            storage->cachedStateQ[ equation ] = view.q[ equation ];
+        }
+    }
+    storage->cachedStateOwnerToken = ownerToken;
+    storage->cachedStateCells = view.nCells;
+    storage->cachedStateGhostCells = view.nGhostCells;
+    storage->residentStateReady = false;
     const std::uint64_t topologyGeneration =
         owner != nullptr ? owner->TopologyGeneration() : 0;
     const bool cacheMatches = storage->geometryCacheValid
@@ -958,6 +1128,97 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
             storage->cellGradient.Data() + base + 2 * totalCells,
             totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
     }
+}
+
+void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
+{
+    ValidateBoundaryStateView( view );
+    HipGradientStorage * storage = &fallbackGradientStorage_;
+    Ns3DDeviceState * owner = nullptr;
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding != boundStates_.end() )
+    {
+        owner = binding->second;
+        auto * hipState =
+            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+        if ( hipState == nullptr )
+        {
+            throw std::logic_error(
+                "bound HIP Ns3D state lost its backend ownership" );
+        }
+        storage = &hipState->Gradient();
+    }
+
+    const int totalCells = view.nCells + view.nGhostCells;
+    storage->cellState.Resize( view.nEquations * totalCells );
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        AccelRuntime::Instance().Backend().Copy(
+            storage->cellState.Data() + equation * totalCells,
+            view.q[ equation ], totalCells * sizeof( Real ),
+            AccelCopyKind::HostToDevice );
+        storage->cachedStateQ[ equation ] = view.q[ equation ];
+    }
+    storage->cachedStateOwnerToken =
+        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    storage->cachedStateCells = view.nCells;
+    storage->cachedStateGhostCells = view.nGhostCells;
+
+    storage->boundaryXNormal.CopyFromHost(
+        view.xNormal, view.nBoundaryFaces );
+    storage->boundaryYNormal.CopyFromHost(
+        view.yNormal, view.nBoundaryFaces );
+    storage->boundaryZNormal.CopyFromHost(
+        view.zNormal, view.nBoundaryFaces );
+    storage->boundaryMeshVelocityNormal.CopyFromHost(
+        view.meshVelocityNormal, view.nBoundaryFaces );
+    storage->boundaryLeftCell.CopyFromHost(
+        view.leftCell, view.nBoundaryFaces );
+    storage->boundaryRightCell.CopyFromHost(
+        view.rightCell, view.nBoundaryFaces );
+    storage->boundaryType.CopyFromHost(
+        view.boundaryType, view.nBoundaryFaces );
+    storage->inflow.CopyFromHost( view.inflow, view.nEquations );
+    storage->boundaryFaceState.Resize(
+        view.nEquations * view.nBoundaryFaces );
+
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        UpdateBoundaryPrimitiveKernel,
+        dim3( ( view.nBoundaryFaces + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0, storage->cellState.Data(),
+        storage->boundaryFaceState.Data(),
+        storage->boundaryLeftCell.Data(),
+        storage->boundaryRightCell.Data(),
+        storage->boundaryType.Data(),
+        storage->boundaryXNormal.Data(),
+        storage->boundaryYNormal.Data(),
+        storage->boundaryZNormal.Data(),
+        storage->boundaryMeshVelocityNormal.Data(),
+        storage->inflow.Data(), view.faceOuterNormal, view.nCells,
+        view.nBoundaryFaces, view.nEquations, view.gamma );
+    CheckHip( hipGetLastError(), "boundary kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "boundary kernel synchronize" );
+
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        AccelRuntime::Instance().Backend().Copy(
+            view.q[ equation ] + view.nCells,
+            storage->cellState.Data()
+                + equation * totalCells + view.nCells,
+            view.nBoundaryFaces * sizeof( Real ),
+            AccelCopyKind::DeviceToHost );
+        if ( view.bcQ[ equation ] != nullptr )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                view.bcQ[ equation ],
+                storage->boundaryFaceState.Data()
+                    + equation * view.nBoundaryFaces,
+                view.nBoundaryFaces * sizeof( Real ),
+                AccelCopyKind::DeviceToHost );
+        }
+    }
+    storage->residentStateReady = true;
 }
 
 
@@ -1327,6 +1588,7 @@ void HipFluxBackend::UpdatePrimitiveState(
     }
     owner->MarkFieldChanged();
     storage.residualValid = false;
+    storage.residentStateReady = false;
 }
 
 HipFluxBackend & HipFluxBackend::Shared()
