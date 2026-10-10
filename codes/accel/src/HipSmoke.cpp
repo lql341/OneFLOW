@@ -941,6 +941,10 @@ bool TestMainSolverStateUpdate()
         return false;
     }
     std::printf(
+        "OneFLOW HIP main solver state update: PASS "
+        "(max error %.3e, %d cells, %d equations)\n",
+        error, nCells, nEq );
+    std::printf(
         "OneFLOW HIP main solver state/boundary residency: PASS "
         "(state %.3e, boundary %.3e, %d cells, %d equations)\n",
         error, residentBoundaryError, nCells, nEq );
