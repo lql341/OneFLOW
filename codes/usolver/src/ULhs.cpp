@@ -76,6 +76,13 @@ bool UseHipDeviceStateUpdate( int solverType )
 #endif
 }
 
+bool UseResidentHipTimeStep()
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
+    return enabled != nullptr && enabled[ 0 ] == '1';
+}
+
 }
 
 ULhs::ULhs()
@@ -106,6 +113,7 @@ void ULhs::CalcLHS( int solverType )
         view.gamma = nscom.gama_ref;
         view.rkCoefficient = ctrl.lhscoef;
         view.cacheKey = grid;
+        view.preferResidentTimeStep = UseResidentHipTimeStep();
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             view.primitive[ equation ] = ( * unsf.q )[ equation ].data();

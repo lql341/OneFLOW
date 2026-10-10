@@ -67,7 +67,10 @@ struct HipGradientStorage
     DeviceBuffer< Real > qf1;
     DeviceBuffer< Real > qf2;
     DeviceBuffer< Real > residual;
+    DeviceBuffer< Real > inviscidSpectrum;
     DeviceBuffer< Real > timeStep;
+    DeviceBuffer< Real > minTimeStep;
+    DeviceBuffer< int > timeStepStatus;
     DeviceBuffer< int > stateUpdateStatus;
     DeviceBuffer< unsigned char > boundaryMask;
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
@@ -87,6 +90,21 @@ struct HipGradientStorage
     int cachedEquations = 0;
     int residualCells = 0;
     int residualEquations = 0;
+    const Real * cachedTimeStepXNormal = nullptr;
+    const Real * cachedTimeStepYNormal = nullptr;
+    const Real * cachedTimeStepZNormal = nullptr;
+    const Real * cachedTimeStepMeshVelocityNormal = nullptr;
+    const Real * cachedTimeStepFaceArea = nullptr;
+    const Real * cachedTimeStepVolume = nullptr;
+    const int * cachedTimeStepLeftCell = nullptr;
+    const int * cachedTimeStepRightCell = nullptr;
+    const Real * cachedTimeStepHost = nullptr;
+    int cachedTimeStepCells = 0;
+    int cachedTimeStepGhostCells = -1;
+    int cachedTimeStepFaces = 0;
+    int cachedTimeStepBoundaryFaces = -1;
+    bool timeStepGeometryCacheValid = false;
+    bool residentTimeStepReady = false;
     std::uint64_t cachedFieldGeneration = 0;
     bool boundaryMaskValid = false;
     bool residualValid = false;
@@ -135,6 +153,11 @@ public:
         const void * cacheKey = nullptr );
 
     void CalcGradient( const CellGradientView & view );
+
+    // Compute the local inviscid spectral radius and timestep from resident
+    // primitive state. The resulting timestep can remain device-resident for
+    // ScaleCurrentResidual.
+    void CalcLocalInviscidTimeStep( const CellTimeStepView & view );
 
     // Update supported local inviscid boundary models on the resident state.
     void UpdateBoundaryState( const BoundaryStateView & view );

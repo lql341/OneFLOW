@@ -16,6 +16,7 @@ License
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <vector>
 
 namespace
@@ -677,6 +678,7 @@ bool TestMainSolverStateUpdate()
     const ONEFLOW::Real xNormal[ nFaces ] = { -1.0, 1.0, 0.98 };
     const ONEFLOW::Real yNormal[ nFaces ] = { 0.0, 0.0, 0.2 };
     const ONEFLOW::Real zNormal[ nFaces ] = { 0.0, 0.0, 0.02 };
+    const ONEFLOW::Real faceMeshVelocity[ nFaces ] = { 0.0, 0.0, 0.0 };
     const ONEFLOW::Real faceArea[ nFaces ] = { 1.0, 1.1, 1.2 };
     const ONEFLOW::Real cellVolume[ nCells ] = { 1.0, 1.2 };
     const ONEFLOW::Real timeStep[ nCells ] = { 1.0e-3, 1.3e-3 };
@@ -916,7 +918,6 @@ bool TestMainSolverStateUpdate()
             primitive.data() + equation * nTotalCells;
     }
     backend.UpdateBoundaryState( boundaryView );
-    backend.UnbindState( cacheKey );
 
     double residentBoundaryError = 0.0;
     for ( int equation = 0; equation < nEq; ++ equation )
@@ -940,6 +941,108 @@ bool TestMainSolverStateUpdate()
             residentBoundaryError );
         return false;
     }
+
+    constexpr double cfl = 0.25;
+    constexpr double maxTimeRatio = 1.1;
+    ONEFLOW::Real deviceSpectrum[ nCells ] = {};
+    ONEFLOW::Real deviceTimeStep[ nCells ] = {};
+    ONEFLOW::Real expectedSpectrum[ nCells ] = {};
+    ONEFLOW::Real expectedTimeStep[ nCells ] = {};
+    const auto expectedPrimitive = [&]( int equation, int cell ) {
+        const int internal = cell < nCells ? cell : cell - nCells;
+        return expected[ equation * nCells + internal ];
+    };
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        const int left = leftCell[ face ];
+        const int right = rightCell[ face ];
+        const double rhoLeft = expectedPrimitive( 0, left );
+        const double rhoRight = expectedPrimitive( 0, right );
+        const double pressureLeft = expectedPrimitive( 4, left );
+        const double pressureRight = expectedPrimitive( 4, right );
+        const double vnLeft =
+            xNormal[ face ] * expectedPrimitive( 1, left )
+            + yNormal[ face ] * expectedPrimitive( 2, left )
+            + zNormal[ face ] * expectedPrimitive( 3, left )
+            - faceMeshVelocity[ face ];
+        const double vnRight =
+            xNormal[ face ] * expectedPrimitive( 1, right )
+            + yNormal[ face ] * expectedPrimitive( 2, right )
+            + zNormal[ face ] * expectedPrimitive( 3, right )
+            - faceMeshVelocity[ face ];
+        const double soundSpeed = std::sqrt(
+            gamma * 0.5 * ( pressureLeft + pressureRight )
+            / ( 0.5 * ( rhoLeft + rhoRight ) ) );
+        const double faceSpectrum = 0.5 * faceArea[ face ]
+            * ( std::abs( 0.5 * ( vnLeft + vnRight ) )
+                + soundSpeed );
+        expectedSpectrum[ left ] += faceSpectrum;
+        if ( right < nCells ) expectedSpectrum[ right ] += faceSpectrum;
+    }
+    double minimumTimeStep = std::numeric_limits< double >::max();
+    for ( int cell = 0; cell < nCells; ++ cell )
+    {
+        expectedTimeStep[ cell ] =
+            cfl * cellVolume[ cell ] / expectedSpectrum[ cell ];
+        minimumTimeStep =
+            std::min( minimumTimeStep, expectedTimeStep[ cell ] );
+    }
+    for ( int cell = 0; cell < nCells; ++ cell )
+    {
+        expectedTimeStep[ cell ] = std::min(
+            expectedTimeStep[ cell ],
+            maxTimeRatio * minimumTimeStep );
+    }
+
+    ONEFLOW::CellTimeStepView timeStepView;
+    timeStepView.nCells = nCells;
+    timeStepView.nGhostCells = nGhostCells;
+    timeStepView.nFaces = nFaces;
+    timeStepView.nBoundaryFaces = nBoundaryFaces;
+    timeStepView.nEquations = nEq;
+    timeStepView.xNormal = xNormal;
+    timeStepView.yNormal = yNormal;
+    timeStepView.zNormal = zNormal;
+    timeStepView.meshVelocityNormal = faceMeshVelocity;
+    timeStepView.faceArea = faceArea;
+    timeStepView.cellVolume = cellVolume;
+    timeStepView.leftCell = leftCell;
+    timeStepView.rightCell = rightCell;
+    timeStepView.inviscidSpectrum = deviceSpectrum;
+    timeStepView.timeStep = deviceTimeStep;
+    timeStepView.gamma = gamma;
+    timeStepView.cfl = cfl;
+    timeStepView.maxTimeRatio = maxTimeRatio;
+    timeStepView.cacheKey = cacheKey;
+    timeStepView.preferResidentState = true;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        timeStepView.q[ equation ] =
+            primitive.data() + equation * nTotalCells;
+    }
+    backend.CalcLocalInviscidTimeStep( timeStepView );
+    backend.UnbindState( cacheKey );
+
+    double residentTimeStepError = 0.0;
+    for ( int cell = 0; cell < nCells; ++ cell )
+    {
+        residentTimeStepError = std::max(
+            residentTimeStepError,
+            static_cast< double >( std::abs(
+                deviceSpectrum[ cell ] - expectedSpectrum[ cell ] ) ) );
+        residentTimeStepError = std::max(
+            residentTimeStepError,
+            static_cast< double >( std::abs(
+                deviceTimeStep[ cell ] - expectedTimeStep[ cell ] ) ) );
+    }
+    if ( residentTimeStepError > 2.0e-12 )
+    {
+        std::fprintf(
+            stderr,
+            "Main solver HIP resident timestep FAIL: %.3e\n",
+            residentTimeStepError );
+        return false;
+    }
     std::printf(
         "OneFLOW HIP main solver state update: PASS "
         "(max error %.3e, %d cells, %d equations)\n",
@@ -948,6 +1051,10 @@ bool TestMainSolverStateUpdate()
         "OneFLOW HIP main solver state/boundary residency: PASS "
         "(state %.3e, boundary %.3e, %d cells, %d equations)\n",
         error, residentBoundaryError, nCells, nEq );
+    std::printf(
+        "OneFLOW HIP main solver resident timestep: PASS "
+        "(max error %.3e, %d cells)\n",
+        residentTimeStepError, nCells );
     return true;
 }
 

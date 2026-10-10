@@ -311,6 +311,66 @@ inline void ValidateCellGradientView( const CellGradientView & view )
     }
 }
 
+// Local inviscid timestep contract for the explicit 3D Euler/RK path.  The
+// backend may reuse resident primitive state and cached face geometry, compute
+// the face spectral radius and cell timestep, and keep the timestep resident
+// for the following residual scaling stage.
+struct CellTimeStepView
+{
+    int nCells = 0;
+    int nGhostCells = 0;
+    int nFaces = 0;
+    int nBoundaryFaces = 0;
+    int nEquations = 0;
+    const Real * q[ 5 ] = {};
+    const Real * xNormal = nullptr;
+    const Real * yNormal = nullptr;
+    const Real * zNormal = nullptr;
+    const Real * meshVelocityNormal = nullptr;
+    const Real * faceArea = nullptr;
+    const Real * cellVolume = nullptr;
+    const int * leftCell = nullptr;
+    const int * rightCell = nullptr;
+    Real * inviscidSpectrum = nullptr;
+    Real * timeStep = nullptr;
+    Real gamma = 1.4;
+    Real cfl = 0.0;
+    Real maxTimeRatio = 0.0;
+    FieldLayout layout = FieldLayout::EquationMajor;
+    FieldRepresentation representation = FieldRepresentation::Primitive;
+    const void * cacheKey = nullptr;
+    bool preferResidentState = false;
+    bool downloadToHost = true;
+};
+
+inline void ValidateCellTimeStepView( const CellTimeStepView & view )
+{
+    if ( view.nCells <= 0 || view.nGhostCells < 0
+         || view.nGhostCells != view.nBoundaryFaces || view.nFaces <= 0
+         || view.nBoundaryFaces < 0 || view.nBoundaryFaces > view.nFaces
+         || view.nEquations != 5 || view.xNormal == nullptr
+         || view.yNormal == nullptr || view.zNormal == nullptr
+         || view.meshVelocityNormal == nullptr || view.faceArea == nullptr
+         || view.cellVolume == nullptr || view.leftCell == nullptr
+         || view.rightCell == nullptr || view.timeStep == nullptr
+         || view.gamma <= 1.0 || view.cfl <= 0.0
+         || view.layout != FieldLayout::EquationMajor
+         || view.representation != FieldRepresentation::Primitive
+         || view.cacheKey == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid solver cell timestep view" );
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( view.q[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "cell timestep view has a missing primitive component" );
+        }
+    }
+}
+
 // Backend-neutral reconstruction contract. Pointers may refer to host or
 // device memory as selected by memorySpace; ownership remains with the
 // per-solver/zone/grid state. All component arrays are equation-major by
@@ -504,6 +564,9 @@ struct CellStateUpdateView
     // update and RK stage.  Host mirroring remains controlled by the backend
     // call so legacy task consumers can stay authoritative during migration.
     bool retainResidentState = false;
+    // Reuse the device timestep produced by the preceding timestep stage.
+    // The default preserves the host-computed/uploaded path.
+    bool preferResidentTimeStep = false;
 };
 
 inline void ValidateCellStateUpdateView(

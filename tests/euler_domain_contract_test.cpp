@@ -429,4 +429,54 @@ TEST( AccelViewsContract, ValidatesCellStateUpdateContract )
         ValidateCellStateUpdateView( view ), std::invalid_argument );
 }
 
+TEST( AccelViewsContract, ValidatesCellTimeStepContract )
+{
+    Real primitive[ 5 ][ 4 ] = {};
+    Real normal[ 3 ] = {};
+    Real meshVelocity[ 3 ] = {};
+    Real area[ 3 ] = { 1.0, 1.0, 1.0 };
+    Real volume[ 2 ] = { 1.0, 1.0 };
+    Real spectrum[ 2 ] = {};
+    Real timeStep[ 2 ] = {};
+    int leftCell[ 3 ] = { 0, 1, 0 };
+    int rightCell[ 3 ] = { 2, 3, 1 };
+    int owner = 0;
+
+    CellTimeStepView view;
+    view.nCells = 2;
+    view.nGhostCells = 2;
+    view.nFaces = 3;
+    view.nBoundaryFaces = 2;
+    view.nEquations = 5;
+    view.xNormal = normal;
+    view.yNormal = normal;
+    view.zNormal = normal;
+    view.meshVelocityNormal = meshVelocity;
+    view.faceArea = area;
+    view.cellVolume = volume;
+    view.leftCell = leftCell;
+    view.rightCell = rightCell;
+    view.inviscidSpectrum = spectrum;
+    view.timeStep = timeStep;
+    view.gamma = 1.4;
+    view.cfl = 0.01;
+    view.cacheKey = &owner;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+        view.q[ equation ] = primitive[ equation ];
+
+    EXPECT_NO_THROW( ValidateCellTimeStepView( view ) );
+
+    view.cfl = 0.0;
+    EXPECT_THROW(
+        ValidateCellTimeStepView( view ), std::invalid_argument );
+    view.cfl = 0.01;
+    view.nGhostCells = 1;
+    EXPECT_THROW(
+        ValidateCellTimeStepView( view ), std::invalid_argument );
+    view.nGhostCells = 2;
+    view.q[ 4 ] = nullptr;
+    EXPECT_THROW(
+        ValidateCellTimeStepView( view ), std::invalid_argument );
+}
+
 } // namespace

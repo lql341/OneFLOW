@@ -16,6 +16,7 @@ License
 #include <hip/hip_runtime.h>
 
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -525,6 +526,133 @@ __global__ void GradientCopyBoundaryKernel(
         gradient[ base + 2 * totalCells + ghost ] =
             gradient[ base + 2 * totalCells + left ];
     }
+}
+
+__device__ void AtomicMinPositiveReal( Real * address, Real value )
+{
+    auto * bits = reinterpret_cast< unsigned long long * >( address );
+    const unsigned long long valueBits =
+        static_cast< unsigned long long >( __double_as_longlong( value ) );
+    unsigned long long previous = *bits;
+    while ( valueBits < previous )
+    {
+        const unsigned long long assumed = previous;
+        previous = atomicCAS( bits, assumed, valueBits );
+        if ( previous == assumed ) break;
+    }
+}
+
+__global__ void InviscidSpectrumZeroKernel(
+    Real * spectrum, int nCells )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell < nCells ) spectrum[ cell ] = 0.0;
+}
+
+__global__ void InviscidSpectrumAccumulateKernel(
+    const Real * q,
+    const Real * xNormal,
+    const Real * yNormal,
+    const Real * zNormal,
+    const Real * meshVelocityNormal,
+    const Real * faceArea,
+    const int * leftCell,
+    const int * rightCell,
+    int nCells,
+    int nGhostCells,
+    int nFaces,
+    Real gamma,
+    Real * spectrum,
+    int * status )
+{
+    const int face = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( face >= nFaces ) return;
+
+    const int totalCells = nCells + nGhostCells;
+    const int left = leftCell[ face ];
+    const int right = rightCell[ face ];
+    if ( left < 0 || left >= nCells
+         || right < 0 || right >= totalCells )
+    {
+        atomicExch( status, 1 );
+        return;
+    }
+
+    const Real rhoLeft = q[ 0 * totalCells + left ];
+    const Real uLeft = q[ 1 * totalCells + left ];
+    const Real vLeft = q[ 2 * totalCells + left ];
+    const Real wLeft = q[ 3 * totalCells + left ];
+    const Real pressureLeft = q[ 4 * totalCells + left ];
+    const Real rhoRight = q[ 0 * totalCells + right ];
+    const Real uRight = q[ 1 * totalCells + right ];
+    const Real vRight = q[ 2 * totalCells + right ];
+    const Real wRight = q[ 3 * totalCells + right ];
+    const Real pressureRight = q[ 4 * totalCells + right ];
+    if ( rhoLeft <= 0.0 || rhoRight <= 0.0
+         || pressureLeft <= 0.0 || pressureRight <= 0.0 )
+    {
+        atomicExch( status, 1 );
+        return;
+    }
+
+    const Real nx = xNormal[ face ];
+    const Real ny = yNormal[ face ];
+    const Real nz = zNormal[ face ];
+    const Real vfn = meshVelocityNormal[ face ];
+    const Real vnLeft =
+        nx * uLeft + ny * vLeft + nz * wLeft - vfn;
+    const Real vnRight =
+        nx * uRight + ny * vRight + nz * wRight - vfn;
+    const Real densityMean = 0.5 * ( rhoLeft + rhoRight );
+    const Real pressureMean = 0.5 * ( pressureLeft + pressureRight );
+    const Real soundSpeed =
+        sqrt( gamma * pressureMean / densityMean );
+    const Real normalVelocity = 0.5 * ( vnLeft + vnRight );
+    const Real faceSpectrum = 0.5 * faceArea[ face ]
+        * ( fabs( normalVelocity ) + soundSpeed );
+    if ( ! isfinite( faceSpectrum ) || faceSpectrum < 0.0 )
+    {
+        atomicExch( status, 1 );
+        return;
+    }
+
+    atomicAdd( &spectrum[ left ], faceSpectrum );
+    if ( right < nCells )
+        atomicAdd( &spectrum[ right ], faceSpectrum );
+}
+
+__global__ void LocalInviscidTimeStepKernel(
+    const Real * spectrum,
+    const Real * volume,
+    Real cfl,
+    int nCells,
+    Real * timeStep,
+    Real * minimum,
+    int * status )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+
+    const Real value = cfl * volume[ cell ] / spectrum[ cell ];
+    if ( ! isfinite( value ) || value <= 0.0 )
+    {
+        atomicExch( status, 1 );
+        return;
+    }
+    timeStep[ cell ] = value;
+    AtomicMinPositiveReal( minimum, value );
+}
+
+__global__ void CapLocalTimeStepKernel(
+    Real * timeStep,
+    const Real * minimum,
+    Real maxTimeRatio,
+    int nCells )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+    const Real maximum = maxTimeRatio * minimum[ 0 ];
+    if ( timeStep[ cell ] > maximum ) timeStep[ cell ] = maximum;
 }
 
 __device__ Real BoundaryPower( Real value, Real exponent, Real gamma )
@@ -1130,6 +1258,171 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     }
 }
 
+void HipFluxBackend::CalcLocalInviscidTimeStep(
+    const CellTimeStepView & view )
+{
+    ValidateCellTimeStepView( view );
+    HipGradientStorage * storage = &fallbackGradientStorage_;
+    Ns3DDeviceState * owner = nullptr;
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding != boundStates_.end() )
+    {
+        owner = binding->second;
+        auto * hipState =
+            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+        if ( hipState == nullptr )
+        {
+            throw std::logic_error(
+                "bound HIP Ns3D state lost its backend ownership" );
+        }
+        storage = &hipState->Gradient();
+    }
+
+    const int totalCells = view.nCells + view.nGhostCells;
+    storage->cellState.Resize( view.nEquations * totalCells );
+    const void * ownerToken =
+        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    bool residentStateUsable =
+        view.preferResidentState
+        && storage->residentStateReady
+        && storage->cachedStateOwnerToken == ownerToken
+        && storage->cachedStateCells == view.nCells
+        && storage->cachedStateGhostCells == view.nGhostCells;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    {
+        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
+            residentStateUsable = false;
+    }
+    if ( ! residentStateUsable )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage->cellState.Data() + equation * totalCells,
+                view.q[ equation ], totalCells * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+    }
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+        storage->cachedStateQ[ equation ] = view.q[ equation ];
+    storage->cachedStateOwnerToken = ownerToken;
+    storage->cachedStateCells = view.nCells;
+    storage->cachedStateGhostCells = view.nGhostCells;
+    storage->residentStateReady = true;
+
+    const std::uint64_t topologyGeneration =
+        owner != nullptr ? owner->TopologyGeneration() : 0;
+    const bool geometryMatches =
+        storage->timeStepGeometryCacheValid
+        && storage->cachedOwnerToken == ownerToken
+        && storage->cachedTopologyGeneration == topologyGeneration
+        && storage->cachedTimeStepXNormal == view.xNormal
+        && storage->cachedTimeStepYNormal == view.yNormal
+        && storage->cachedTimeStepZNormal == view.zNormal
+        && storage->cachedTimeStepMeshVelocityNormal
+            == view.meshVelocityNormal
+        && storage->cachedTimeStepFaceArea == view.faceArea
+        && storage->cachedTimeStepVolume == view.cellVolume
+        && storage->cachedTimeStepLeftCell == view.leftCell
+        && storage->cachedTimeStepRightCell == view.rightCell
+        && storage->cachedTimeStepCells == view.nCells
+        && storage->cachedTimeStepGhostCells == view.nGhostCells
+        && storage->cachedTimeStepFaces == view.nFaces
+        && storage->cachedTimeStepBoundaryFaces == view.nBoundaryFaces;
+    if ( ! geometryMatches )
+    {
+        storage->xNormal.CopyFromHost( view.xNormal, view.nFaces );
+        storage->yNormal.CopyFromHost( view.yNormal, view.nFaces );
+        storage->zNormal.CopyFromHost( view.zNormal, view.nFaces );
+        storage->meshVelocityNormal.CopyFromHost(
+            view.meshVelocityNormal, view.nFaces );
+        storage->faceArea.CopyFromHost( view.faceArea, view.nFaces );
+        storage->cellVolume.CopyFromHost(
+            view.cellVolume, view.nCells );
+        storage->leftCell.CopyFromHost( view.leftCell, view.nFaces );
+        storage->rightCell.CopyFromHost( view.rightCell, view.nFaces );
+        storage->cachedOwnerToken = ownerToken;
+        storage->cachedTopologyGeneration = topologyGeneration;
+        storage->cachedTimeStepXNormal = view.xNormal;
+        storage->cachedTimeStepYNormal = view.yNormal;
+        storage->cachedTimeStepZNormal = view.zNormal;
+        storage->cachedTimeStepMeshVelocityNormal =
+            view.meshVelocityNormal;
+        storage->cachedTimeStepFaceArea = view.faceArea;
+        storage->cachedTimeStepVolume = view.cellVolume;
+        storage->cachedTimeStepLeftCell = view.leftCell;
+        storage->cachedTimeStepRightCell = view.rightCell;
+        storage->cachedTimeStepCells = view.nCells;
+        storage->cachedTimeStepGhostCells = view.nGhostCells;
+        storage->cachedTimeStepFaces = view.nFaces;
+        storage->cachedTimeStepBoundaryFaces = view.nBoundaryFaces;
+        storage->timeStepGeometryCacheValid = true;
+    }
+
+    storage->inviscidSpectrum.Resize( view.nCells );
+    storage->timeStep.Resize( view.nCells );
+    const Real initialMinimum = std::numeric_limits< Real >::max();
+    int status = 0;
+    storage->minTimeStep.CopyFromHost( & initialMinimum, 1 );
+    storage->timeStepStatus.CopyFromHost( & status, 1 );
+
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        InviscidSpectrumZeroKernel,
+        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->inviscidSpectrum.Data(), view.nCells );
+    hipLaunchKernelGGL(
+        InviscidSpectrumAccumulateKernel,
+        dim3( ( view.nFaces + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->cellState.Data(), storage->xNormal.Data(),
+        storage->yNormal.Data(), storage->zNormal.Data(),
+        storage->meshVelocityNormal.Data(), storage->faceArea.Data(),
+        storage->leftCell.Data(), storage->rightCell.Data(),
+        view.nCells, view.nGhostCells, view.nFaces, view.gamma,
+        storage->inviscidSpectrum.Data(),
+        storage->timeStepStatus.Data() );
+    hipLaunchKernelGGL(
+        LocalInviscidTimeStepKernel,
+        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->inviscidSpectrum.Data(), storage->cellVolume.Data(),
+        view.cfl, view.nCells, storage->timeStep.Data(),
+        storage->minTimeStep.Data(), storage->timeStepStatus.Data() );
+    CheckHip( hipGetLastError(), "local timestep kernel launch" );
+    storage->timeStepStatus.CopyToHost( & status, 1 );
+    if ( status != 0 )
+    {
+        throw std::runtime_error(
+            "HIP local timestep produced an invalid spectral radius" );
+    }
+    if ( view.maxTimeRatio > 0.0 )
+    {
+        hipLaunchKernelGGL(
+            CapLocalTimeStepKernel,
+            dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0, storage->timeStep.Data(),
+            storage->minTimeStep.Data(), view.maxTimeRatio,
+            view.nCells );
+        CheckHip( hipGetLastError(), "local timestep cap kernel launch" );
+    }
+    CheckHip(
+        hipDeviceSynchronize(), "local timestep kernel synchronize" );
+
+    storage->cachedTimeStepHost = view.timeStep;
+    storage->residentTimeStepReady = true;
+    if ( view.downloadToHost )
+    {
+        storage->timeStep.CopyToHost( view.timeStep, view.nCells );
+        if ( view.inviscidSpectrum != nullptr )
+        {
+            storage->inviscidSpectrum.CopyToHost(
+                view.inviscidSpectrum, view.nCells );
+        }
+    }
+}
+
 void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
 {
     ValidateBoundaryStateView( view );
@@ -1527,7 +1820,18 @@ void HipFluxBackend::ScaleCurrentResidual(
             "HIP state update requires a compatible resident residual" );
     }
 
-    storage.timeStep.CopyFromHost( view.timeStep, view.nCells );
+    const bool residentTimeStepUsable =
+        view.preferResidentTimeStep
+        && storage.residentTimeStepReady
+        && storage.cachedTimeStepHost == view.timeStep
+        && storage.cachedTimeStepCells == view.nCells;
+    if ( ! residentTimeStepUsable )
+    {
+        storage.timeStep.CopyFromHost( view.timeStep, view.nCells );
+        storage.cachedTimeStepHost = view.timeStep;
+        storage.cachedTimeStepCells = view.nCells;
+        storage.residentTimeStepReady = true;
+    }
     const int total = view.nCells * view.nEquations;
     const int blockSize = 256;
     hipLaunchKernelGGL(

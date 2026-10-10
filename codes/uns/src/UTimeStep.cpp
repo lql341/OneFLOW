@@ -38,10 +38,102 @@ License
 #include "DataBase.h"
 #include "FieldBase.h"
 #include "Iteration.h"
+#include "Ctrl.h"
+#include "GridState.h"
+#include "ZoneState.h"
+#include "SolverState.h"
+#include "SolverDef.h"
+#include "TimeIntegral.h"
+#include "AccelRuntime.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
+#include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+bool HipTimeStepRequested()
+{
+    const char * enabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
+    return enabled != nullptr && enabled[ 0 ] == '1';
+}
+
+bool EnvironmentEnabled( const char * name )
+{
+    const char * value = std::getenv( name );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
+bool HipTimeStepSupported()
+{
+#ifndef ONEFLOW_ENABLE_HIP
+    return false;
+#else
+    AccelRuntime & runtime = AccelRuntime::Instance();
+    return runtime.IsInitialized()
+        && runtime.Backend().Kind() == AccelBackendKind::HIP
+        && SolverState::solverType == NS_SOLVER
+        && ZoneState::nLocal == 1
+        && GridState::gridLevel == 0
+        && GridState::nGrids == 1
+        && nscom.nEqu == 5
+        && nscom.chemModel == 0
+        && nscom.nTModel == 1
+        && vis_model.vismodel == 0
+        && nscom.timestepModel == 0
+        && ctrl.time_integral == MULTI_STAGE
+        && ctrl.idualtime == 0
+        && ug.nCells > 0
+        && ug.nFaces > 0
+        && ug.nTCell - ug.nCells == ug.nBFaces
+        && EnvironmentEnabled( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" )
+        && EnvironmentEnabled( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
+#endif
+}
+
+void CalcHipLocalInviscidTimeStep()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    UnsGrid * grid = Zone::GetUnsGrid();
+    CellTimeStepView view;
+    view.nCells = ug.nCells;
+    view.nGhostCells = ug.nTCell - ug.nCells;
+    view.nFaces = ug.nFaces;
+    view.nBoundaryFaces = ug.nBFaces;
+    view.nEquations = nscom.nEqu;
+    view.xNormal = ug.xfn->data();
+    view.yNormal = ug.yfn->data();
+    view.zNormal = ug.zfn->data();
+    view.meshVelocityNormal = ug.vfn->data();
+    view.faceArea = ug.farea->data();
+    view.cellVolume = ug.cvol->data();
+    view.leftCell = ug.lcf->data();
+    view.rightCell = ug.rcf->data();
+    view.inviscidSpectrum = ( * unsf.invsr )[ 0 ].data();
+    view.timeStep = ( * unsf.timestep )[ 0 ].data();
+    view.gamma = nscom.gama_ref;
+    view.cfl = Iteration::cfl;
+    view.maxTimeRatio = nscom.max_time_ratio;
+    view.cacheKey = grid;
+    view.preferResidentState = true;
+    view.downloadToHost = false;
+    for ( int equation = 0; equation < view.nEquations; ++ equation )
+        view.q[ equation ] = ( * unsf.q )[ equation ].data();
+    HipFluxBackend::Shared().CalcLocalInviscidTimeStep( view );
+#else
+    throw std::runtime_error(
+        "HIP local timestep was requested without HIP support" );
+#endif
+}
+
+}
 
 void InitUnsField()
 {
@@ -125,6 +217,18 @@ void UTimeStep::CalcTimeStep()
     this->Init();
 
     this->CalcCfl();
+
+    if ( HipTimeStepRequested() )
+    {
+        if ( ! HipTimeStepSupported() )
+        {
+            throw std::runtime_error(
+                "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP=1 is unsupported for the "
+                "current solver, timestep model, or accelerator chain" );
+        }
+        CalcHipLocalInviscidTimeStep();
+        return;
+    }
 
     this->CalcSpectrumField();
 
