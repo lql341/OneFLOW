@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-10（PR #203 不再跟踪；继续推进 3D HIP resident timestep 后的准确性、稳定性和配对性能门禁。技术路线快照仍以各节记录日期为准）
+> 最后更新：2026-10-10（PR #203 不再跟踪；3D HIP resident timestep 的准确性、稳定性和首轮配对性能已闭环，当前 revision 待本轮提交后确定。技术路线快照仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -13,7 +13,7 @@
 
 | 项 | 状态 |
 |---|---|
-| `origin/dev` / 本地 `dev` | 已同步到当前 checkpoint；`dev` 已合入 `upstream/master`，并包含主线重复定义修复与 3D HIP residual 接入。精确值以 `git rev-parse dev` 为准，不要在本文档里钉死自己的 commit |
+| `origin/dev` / 本地 `dev` | 本地 `dev` 已合入 `upstream/master`，包含主线重复定义修复与 3D HIP residual 接入；当前本地相对 `origin/dev` **ahead 12**，本轮按用户要求只提交本地 commit，不 push。精确值以 `git rev-parse dev` 为准 |
 | PR #159 `pr/agents-branch-model` | **MERGED**（2026-09-19，review approved）；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端 |
 | PR #160 `pr/euler-weno5-unified` | **MERGED**（2026-09-19，review approved）；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 | PR #203 `pr/database-type-map-init` | **OPEN**；用户要求不跟踪，保持等待通过；不纳入本轮开发判断 |
@@ -25,6 +25,8 @@ PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-on
 **当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。同 basis 探索性 timing 已记录，但没有足够的配对重复来形成稳定性能结论或更新正式报告。该验收不等同于完整 MPI/halo、多 zone、viscous/turbulence 或全链路 GPU residency；gradient 的 q H2D、gradient D2H，以及现有 boundary/下一 stage 所需的 host state 路径仍是后续工作。
 
 **Kunshan 默认测试依赖（2026-10-09 起）**：所有新 CPU、CPU MPI 与 root main-solver 测试使用 GCC `16.2.0`（`gcc/16.2.0`）、OpenMPI `5.0.11`（`openmpi/5.0.11`）、CMake `4.4.3`（`cmake/4.4.3`），MPI 测试设置 `OMPI_MCA_coll=^hcoll`，并在运行证据中记录实际版本与 MPI 路径。旧 GCC 9/OpenMPI 4/CMake 3.25 记录只作为历史结果；DTK/HIP 测试如确需兼容工具链，必须作为明确的 HIP 专用例外记录，不能用于 CPU/MPI 验证。权威说明见 [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)。
+
+**本轮最终 checkpoint 与同步边界**：本轮文档提交后，以该 commit 的完整 SHA 作为唯一 handoff revision。提交后不得改写该 revision；本地 Git 不 push、不新开 PR，PR #203 继续只等待通过。昆山同步使用 SCNet OpenAPI region `11250`，将 `git archive` 上传到 `/public/home/luql/.scnet-hpc/oneflow/incoming`，再通过短 CPU 作业在 `/public/home/luql/.scnet-hpc/oneflow/src/OneFLOW-<SHA>` 解压；目标目录不存在时才创建，不覆盖已有 revision。远端核验至少包含该 source 目录、本文档和 `ci/kunshan/f2-main-solver-paired-performance.slurm`，并确认本地与远端文件属于同一 SHA。该同步是云端工作区备份，不代表 `origin/dev` 已更新。
 
 ## Big picture：正确性优先的统一 GPU solver 架构
 
