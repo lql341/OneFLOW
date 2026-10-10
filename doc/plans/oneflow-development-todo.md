@@ -20,7 +20,7 @@
 
 PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档，已合并；#160 在 PR 分支实跑昆山 T1 + T2，#159 为 docs-only。对应 topic branch 已清理。PR #203 也基于 upstream master 单独提交，尚未合并；不得提前删除其 topic branch。
 
-**当前交接事项**：先跟进 PR #203（https://github.com/eric2003/OneFLOW/pull/203）的 CI 与 review。改动在 `DataBaseType::GetIndex()` 和 `GetName()` 首次访问时调用 `Init()`，并新增独立进程测试，验证静态映射尚未初始化时的首次访问。Kunshan OpenAPI 使用 GCC 16.2.0、OpenMPI 5.0.11、CMake 4.4.3，`DataBaseTypeInitTest.AccessorsInitializeMappingsOnFirstUse` 通过（1/1）。最近一次 GitHub 状态为 `MERGEABLE`、`REVIEW_REQUIRED`，deploy 成功，Linux/Windows checks 运行中；接手时应刷新实时状态。
+**当前交接事项**：PR #203 按用户要求只等待其 review/CI 结果，不再跟踪或刷新状态；本轮工作转回 3D HIP resident timestep 的准确性、稳定性、配对性能和后续 ownership/MPI 门禁。PR #203 的数据库初始化证据仍保留作历史记录，不作为当前开发阻塞项。
 
 **当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。同 basis 探索性 timing 已记录，但没有足够的配对重复来形成稳定性能结论或更新正式报告。该验收不等同于完整 MPI/halo、多 zone、viscous/turbulence 或全链路 GPU residency；gradient 的 q H2D、gradient D2H，以及现有 boundary/下一 stage 所需的 host state 路径仍是后续工作。
 
@@ -31,7 +31,10 @@ PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-on
 目标不是分别维护“1D GPU solver”和“3D GPU solver”，而是在 CPU oracle 保持可信的
 前提下，由 `codes/accel` 提供一套 1D/3D 共用的 backend、state、view、lifecycle、
 trace/stats 和设备所有权 contract；1D port 是小规模数值与生命周期验证客户端，3D
-主 solver 通过 adapter 使用同一 contract。
+主 solver 通过 adapter 使用同一 contract。2026-10-10 的 `b980b326` 已将受限
+local inviscid timestep 接入同一 state-owned HIP chain；3-step 36-record trace、
+fixed-CFL `0.01` 50-step stability 和同资源 25-step paired timing 均已闭环，
+但 capability 仍限于单 zone/finest grid/5 方程/Lax-Friedrichs/limiter-off/inviscid。
 
 - [x] 保留 CPU normal/strict 与 stage trace 作为数值 oracle，不以 build-only 或单一
       checksum 代替正确性。
