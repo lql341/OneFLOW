@@ -26,8 +26,31 @@ License
 #include "FileUtils.h"
 #include <iostream>
 #include <filesystem>
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+std::string ResolvePathUnderRoot(
+    const std::string & rootName,
+    const std::string & fileName )
+{
+    const std::filesystem::path path( fileName );
+
+    // Only fully absolute paths bypass the configured root.
+    if ( path.is_absolute() )
+    {
+        return path.lexically_normal().string();
+    }
+
+    return ( std::filesystem::path( rootName ) / path )
+        .lexically_normal().string();
+}
+
+}
+
 
 bool Prj::hx_debug = false;
 bool Prj::run_from_ide = false;
@@ -151,6 +174,12 @@ std::string Prj::ResolveCaseDir( const std::string & caseDir )
 
     if ( projectPath.is_relative() )
     {
+        if ( Prj::current_dir.empty() )
+        {
+            Fatal( "Current directory is not initialized; cannot resolve "
+                "relative project path: " + caseDir );
+        }
+
         projectPath =
             std::filesystem::path( Prj::current_dir ) / projectPath;
     }
@@ -189,14 +218,7 @@ void Prj::OpenCaseFile(
     const std::ios_base::openmode & openMode )
 {
     std::string caseFileName = Prj::GetCaseFileName( caseDir, fileName );
-
-    // Create parent directories only for write operations.
-    if ( ( openMode & std::ios_base::out ) != 0 )
-    {
-        CreateDirIfNeeded( caseFileName );
-    }
-
-    Prj::OpenFile( file, caseFileName, openMode );
+    Prj::OpenFileWithParentDirectory( file, caseFileName, openMode );
 }
 
 void Prj::OpenPrjFile(
@@ -205,14 +227,21 @@ void Prj::OpenPrjFile(
     const std::ios_base::openmode & openMode )
 {
     std::string prjFileName = Prj::GetPrjFileName( fileName );
+    Prj::OpenFileWithParentDirectory( file, prjFileName, openMode );
+}
 
+void Prj::OpenFileWithParentDirectory(
+    std::fstream & file,
+    const std::string & fileName,
+    const std::ios_base::openmode & openMode )
+{
     // Create parent directories only for write operations.
     if ( ( openMode & std::ios_base::out ) != 0 )
     {
-        CreateDirIfNeeded( prjFileName );
+        CreateDirIfNeeded( fileName );
     }
 
-    Prj::OpenFile( file, prjFileName, openMode );
+    Prj::OpenFile( file, fileName, openMode );
 }
 
 void Prj::OpenFile(
@@ -234,11 +263,29 @@ void Prj::CloseFile( std::fstream & file )
     file.clear();
 }
 
+void Prj::CloseOutputFile( std::fstream & file, const std::string & operation )
+{
+    file.flush();
+    if ( ! file )
+    {
+        throw std::runtime_error( operation + ": failed to write output data" );
+    }
+
+    file.close();
+    if ( ! file )
+    {
+        throw std::runtime_error( operation + ": failed to close output file" );
+    }
+}
+
 void Prj::MakePrjDir( const std::string & dirName )
 {
     std::string prjDirName = Prj::GetPrjFileName( dirName );
 
-    HX_CreateDirectory( prjDirName );
+    if ( ! HX_CreateDirectory( prjDirName ) )
+    {
+        Fatal( "Could not create project directory: " + prjDirName );
+    }
 }
 
 // Same pattern as GetPrjFileName, but rooted at the OneFLOW installation's
@@ -247,16 +294,7 @@ void Prj::MakePrjDir( const std::string & dirName )
 // string concatenation that used to live in individual business-logic files.
 std::string Prj::GetSystemFileName( const std::string & fileName )
 {
-    std::filesystem::path path( fileName );
-
-    // Only a complete filesystem absolute path bypasses the system directory.
-    if ( path.is_absolute() )
-    {
-        return path.lexically_normal().string();
-    }
-
-    std::filesystem::path systemRoot( Prj::system_root );
-    return ( systemRoot / path ).lexically_normal().string();
+    return ResolvePathUnderRoot( Prj::system_root, fileName );
 }
 
 std::string Prj::GetDirName( const std::string & fileName )
@@ -277,39 +315,27 @@ void Prj::CreateDirIfNeeded( const std::string & prjFileName )
 {
     std::string dirName = Prj::GetDirName( prjFileName );
 
-    if ( ! HX_IsDirectory( dirName ) )
+    // A file in the current directory has no parent directory to create.
+    if ( dirName.empty() )
     {
-        HX_CreateDirectory( dirName );
+        return;
+    }
+
+    if ( ! HX_CreateDirectory( dirName ) )
+    {
+        Fatal( "Could not create parent directory for file: " + prjFileName );
     }
 }
 
 std::string Prj::GetPrjFileName( const std::string & fileName )
 {
-    std::filesystem::path path( fileName );
-
-    // Only a complete filesystem absolute path bypasses the project directory.
-    if ( path.is_absolute() )
-    {
-        return path.lexically_normal().string();
-    }
-
-    std::filesystem::path projectRoot( Prj::prjBaseDir );
-    return ( projectRoot / path ).lexically_normal().string();
+    return ResolvePathUnderRoot( Prj::prjBaseDir, fileName );
 }
 
 std::string Prj::GetCaseFileName(
     const std::string & caseDir,
     const std::string & fileName )
 {
-    std::filesystem::path path( fileName );
-
-    // An absolute input path is already fully qualified and must not be
-    // prefixed with the current case directory.
-    if ( path.is_absolute() )
-    {
-        return path.lexically_normal().string();
-    }
-
     std::filesystem::path baseDir( caseDir );
 
     if ( baseDir.is_relative() )
@@ -320,7 +346,7 @@ std::string Prj::GetCaseFileName(
             std::filesystem::path( Prj::prjBaseDir ) / baseDir;
     }
 
-    return ( baseDir / path ).lexically_normal().string();
+    return ResolvePathUnderRoot( baseDir.string(), fileName );
 }
 
 EndNameSpace
