@@ -55,19 +55,6 @@ inline Real FarFieldPower( Real value, Real exponent )
 
 }
 
-NsBcSolver::NsBcSolver()
-{
-    farfieldCacheValid = false;
-    farfieldCachedGamma = zero;
-    farfieldCachedSoundSpeed = zero;
-    farfieldCachedEntropy = zero;
-}
-
-NsBcSolver::~NsBcSolver()
-{
-    ;
-}
-
 void NsBcSolver::SetBc()
 {
     this->bcPointer = & NsBcSolver::NoBc;
