@@ -29,8 +29,8 @@ BeginNameSpace( ONEFLOW )
 class NsBcSolver
 {
 public:
-    NsBcSolver();
-    ~NsBcSolver();
+    NsBcSolver() = default;
+    ~NsBcSolver() = default;
 public:
     using BcPointer = void ( NsBcSolver:: * )();
 public:
@@ -39,10 +39,10 @@ public:
     virtual void Solve(){};
     BcPointer bcPointer;
     bool updateFlag;
-    bool farfieldCacheValid;
-    Real farfieldCachedGamma;
-    Real farfieldCachedSoundSpeed;
-    Real farfieldCachedEntropy;
+    bool farfieldCacheValid = false;
+    Real farfieldCachedGamma = zero;
+    Real farfieldCachedSoundSpeed = zero;
+    Real farfieldCachedEntropy = zero;
 public:
     void InFlowBc           ();
     void OutFlowBc          ();

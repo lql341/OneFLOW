@@ -41,14 +41,6 @@ bool FailOnNonPhysicalState()
 
 }
 
-NsUpdate::NsUpdate()
-{
-}
-
-NsUpdate::~NsUpdate()
-{
-}
-
 void NsUpdate::CalcFlowField()
 {
     PrimToQ( nscom.prim0, nscom.gama, nscom.q0 );

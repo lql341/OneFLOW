@@ -17,7 +17,6 @@ License
 
     You should have received a copy of the GNU General Public License
     along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
-
 \*---------------------------------------------------------------------------*/
 #pragma once
 #include "HXDefine.h"
@@ -29,11 +28,12 @@ BeginNameSpace( ONEFLOW )
 
 class DataStorage;
 
+// Static name -> equation-count table (process-wide).
 class GFieldDim
 {
 public:
-    GFieldDim();
-    ~GFieldDim();
+    GFieldDim() = default;
+    ~GFieldDim() = default;
 public:
     static std::map< std::string, int > data;
 public:
@@ -41,19 +41,26 @@ public:
     static int GetNEqu( const std::string & fieldName );
 };
 
+// Non-owning view of MRField pointers plus parallel nEqu list.
+// Callers (DataStorage / grid) keep field lifetime.
 class ScalarFieldRecord
 {
 public:
-    ScalarFieldRecord();
-    ~ScalarFieldRecord();
+    ScalarFieldRecord() = default;
+    ~ScalarFieldRecord() = default;
 public:
     void AddField( MRField * field, int nEqu );
     MRField * GetField( int id );
+    const MRField * GetField( int id ) const;
+    int GetNumberOfFields() const
+    {
+        return static_cast< int >( this->fields.size() );
+    }
+    int GetNEqu( int id ) const;
 public:
-    void AddFieldRecord( DataStorage * dataStorage, StringField & fieldNameList );
-public:
-    IntField nEquList;
+    void AddFieldRecord( DataStorage * dataStorage, const StringField & fieldNameList );
 private:
+    IntField nEquList;
     HXVector< MRField * > fields;
 };
 

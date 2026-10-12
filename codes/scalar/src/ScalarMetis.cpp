@@ -52,6 +52,8 @@ License
 #include "SmartGrid.h"
 #include <iostream>
 #include <vector>
+#include <stdexcept>
+#include <limits>
 
 
 BeginNameSpace( ONEFLOW )
@@ -159,20 +161,37 @@ std::vector< std::unique_ptr< ScalarGrid > > ScalarReadGrid( const std::string &
     Prj::OpenPrjFile( file, gridFileName, std::ios_base::in|std::ios_base::binary );
 
     int nZone = -1;
-
     ONEFLOW::HXRead( & file, nZone );
+    if ( ! file )
+    {
+        throw std::runtime_error( "ScalarReadGrid: failed to read the grid zone count" );
+    }
 
-    ZoneState::pid.resize( nZone );
-    ZoneState::zoneType.resize( nZone );
+    if ( nZone <= 0 )
+    {
+        Prj::CloseFile( file );
+        throw std::runtime_error( "ScalarReadGrid: grid file must contain at least one zone" );
+    }
 
-    ONEFLOW::HXRead( & file, ZoneState::pid );
-    ONEFLOW::HXRead( & file, ZoneState::zoneType );
+    // Parse metadata locally so malformed input cannot partially mutate global zone state.
+    IntField zonePids( nZone );
+    IntField zoneTypes( nZone );
+    ONEFLOW::HXRead( & file, zonePids );
+    ONEFLOW::HXRead( & file, zoneTypes );
+    if ( ! file )
+    {
+        throw std::runtime_error( "ScalarReadGrid: truncated zone metadata" );
+    }
 
     if ( Parallel::zoneMode == 0 )
     {
+        if ( Parallel::nProc <= 0 )
+        {
+            throw std::runtime_error( "ScalarReadGrid: process count must be positive" );
+        }
         for ( int iZone = 0; iZone < nZone; ++ iZone )
         {
-            ZoneState::pid[ iZone ] = ( iZone ) % Parallel::nProc;
+            zonePids[ iZone ] = iZone % Parallel::nProc;
         }
     }
 
@@ -181,10 +200,19 @@ std::vector< std::unique_ptr< ScalarGrid > > ScalarReadGrid( const std::string &
         std::cout << "iZone = " << iZone << " nZone = " << nZone << "\n";
         auto grid = std::make_unique< ScalarGrid >();
         grid->id = iZone;
-        grid->type = ZoneState::zoneType[ iZone ];
+        grid->type = zoneTypes[ iZone ];
         grid->ReadGrid( file );
+        if ( ! file )
+        {
+            throw std::runtime_error(
+                "ScalarReadGrid: truncated grid data for zone " + std::to_string( iZone ) );
+        }
         grids.push_back( std::move( grid ) );
     }
+
+    // Publish zone metadata only after every zone has been read successfully.
+    ZoneState::pid = std::move( zonePids );
+    ZoneState::zoneType = std::move( zoneTypes );
 
     Prj::CloseFile( file );
     return grids;
@@ -192,51 +220,83 @@ std::vector< std::unique_ptr< ScalarGrid > > ScalarReadGrid( const std::string &
 
 void ScalarDumpGrid( const std::string & gridFileName, ScalarGrid & grid )
 {
+    const int nZone = 1;
+    IntField zonePids( nZone );
+    IntField zoneTypes( nZone );
+    zonePids[ 0 ] = 0;
+    zoneTypes[ 0 ] = grid.type;
+
     std::fstream file;
     Prj::OpenPrjFile( file, gridFileName, std::ios_base::out|std::ios_base::binary|std::ios_base::trunc );
 
-    int nZone = 1;
-    ZoneState::pid.resize( nZone );
-    ZoneState::zoneType.resize( nZone );
-    ZoneState::pid[ 0 ] = 0;
-    ZoneState::zoneType[ 0 ] = grid.type;
-
     ONEFLOW::HXWrite( & file, nZone );
-    ONEFLOW::HXWrite( & file, ZoneState::pid );
-    ONEFLOW::HXWrite( & file, ZoneState::zoneType );
+    ONEFLOW::HXWrite( & file, zonePids );
+    ONEFLOW::HXWrite( & file, zoneTypes );
 
     std::cout << "iZone = 0 nZone = 1\n";
     grid.WriteGrid( file );
-
+    file.flush();
+    if ( ! file )
+    {
+        throw std::runtime_error( "ScalarDumpGrid: failed to write grid data" );
+    }
     Prj::CloseFile( file );
+
+    // Publish metadata only after the output stream has completed successfully.
+    ZoneState::pid = std::move( zonePids );
+    ZoneState::zoneType = std::move( zoneTypes );
 }
 
 void ScalarDumpGrid( const std::string & gridFileName, const std::vector< std::unique_ptr< ScalarGrid > > & grids )
 {
-    std::fstream file;
-    Prj::OpenPrjFile( file, gridFileName, std::ios_base::out|std::ios_base::binary|std::ios_base::trunc );
-    int nZone = static_cast<int>( grids.size() );
-
-    ZoneState::pid.resize( nZone );
-    ZoneState::zoneType.resize( nZone );
-
-    for ( int iZone = 0; iZone < nZone; ++ iZone )
+    if ( grids.empty() )
     {
-        ZoneState::pid[ iZone ] = iZone;
-        ZoneState::zoneType[ iZone ] = grids[ iZone ]->type;
+        throw std::invalid_argument( "ScalarDumpGrid: at least one grid zone is required" );
+    }
+    if ( grids.size() > static_cast< size_t >( std::numeric_limits< int >::max() ) )
+    {
+        throw std::length_error( "ScalarDumpGrid: zone count exceeds the file format limit" );
+    }
+    for ( const auto & grid : grids )
+    {
+        if ( ! grid )
+        {
+            throw std::invalid_argument( "ScalarDumpGrid: grid zone must not be null" );
+        }
     }
 
+    // Validate the complete collection before truncating the destination file.
+    const int nZone = static_cast<int>( grids.size() );
+    IntField zonePids( nZone );
+    IntField zoneTypes( nZone );
+    for ( int iZone = 0; iZone < nZone; ++ iZone )
+    {
+        zonePids[ iZone ] = iZone;
+        zoneTypes[ iZone ] = grids[ iZone ]->type;
+    }
+
+    std::fstream file;
+    Prj::OpenPrjFile( file, gridFileName, std::ios_base::out|std::ios_base::binary|std::ios_base::trunc );
+
     ONEFLOW::HXWrite( & file, nZone );
-    ONEFLOW::HXWrite( & file, ZoneState::pid );
-    ONEFLOW::HXWrite( & file, ZoneState::zoneType );
+    ONEFLOW::HXWrite( & file, zonePids );
+    ONEFLOW::HXWrite( & file, zoneTypes );
 
     for ( int iZone = 0; iZone < nZone; ++ iZone )
     {
         std::cout << "iZone = " << iZone << " nZone = " << nZone << "\n";
         grids[ iZone ]->WriteGrid( file );
     }
-
+    file.flush();
+    if ( ! file )
+    {
+        throw std::runtime_error( "ScalarDumpGrid: failed to write grid data" );
+    }
     Prj::CloseFile( file );
+
+    // Publish metadata only after the output stream has completed successfully.
+    ZoneState::pid = std::move( zonePids );
+    ZoneState::zoneType = std::move( zoneTypes );
 }
 
 EndNameSpace

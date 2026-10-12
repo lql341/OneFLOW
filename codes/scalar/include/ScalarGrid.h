@@ -91,7 +91,7 @@ public:
 
     void Reserve( int new_size );
 
-    void ReOrder( IntList & orderMap );
+    void ReOrder( const IntList & orderMap );
 };
 
 class EList
@@ -116,7 +116,7 @@ public:
         return data[ i ];
     }
 
-    void ReOrder( IntList & orderMap );
+    void ReOrder( const IntList & orderMap );
 
     void Reserve( int new_size );
 
@@ -217,6 +217,7 @@ private:
     void ResetMeshData();
     void ResetTopologyData();
     void ResetGeometryData();
+    std::vector< IntSet > CollectBoundaryVertexSets( int nodeCount ) const;
     std::unique_ptr< DataBase > dataBase;
 public:
     int GetNNodes() const;
@@ -234,7 +235,7 @@ public:
     void AllocGeom();
     void ScanBcFace();
     void ScanBcFace( IntSet& bcVertex, int bcType );
-    bool CheckBcFace( IntSet & bcVertex, std::vector< int > & nodeId );
+    bool CheckBcFace( const IntSet & bcVertex, const std::vector< int > & nodeId ) const;
     void AllocateBc();
     void SetBcTypes();
 public:
@@ -277,11 +278,10 @@ public:
     void NormalizeBc();
 public:
     //partition
-    void AddFaceType( int fType );
     void AddInterface( int global_interface_id, int neighbor_zoneid, int neighbor_cellid );
-    void AddPhysicalBcFace( int global_face_id, int bctype, int lcell, int rcell );
-    void AddInnerFace( int global_face_id, int bctype, int lcell, int rcell );
-    void AddInterfaceBcFace( int global_face_id, int bctype, int lcell, int rcell, int nei_zoneid, int nei_cellid );
+    void AddPhysicalBcFace( int global_face_id, int bctype, int lcell, int rcell, int ftype );
+    void AddInnerFace( int global_face_id, int bctype, int lcell, int rcell, int ftype );
+    void AddInterfaceBcFace( int global_face_id, int bctype, int lcell, int rcell, int nei_zoneid, int nei_cellid, int ftype );
     void ReconstructNode( const ScalarGrid & ggrid );
 
 };
