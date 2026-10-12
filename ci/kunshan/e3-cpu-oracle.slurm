@@ -23,7 +23,7 @@ module load cmake/4.4.3
 module load python/3.8.10
 export OMPI_MCA_coll="^hcoll"
 
-source_case="$ONEFLOW_E3_ORACLE_SOURCE_DIR/test/m6wingroe_sa"
+source_case="$ONEFLOW_E3_ORACLE_SOURCE_DIR/test/cfd/m6wingroe_sa"
 oracle_root="${ONEFLOW_E3_ORACLE_RUN_DIR:-$PWD/e3-cpu-oracle-${SLURM_JOB_ID:-manual}}"
 legacy_case="$oracle_root/legacy/m6wingroe_sa"
 batch_case="$oracle_root/batch/m6wingroe_sa"

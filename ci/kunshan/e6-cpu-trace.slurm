@@ -22,7 +22,7 @@ module load cmake/4.4.3
 module load python/3.8.10
 export OMPI_MCA_coll="^hcoll"
 
-source_case="$ONEFLOW_E6_TRACE_SOURCE_DIR/test/m6wingroe_sa"
+source_case="$ONEFLOW_E6_TRACE_SOURCE_DIR/test/cfd/m6wingroe_sa"
 trace_root="${ONEFLOW_E6_TRACE_RUN_DIR:-$PWD/e6-cpu-trace-${SLURM_JOB_ID:-manual}}"
 legacy_case="$trace_root/legacy"
 batch_case="$trace_root/batch"

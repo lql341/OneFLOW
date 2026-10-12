@@ -118,7 +118,7 @@ if [ "$rc_smoke" -eq 0 ] && [ "$rc_gtest" -eq 0 ] && [ "$rc_ctest" -eq 0 ] && [ 
     export ONEFLOW_F2_STAGE_SOURCE_DIR="$source_dir"
     export ONEFLOW_F2_STAGE_BINARY="$build_dir/bin/OneFLOW"
     export ONEFLOW_F2_STAGE_RUN_DIR="$artifact_dir/stage"
-    export ONEFLOW_F2_STAGE_CASE="test/m6wingroe_sa"
+    export ONEFLOW_F2_STAGE_CASE="test/cfd/m6wingroe_sa"
     export ONEFLOW_F2_STAGE_STEPS="$trace_steps"
     export ONEFLOW_F2_STAGE_TIME_INTEGRAL=1
     export ONEFLOW_F2_STAGE_RK_STAGES=3

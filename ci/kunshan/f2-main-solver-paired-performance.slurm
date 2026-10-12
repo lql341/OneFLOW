@@ -42,7 +42,7 @@ export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
 export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
 export OMPI_MCA_coll="^hcoll"
 
-source_case="$ONEFLOW_F2_PAIRED_SOURCE_DIR/${ONEFLOW_F2_PAIRED_CASE:-test/m6wingroe_sa}"
+source_case="$ONEFLOW_F2_PAIRED_SOURCE_DIR/${ONEFLOW_F2_PAIRED_CASE:-test/cfd/m6wingroe_sa}"
 run_root="${ONEFLOW_F2_PAIRED_RUN_DIR:-$PWD/f2-main-solver-paired-${SLURM_JOB_ID:-manual}}"
 steps="${ONEFLOW_F2_PAIRED_STEPS:-25}"
 warmup="${ONEFLOW_F2_PAIRED_WARMUP:-1}"
