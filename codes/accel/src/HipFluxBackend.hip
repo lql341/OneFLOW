@@ -1747,7 +1747,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     storage->residualCells = nCells;
     storage->residualEquations = nEq;
     storage->residualValid = true;
-    if ( hostFlux != nullptr ) deviceFlux_.Resize( nFaces * nEq );
+    if ( hostFlux != nullptr ) storage->faceFlux.Resize( nFaces * nEq );
 
     const unsigned char * deviceBoundaryMask = nullptr;
     if ( connectivity.boundaryMask != nullptr )
@@ -1767,7 +1767,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         storage->leftCell.Data(), storage->rightCell.Data(),
         deviceBoundaryMask, connectivity.nBoundaryFaces, nFaces, nCells,
         nEq, gamma, scheme,
-        hostFlux != nullptr ? deviceFlux_.Data() : nullptr,
+        hostFlux != nullptr ? storage->faceFlux.Data() : nullptr,
         storage->residual.Data() );
     CheckHip( hipGetLastError(),
               "reconstructed primitive flux kernel launch" );
@@ -1789,9 +1789,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     }
     if ( hostFlux != nullptr )
     {
-        deviceFlux_.CopyToHost( hostFlux->values, nFaces * nEq );
-        deviceFluxFaces_ = nFaces;
-        deviceFluxEquations_ = nEq;
+        storage->faceFlux.CopyToHost( hostFlux->values, nFaces * nEq );
     }
 }
 

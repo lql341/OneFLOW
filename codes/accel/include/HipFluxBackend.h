@@ -66,6 +66,10 @@ struct HipGradientStorage
     bool geometryCacheValid = false;
     DeviceBuffer< Real > qf1;
     DeviceBuffer< Real > qf2;
+    // Face flux is part of the state-owned reconstructed production chain.
+    // The backend-level deviceFlux_ remains a compatibility buffer for the
+    // legacy host-staged path only.
+    DeviceBuffer< Real > faceFlux;
     DeviceBuffer< Real > residual;
     DeviceBuffer< Real > inviscidSpectrum;
     DeviceBuffer< Real > timeStep;
