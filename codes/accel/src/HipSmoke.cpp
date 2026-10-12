@@ -647,6 +647,322 @@ bool TestMainSolverAleAreaContract()
     return true;
 }
 
+bool TestMainSolverBoundarySemantics()
+{
+    constexpr int nCells = 4;
+    constexpr int nBoundaryFaces = 4;
+    constexpr int nFaces = 5;
+    constexpr int nEq = 5;
+    constexpr int nTotalCells = nCells + nBoundaryFaces;
+    constexpr double gamma = 1.4;
+
+    const int leftCell[ nFaces ] = { 0, 1, 2, 3, 0 };
+    const int rightCell[ nFaces ] = { 4, 5, 6, 7, 1 };
+    const unsigned char boundaryMask[ nFaces ] = { 1, 1, 1, 1, 0 };
+    const int boundaryType[ nBoundaryFaces ] = { -1, 99, 1, 2 };
+
+    const ONEFLOW::Real xCell[ nTotalCells ] =
+        { 0.0, 1.0, 2.0, 3.0, -1.0, -2.0, 4.0, 5.0 };
+    const ONEFLOW::Real yCell[ nTotalCells ] =
+        { 0.0, 0.1, 0.2, 0.3, 0.0, 0.1, 0.2, 0.3 };
+    const ONEFLOW::Real zCell[ nTotalCells ] =
+        { 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    const ONEFLOW::Real xFace[ nFaces ] = { -0.5, -0.5, 1.5, 2.5, 0.5 };
+    const ONEFLOW::Real yFace[ nFaces ] = { 0.0, 0.1, 0.15, 0.25, 0.05 };
+    const ONEFLOW::Real zFace[ nFaces ] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
+    const ONEFLOW::Real xNormal[ nFaces ] =
+        { 1.0, 1.0, 1.0, 1.0, 1.0 };
+    const ONEFLOW::Real yNormal[ nFaces ] = {};
+    const ONEFLOW::Real zNormal[ nFaces ] = {};
+    const ONEFLOW::Real faceArea[ nFaces ] =
+        { 1.0, 1.0, 1.0, 1.0, 1.0 };
+    const ONEFLOW::Real cellVolume[ nCells ] =
+        { 1.0, 1.0, 1.0, 1.0 };
+    const ONEFLOW::Real meshVelocity[ nFaces ] = {};
+
+    std::vector< ONEFLOW::Real > primitive(
+        nEq * nTotalCells, 0.0 );
+    for ( int cell = 0; cell < nCells; ++ cell )
+    {
+        primitive[ 0 * nTotalCells + cell ] = 1.0 + 0.1 * cell;
+        primitive[ 1 * nTotalCells + cell ] = 0.2 + 0.1 * cell;
+        primitive[ 2 * nTotalCells + cell ] = 0.05 * cell;
+        primitive[ 3 * nTotalCells + cell ] = -0.02 * cell;
+        primitive[ 4 * nTotalCells + cell ] = 1.0 + 0.2 * cell;
+    }
+    const ONEFLOW::Real ghostSeed[ nBoundaryFaces ][ nEq ] = {
+        { 7.0, 0.31, 0.12, -0.08, 3.0 },
+        { 8.0, 0.41, 0.22, -0.18, 4.0 },
+        { 9.0, 0.51, 0.32, -0.28, 5.0 },
+        { 10.0, 0.61, 0.42, -0.38, 6.0 } };
+    for ( int ghost = 0; ghost < nBoundaryFaces; ++ ghost )
+    {
+        for ( int equation = 0; equation < nEq; ++ equation )
+        {
+            primitive[ equation * nTotalCells + nCells + ghost ] =
+                ghostSeed[ ghost ][ equation ];
+        }
+    }
+
+    const ONEFLOW::EulerDomainProblem problem{
+        nCells, nBoundaryFaces, nEq, gamma, 1.0e-3, 1.0,
+        ONEFLOW::EulerDomainBoundary::Periodic };
+    const ONEFLOW::EulerDomainStateKey key{
+        0, 0, 0, ONEFLOW::AccelBackendKind::HIP, 0 };
+    ONEFLOW::Ns3DDeviceState owner( problem, key );
+    owner.ReserveFaces( nFaces );
+    owner.AttachBackendState( ONEFLOW::CreateHipNs3DBackendState( 0 ) );
+
+    ONEFLOW::HipFluxBackend backend;
+    const void * cacheKey = &owner;
+    backend.BindState( cacheKey, owner );
+
+    std::vector< ONEFLOW::Real > gradient(
+        nEq * 3 * nTotalCells, 0.0 );
+    ONEFLOW::CellGradientView gradientView;
+    gradientView.nCells = nCells;
+    gradientView.nGhostCells = nBoundaryFaces;
+    gradientView.nFaces = nFaces;
+    gradientView.nBoundaryFaces = nBoundaryFaces;
+    gradientView.nEquations = nEq;
+    gradientView.xFace = xFace;
+    gradientView.yFace = yFace;
+    gradientView.zFace = zFace;
+    gradientView.xNormal = xNormal;
+    gradientView.yNormal = yNormal;
+    gradientView.zNormal = zNormal;
+    gradientView.faceArea = faceArea;
+    gradientView.xCell = xCell;
+    gradientView.yCell = yCell;
+    gradientView.zCell = zCell;
+    gradientView.cellVolume = cellVolume;
+    gradientView.leftCell = leftCell;
+    gradientView.rightCell = rightCell;
+    gradientView.cacheKey = cacheKey;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        gradientView.q[ equation ] =
+            primitive.data() + equation * nTotalCells;
+        const int base = equation * 3 * nTotalCells;
+        gradientView.dqdx[ equation ] = gradient.data() + base;
+        gradientView.dqdy[ equation ] =
+            gradient.data() + base + nTotalCells;
+        gradientView.dqdz[ equation ] =
+            gradient.data() + base + 2 * nTotalCells;
+    }
+    backend.CalcGradient( gradientView );
+
+    const ONEFLOW::Real inflow[ nEq ] =
+        { 1.0, 0.0, 0.0, 0.0, 1.0 };
+    ONEFLOW::BoundaryStateView boundaryView;
+    boundaryView.nCells = nCells;
+    boundaryView.nGhostCells = nBoundaryFaces;
+    boundaryView.nBoundaryFaces = nBoundaryFaces;
+    boundaryView.nEquations = nEq;
+    boundaryView.leftCell = leftCell;
+    boundaryView.rightCell = rightCell;
+    boundaryView.boundaryType = boundaryType;
+    boundaryView.xNormal = xNormal;
+    boundaryView.yNormal = yNormal;
+    boundaryView.zNormal = zNormal;
+    boundaryView.meshVelocityNormal = meshVelocity;
+    boundaryView.inflow = inflow;
+    boundaryView.gamma = gamma;
+    boundaryView.cacheKey = cacheKey;
+    boundaryView.preferResidentState = true;
+    for ( int equation = 0; equation < nEq; ++ equation )
+        boundaryView.q[ equation ] =
+            primitive.data() + equation * nTotalCells;
+    backend.UpdateBoundaryState( boundaryView );
+
+    double ghostError = 0.0;
+    double boundaryBcQ[ nEq ] = {};
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        ghostError = std::max(
+            ghostError,
+            static_cast< double >( std::abs(
+                primitive[ equation * nTotalCells + 4 ]
+                - ghostSeed[ 0 ][ equation ] ) ) );
+        ghostError = std::max(
+            ghostError,
+            static_cast< double >( std::abs(
+                primitive[ equation * nTotalCells + 5 ]
+                - ghostSeed[ 1 ][ equation ] ) ) );
+        ghostError = std::max(
+            ghostError,
+            static_cast< double >( std::abs(
+                primitive[ equation * nTotalCells + 6 ]
+                - primitive[ equation * nTotalCells + 2 ] ) ) );
+    }
+
+    const double solidDensity =
+        primitive[ 0 * nTotalCells + 3 ];
+    const double solidU = -primitive[ 1 * nTotalCells + 3 ];
+    const double solidV = primitive[ 2 * nTotalCells + 3 ];
+    const double solidW = primitive[ 3 * nTotalCells + 3 ];
+    const double solidPressure =
+        primitive[ 4 * nTotalCells + 3 ];
+    ghostError = std::max(
+        ghostError,
+        static_cast< double >( std::abs(
+            primitive[ 0 * nTotalCells + 7 ] - solidDensity ) ) );
+    ghostError = std::max(
+        ghostError,
+        static_cast< double >( std::abs(
+            primitive[ 1 * nTotalCells + 7 ] - solidU ) ) );
+    ghostError = std::max(
+        ghostError,
+        static_cast< double >( std::abs(
+            primitive[ 2 * nTotalCells + 7 ] - solidV ) ) );
+    ghostError = std::max(
+        ghostError,
+        static_cast< double >( std::abs(
+            primitive[ 3 * nTotalCells + 7 ] - solidW ) ) );
+    ghostError = std::max(
+        ghostError,
+        static_cast< double >( std::abs(
+            primitive[ 4 * nTotalCells + 7 ] - solidPressure ) ) );
+
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        boundaryBcQ[ equation ] = 0.5 * (
+            primitive[ equation * nTotalCells + 3 ]
+            + primitive[ equation * nTotalCells + 7 ] );
+    }
+
+    std::vector< ONEFLOW::Real > qLeft( nEq * nFaces, 0.0 );
+    std::vector< ONEFLOW::Real > qRight( nEq * nFaces, 0.0 );
+    std::vector< ONEFLOW::Real > reconstructionBcQ(
+        nEq * nFaces, 0.0 );
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        reconstructionBcQ[ equation * nFaces + 3 ] =
+            boundaryBcQ[ equation ] + 3.0 + equation;
+    }
+    ONEFLOW::ReconstructionBoundaryOperation operations[ nFaces ] = {
+        ONEFLOW::ReconstructionBoundaryOperation::Preserve,
+        ONEFLOW::ReconstructionBoundaryOperation::Preserve,
+        ONEFLOW::ReconstructionBoundaryOperation::Average,
+        ONEFLOW::ReconstructionBoundaryOperation::SolidOverride,
+        ONEFLOW::ReconstructionBoundaryOperation::Preserve };
+    const ONEFLOW::BoundaryGhostUpdatePolicy policies[ nFaces ] = {
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo,
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo,
+        ONEFLOW::BoundaryGhostUpdatePolicy::LocalBoundaryModel,
+        ONEFLOW::BoundaryGhostUpdatePolicy::LocalBoundaryModel,
+        ONEFLOW::BoundaryGhostUpdatePolicy::ExternalHalo };
+
+    ONEFLOW::CellFaceReconstructionView reconstructionView;
+    reconstructionView.nCells = nCells;
+    reconstructionView.nGhostCells = nBoundaryFaces;
+    reconstructionView.nFaces = nFaces;
+    reconstructionView.nBoundaryFaces = nBoundaryFaces;
+    reconstructionView.nEquations = nEq;
+    reconstructionView.xFace = xFace;
+    reconstructionView.yFace = yFace;
+    reconstructionView.zFace = zFace;
+    reconstructionView.xCell = xCell;
+    reconstructionView.yCell = yCell;
+    reconstructionView.zCell = zCell;
+    reconstructionView.leftCell = leftCell;
+    reconstructionView.rightCell = rightCell;
+    reconstructionView.boundaryMask = boundaryMask;
+    reconstructionView.boundaryOperation = operations;
+    reconstructionView.boundaryGhostPolicy = policies;
+    reconstructionView.hasSolidBoundary = true;
+    reconstructionView.ownerToken = cacheKey;
+    reconstructionView.cacheKey = cacheKey;
+    reconstructionView.topologyGeneration = owner.TopologyGeneration();
+    reconstructionView.fieldGeneration = owner.FieldGeneration();
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        reconstructionView.q[ equation ] =
+            primitive.data() + equation * nTotalCells;
+        const int base = equation * 3 * nTotalCells;
+        reconstructionView.dqdx[ equation ] = gradient.data() + base;
+        reconstructionView.dqdy[ equation ] =
+            gradient.data() + base + nTotalCells;
+        reconstructionView.dqdz[ equation ] =
+            gradient.data() + base + 2 * nTotalCells;
+        reconstructionView.bcQ[ equation ] =
+            reconstructionBcQ.data() + equation * nFaces;
+        reconstructionView.qLeft[ equation ] =
+            qLeft.data() + equation * nFaces;
+        reconstructionView.qRight[ equation ] =
+            qRight.data() + equation * nFaces;
+    }
+    backend.ReconstructFaceValues( reconstructionView, true );
+
+    double reconstructionError = 0.0;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        const double ordinaryAverage = 0.5 * (
+            primitive[ equation * nTotalCells + 2 ]
+            + primitive[ equation * nTotalCells + 6 ] );
+        reconstructionError = std::max(
+            reconstructionError,
+            static_cast< double >( std::abs(
+                qLeft[ equation * nFaces + 2 ] - ordinaryAverage ) ) );
+        reconstructionError = std::max(
+            reconstructionError,
+            static_cast< double >( std::abs(
+                qRight[ equation * nFaces + 2 ] - ordinaryAverage ) ) );
+        reconstructionError = std::max(
+            reconstructionError,
+            static_cast< double >( std::abs(
+                qLeft[ equation * nFaces + 3 ]
+                - reconstructionBcQ[ equation * nFaces + 3 ] ) ) );
+        reconstructionError = std::max(
+            reconstructionError,
+            static_cast< double >( std::abs(
+                qRight[ equation * nFaces + 3 ]
+                - reconstructionBcQ[ equation * nFaces + 3 ] ) ) );
+    }
+    const double preservedGhostError = std::max(
+        static_cast< double >( std::abs(
+            primitive[ 0 * nTotalCells + 4 ] - ghostSeed[ 0 ][ 0 ] ) ),
+        static_cast< double >( std::abs(
+            primitive[ 0 * nTotalCells + 5 ] - ghostSeed[ 1 ][ 0 ] ) ) );
+
+    operations[ 3 ] = ONEFLOW::ReconstructionBoundaryOperation::Average;
+    owner.MarkTopologyChanged();
+    reconstructionView.topologyGeneration = owner.TopologyGeneration();
+    backend.ReconstructFaceValues( reconstructionView, true );
+    const double expectedAverage = 0.5 * (
+        primitive[ 0 * nTotalCells + 3 ]
+        + primitive[ 0 * nTotalCells + 7 ] );
+    const double generationError = std::max(
+        static_cast< double >( std::abs(
+            qLeft[ 0 * nFaces + 3 ] - expectedAverage ) ),
+        static_cast< double >( std::abs(
+            qRight[ 0 * nFaces + 3 ] - expectedAverage ) ) );
+    const double staleOperationError = std::abs(
+        qLeft[ 0 * nFaces + 3 ] - reconstructionBcQ[ 0 * nFaces + 3 ] );
+
+    backend.UnbindState( cacheKey );
+    if ( ghostError > 2.0e-12
+         || reconstructionError > 2.0e-12
+         || preservedGhostError > 2.0e-12
+         || generationError > 2.0e-12
+         || staleOperationError < 1.0e-6 )
+    {
+        std::fprintf(
+            stderr,
+            "Main solver HIP boundary contract FAIL: ghost %.3e, "
+            "reconstruction %.3e, preserved %.3e, generation %.3e, "
+            "stale-op %.3e\n",
+            ghostError, reconstructionError, preservedGhostError,
+            generationError, staleOperationError );
+        return false;
+    }
+    std::printf(
+        "OneFLOW HIP main solver boundary contract: PASS "
+        "(ghost %.3e, reconstruction %.3e, generation %.3e)\n",
+        ghostError, reconstructionError, generationError );
+    return true;
+}
+
 bool TestMainSolverStateUpdate()
 {
     constexpr int nCells = 2;
@@ -1072,6 +1388,7 @@ int main()
         ok = TestEulerRusanov() && ok;
         ok = TestMainSolverFiveEquationLaxFriedrichs() && ok;
         ok = TestMainSolverGradient() && ok;
+        ok = TestMainSolverBoundarySemantics() && ok;
         ok = TestMainSolverAleAreaContract() && ok;
         ok = TestMainSolverStateUpdate() && ok;
 

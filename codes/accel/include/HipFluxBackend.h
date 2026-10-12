@@ -87,6 +87,7 @@ struct HipGradientStorage
     const ReconstructionBoundaryOperation * cachedBoundaryOperationHost =
         nullptr;
     std::size_t cachedBoundaryOperationCount = 0;
+    std::uint64_t cachedBoundaryTopologyGeneration = 0;
     int cachedEquations = 0;
     int residualCells = 0;
     int residualEquations = 0;

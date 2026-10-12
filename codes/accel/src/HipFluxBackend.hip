@@ -1560,6 +1560,8 @@ void HipFluxBackend::ReconstructFaceValues(
         }
         storage = &hipState->Gradient();
     }
+    const std::uint64_t topologyGeneration = owner != nullptr
+        ? owner->TopologyGeneration() : view.topologyGeneration;
     if ( storage->cellState.Size() <
              static_cast< std::size_t >( view.nEquations )
                  * ( view.nCells + view.nGhostCells )
@@ -1582,7 +1584,9 @@ void HipFluxBackend::ReconstructFaceValues(
     const bool operationChanged =
         storage->cachedBoundaryOperationHost != view.boundaryOperation
         || storage->cachedBoundaryOperationCount
-               != static_cast< std::size_t >( totalFaces );
+               != static_cast< std::size_t >( totalFaces )
+        || storage->cachedBoundaryTopologyGeneration
+               != topologyGeneration;
     storage->boundaryOperation.Resize( totalFaces );
     if ( operationChanged && view.boundaryOperation != nullptr )
     {
@@ -1600,6 +1604,8 @@ void HipFluxBackend::ReconstructFaceValues(
     {
         storage->cachedBoundaryOperationHost = view.boundaryOperation;
         storage->cachedBoundaryOperationCount = totalFaces;
+        storage->cachedBoundaryTopologyGeneration =
+            topologyGeneration;
     }
     if ( view.boundaryMask != nullptr )
     {
