@@ -23,6 +23,7 @@ License
 
 #pragma once
 #include "HXDefine.h"
+#include "Constant.h"
 
 BeginNameSpace( ONEFLOW )
 
