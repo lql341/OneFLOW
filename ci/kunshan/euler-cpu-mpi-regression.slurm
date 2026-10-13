@@ -89,7 +89,9 @@ if [ "$rc_build" -eq 0 ]; then
     many_hash="$(sed -n 's/^final_hash=\(0x[0-9a-fA-F]*\).*/\1/p' "$many_rank")"
     echo "hash_1_rank=$one_hash hash_32_rank=$many_hash"
     if [ "$one_rc" -ne 0 ] || [ "$many_rc" -ne 0 ] \
-       || [ -z "$one_hash" ] || [ "$one_hash" != "$many_hash" ]; then
+       || [ -z "$one_hash" ] || [ "$one_hash" != "$many_hash" ] \
+       || ! grep -q '^decomposition=PASS$' "$one_rank" \
+       || ! grep -q '^decomposition=PASS$' "$many_rank"; then
       echo "CPU_MPI_REGRESSION=FAIL nx=$nx"
       rc_run=1
       break

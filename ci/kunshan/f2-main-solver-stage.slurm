@@ -33,6 +33,7 @@ export OMPI_MCA_coll="^hcoll"
 source_case="$ONEFLOW_F2_STAGE_SOURCE_DIR/$ONEFLOW_F2_STAGE_CASE"
 trace_root="${ONEFLOW_F2_STAGE_RUN_DIR:-$PWD/f2-main-solver-stage-${SLURM_JOB_ID:-manual}}"
 trace_timeout="${ONEFLOW_F2_STAGE_TRACE_TIMEOUT_SECONDS:-180}"
+rank_utilization_verifier="$ONEFLOW_F2_STAGE_SOURCE_DIR/ci/kunshan/verify-rank-utilization.py"
 
 case "$trace_timeout" in
     ''|*[!0-9]*|0) echo "Invalid ONEFLOW_F2_STAGE_TRACE_TIMEOUT_SECONDS=$trace_timeout" >&2; exit 2 ;;
@@ -42,6 +43,7 @@ if [ -e "$trace_root" ]; then
     echo "Refusing to overwrite existing F2 stage run directory" >&2
     exit 2
 fi
+test -r "$rank_utilization_verifier"
 mkdir -p "$trace_root"
 {
     echo "gcc=$(gcc --version | head -1)"
@@ -176,7 +178,7 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
     fi
 
     mkdir -p "$bench_root"
-    printf 'mode\trepeat\telapsed_ms\tsteps\n' > "$timing_file"
+    printf 'mode\trepeat\tranks\telapsed_ms\tsteps\n' > "$timing_file"
 
     configure_mode() {
         local mode=$1
@@ -239,6 +241,10 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
                 timeout --signal=TERM --kill-after=10s "$bench_timeout" \
                     mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
             ) > "$log_file" 2>&1
+            python3 "$rank_utilization_verifier" \
+                --expected-ranks "$bench_ranks" \
+                --label "$mode/warmup-$repeat" \
+                --pattern "$bench_root/$mode/warmup-$repeat/breakdown-*.tsv"
         done
 
         for repeat in $(seq 1 "$bench_repeats"); do
@@ -254,10 +260,14 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
                     mpirun -np "$bench_ranks" "$ONEFLOW_F2_STAGE_BINARY" 0 "$mode"
             ) > "$log_file" 2>&1
             end_ns=$(date +%s%N)
+            python3 "$rank_utilization_verifier" \
+                --expected-ranks "$bench_ranks" \
+                --label "$mode/repeat-$repeat" \
+                --pattern "$bench_root/$mode/repeat-$repeat/breakdown-*.tsv"
             elapsed_ms=$(awk -v start="$start_ns" -v end="$end_ns" \
                 'BEGIN { printf "%.6f", (end - start) / 1000000.0 }')
-            printf '%s\t%s\t%s\t%s\n' "$mode" "$repeat" \
-                "$elapsed_ms" "$bench_steps" >> "$timing_file"
+            printf '%s\t%s\t%s\t%s\t%s\n' "$mode" "$repeat" \
+                "$bench_ranks" "$elapsed_ms" "$bench_steps" >> "$timing_file"
         done
     }
 
@@ -294,24 +304,28 @@ import sys
 path = pathlib.Path(sys.argv[1])
 rows = []
 for line in path.read_text().splitlines()[1:]:
-    mode, repeat, elapsed_ms, steps = line.split("\t")
-    rows.append((mode, int(repeat), float(elapsed_ms), int(steps)))
+    mode, repeat, ranks, elapsed_ms, steps = line.split("\t")
+    rows.append((mode, int(repeat), int(ranks), float(elapsed_ms), int(steps)))
 
 by_mode = collections.defaultdict(list)
-for mode, _repeat, elapsed_ms, _steps in rows:
+rank_by_mode = {}
+for mode, _repeat, ranks, elapsed_ms, _steps in rows:
     by_mode[mode].append(elapsed_ms)
+    rank_by_mode.setdefault(mode, ranks)
+    if rank_by_mode[mode] != ranks:
+        raise SystemExit("inconsistent rank count for mode {}".format(mode))
 
 legacy_mean = statistics.mean(by_mode["legacy"])
 print("PERF_BASIS steps={} repeats={} warmup={}".format(
-    rows[0][3], len(by_mode["legacy"]), "$bench_warmup"))
+    rows[0][4], len(by_mode["legacy"]), "$bench_warmup"))
 for mode in ("legacy", "cpu_batch", "hip_batch"):
     values = by_mode[mode]
     mean = statistics.mean(values)
     median = statistics.median(values)
     speedup = legacy_mean / mean
-    print("PERF_SUMMARY mode={} mean_ms={:.6f} median_ms={:.6f} "
+    print("PERF_SUMMARY mode={} ranks={} mean_ms={:.6f} median_ms={:.6f} "
           "speedup_vs_legacy={:.6f}".format(
-              mode, mean, median, speedup))
+              mode, rank_by_mode[mode], mean, median, speedup))
 PY
     cp "$timing_file" "$trace_root/timing.tsv"
     echo "PERF_PASS timing_file=$trace_root/timing.tsv"

@@ -110,7 +110,12 @@ struct HipGradientStorage
     int cachedTimeStepBoundaryFaces = -1;
     bool timeStepGeometryCacheValid = false;
     bool residentTimeStepReady = false;
+    // Generation of the reconstruction metadata/field view.
     std::uint64_t cachedFieldGeneration = 0;
+    // Generation of the resident primitive state in cellState.  This is
+    // separate because a state update changes q without changing topology or
+    // the host view addresses.
+    std::uint64_t cachedStateFieldGeneration = 0;
     bool boundaryMaskValid = false;
     bool residualValid = false;
     bool residentStateReady = false;

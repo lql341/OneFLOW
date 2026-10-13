@@ -35,7 +35,9 @@ void CheckProblem(
     const std::vector< double > & initialState )
 {
     if ( problem.communicator == MPI_COMM_NULL || problem.globalNx <= 0
-         || problem.localNx <= 0 || problem.steps <= 0
+         || problem.localNx <= 0 || problem.globalOffset < 0
+         || problem.globalOffset + problem.localNx > problem.globalNx
+         || problem.steps <= 0
          || problem.gamma <= 1.0 || problem.dt <= 0.0 || problem.dx <= 0.0 )
     {
         throw std::invalid_argument( "invalid HIP MPI Euler problem" );

@@ -23,6 +23,7 @@ module load gcc/16.2.0
 module load openmpi/5.0.11
 module load cmake/4.4.3
 module load compiler/dtk/26.04
+module load python/3.8.10
 
 clang_bin="$(command -v clang)"
 llvm_root="$(dirname "$(dirname "$clang_bin")")"
@@ -37,7 +38,7 @@ export OMPI_MCA_coll="^hcoll"
 
 steps="${ONEFLOW_F2_STABILITY_STEPS:-50}"
 timeout_seconds="${ONEFLOW_F2_STABILITY_TIMEOUT_SECONDS:-900}"
-cpu_ranks="${ONEFLOW_F2_STABILITY_CPU_RANKS:-8}"
+cpu_ranks="${ONEFLOW_F2_STABILITY_CPU_RANKS:-1}"
 hip_ranks="${ONEFLOW_F2_STABILITY_HIP_RANKS:-1}"
 time_integral="${ONEFLOW_F2_STABILITY_TIME_INTEGRAL:-1}"
 rk_stages="${ONEFLOW_F2_STABILITY_RK_STAGES:-3}"
@@ -47,6 +48,7 @@ disable_viscous="${ONEFLOW_F2_STABILITY_DISABLE_VISCOUS:-1}"
 disable_limiter="${ONEFLOW_F2_STABILITY_DISABLE_LIMITER:-1}"
 limiter="${ONEFLOW_F2_STABILITY_LIMITER:-}"
 stability_root="${ONEFLOW_F2_STABILITY_RUN_DIR:-$PWD/f2-main-solver-stability-${SLURM_JOB_ID:-manual}}"
+rank_utilization_verifier="$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/verify-rank-utilization.py"
 
 for value_name in steps timeout_seconds cpu_ranks hip_ranks time_integral rk_stages; do
     value="${!value_name}"
@@ -88,6 +90,7 @@ if [ -e "$stability_root" ]; then
     echo "Refusing to overwrite existing F2 stability run directory" >&2
     exit 2
 fi
+test -r "$rank_utilization_verifier"
 mkdir -p "$stability_root"
 
 {
@@ -173,8 +176,8 @@ run_mode() {
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
             ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
-            ONEFLOW_ENABLE_UNS_HIP_TIME_STEP ONEFLOW_UNS_STAGE_TRACE_FILE \
-            ONEFLOW_STAGE_BREAKDOWN_FILE || true
+            ONEFLOW_ENABLE_UNS_HIP_TIME_STEP ONEFLOW_UNS_STAGE_TRACE_FILE || true
+        export ONEFLOW_STAGE_BREAKDOWN_FILE="$stability_root/$mode.breakdown-%r.tsv"
         app_prefix=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
             app_prefix=( env ONEFLOW_FAIL_ON_NONPHYSICAL=1 )
@@ -208,6 +211,13 @@ run_mode() {
     ) > "$log_file" 2>&1
     rc=$?
     set -e
+    if [ "$rc" -eq 0 ] && ! python3 "$rank_utilization_verifier" \
+        --expected-ranks "$ranks" \
+        --label "stability/$mode" \
+        --pattern "$stability_root/$mode.breakdown-*.tsv"
+    then
+        rc=3
+    fi
 
     diagnostic_hits=$(grep -Eic \
         '(^|[^[:alnum:]_])(nan|inf)([^[:alnum:]_]|$)|non.?physical|negative[[:space:]]+(density|pressure)|(density|pressure)[^[:cntrl:]]*<=' \

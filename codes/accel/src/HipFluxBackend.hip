@@ -1120,11 +1120,15 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     storage->cellState.Resize( totalState );
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    const std::uint64_t fieldGeneration =
+        owner != nullptr ? owner->FieldGeneration() : 0;
     const bool residentStateMatches =
-        storage->residentStateReady
+        owner != nullptr
+        && storage->residentStateReady
         && storage->cachedStateOwnerToken == ownerToken
         && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells;
+        && storage->cachedStateGhostCells == view.nGhostCells
+        && storage->cachedStateFieldGeneration == fieldGeneration;
     bool residentStateUsable = residentStateMatches;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
@@ -1145,7 +1149,11 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     storage->cachedStateOwnerToken = ownerToken;
     storage->cachedStateCells = view.nCells;
     storage->cachedStateGhostCells = view.nGhostCells;
-    storage->residentStateReady = false;
+    storage->cachedStateFieldGeneration = fieldGeneration;
+    // Only an owned state has a generation contract that can detect host
+    // field changes between calls.  Preserve the original fallback behavior
+    // of forcing the next gradient call to refresh q from the host.
+    storage->residentStateReady = owner != nullptr;
     const std::uint64_t topologyGeneration =
         owner != nullptr ? owner->TopologyGeneration() : 0;
     const bool cacheMatches = storage->geometryCacheValid
@@ -1282,12 +1290,15 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
     storage->cellState.Resize( view.nEquations * totalCells );
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    const std::uint64_t fieldGeneration =
+        owner != nullptr ? owner->FieldGeneration() : 0;
     bool residentStateUsable =
         view.preferResidentState
         && storage->residentStateReady
         && storage->cachedStateOwnerToken == ownerToken
         && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells;
+        && storage->cachedStateGhostCells == view.nGhostCells
+        && storage->cachedStateFieldGeneration == fieldGeneration;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
@@ -1308,6 +1319,7 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
     storage->cachedStateOwnerToken = ownerToken;
     storage->cachedStateCells = view.nCells;
     storage->cachedStateGhostCells = view.nGhostCells;
+    storage->cachedStateFieldGeneration = fieldGeneration;
     storage->residentStateReady = true;
 
     const std::uint64_t topologyGeneration =
@@ -1446,12 +1458,15 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     storage->cellState.Resize( view.nEquations * totalCells );
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+    const std::uint64_t fieldGeneration =
+        owner != nullptr ? owner->FieldGeneration() : 0;
     bool residentStateUsable =
         view.preferResidentState
         && storage->residentStateReady
         && storage->cachedStateOwnerToken == ownerToken
         && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells;
+        && storage->cachedStateGhostCells == view.nGhostCells
+        && storage->cachedStateFieldGeneration == fieldGeneration;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
@@ -1474,6 +1489,7 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     storage->cachedStateOwnerToken = ownerToken;
     storage->cachedStateCells = view.nCells;
     storage->cachedStateGhostCells = view.nGhostCells;
+    storage->cachedStateFieldGeneration = fieldGeneration;
 
     storage->boundaryXNormal.CopyFromHost(
         view.xNormal, view.nBoundaryFaces );
@@ -1913,6 +1929,7 @@ void HipFluxBackend::UpdatePrimitiveState(
         }
     }
     owner->MarkFieldChanged();
+    storage.cachedStateFieldGeneration = owner->FieldGeneration();
     storage.residualValid = false;
     storage.residentStateReady = view.retainResidentState;
 }

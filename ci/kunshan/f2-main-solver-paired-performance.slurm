@@ -48,13 +48,14 @@ steps="${ONEFLOW_F2_PAIRED_STEPS:-25}"
 warmup="${ONEFLOW_F2_PAIRED_WARMUP:-1}"
 repeats="${ONEFLOW_F2_PAIRED_REPEATS:-3}"
 timeout_seconds="${ONEFLOW_F2_PAIRED_TIMEOUT_SECONDS:-900}"
-cpu_ranks="${ONEFLOW_F2_PAIRED_CPU_RANKS:-8}"
+cpu_ranks="${ONEFLOW_F2_PAIRED_CPU_RANKS:-1}"
 hip_ranks="${ONEFLOW_F2_PAIRED_HIP_RANKS:-1}"
 cfl="${ONEFLOW_F2_PAIRED_CFL:-0.01}"
 time_integral="${ONEFLOW_F2_PAIRED_TIME_INTEGRAL:-1}"
 rk_stages="${ONEFLOW_F2_PAIRED_RK_STAGES:-3}"
 baseline_label="${ONEFLOW_F2_PAIRED_BASELINE_LABEL:-baseline}"
 candidate_label="${ONEFLOW_F2_PAIRED_CANDIDATE_LABEL:-candidate}"
+rank_utilization_verifier="$ONEFLOW_F2_PAIRED_SOURCE_DIR/ci/kunshan/verify-rank-utilization.py"
 
 for value_name in steps repeats timeout_seconds cpu_ranks hip_ranks time_integral rk_stages; do
     value="${!value_name}"
@@ -78,6 +79,7 @@ fi
 test -d "$source_case"
 test -x "$ONEFLOW_F2_PAIRED_BASELINE_BINARY"
 test -x "$ONEFLOW_F2_PAIRED_CANDIDATE_BINARY"
+test -r "$rank_utilization_verifier"
 if [ -e "$run_root" ]; then
     echo "Refusing to overwrite existing paired run directory" >&2
     exit 2
@@ -221,6 +223,13 @@ run_once() {
     rc=$?
     set -e
     end_ns="$(date +%s%N)"
+    if [ "$rc" -eq 0 ] && ! python3 "$rank_utilization_verifier" \
+        --expected-ranks "$ranks" \
+        --label "$phase/$sequence/$mode/$repeat" \
+        --pattern "$run_root/breakdown/${phase}-${sequence}-${mode}-${repeat}-*.tsv"
+    then
+        rc=3
+    fi
     elapsed_ms="$(awk -v start="$start_ns" -v end="$end_ns" \
         'BEGIN { printf "%.6f", (end - start) / 1000000.0 }')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
