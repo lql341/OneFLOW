@@ -34,15 +34,6 @@ License
 
 BeginNameSpace( ONEFLOW )
 
-ScalarIFaceIJ::ScalarIFaceIJ()
-{
-    ;
-}
-
-ScalarIFaceIJ::~ScalarIFaceIJ()
-{
-}
-
 void ScalarIFaceIJ::WriteInterfaceTopology( DataBook * databook ) const
 {
     if ( this->ifaces.size() != this->recv_ifaces.size() )
@@ -86,6 +77,18 @@ ScalarIFace::ScalarIFace()
 }
 
 ScalarIFace::~ScalarIFace() = default;
+
+void ScalarIFace::ResetTopology()
+{
+    data.clear();
+    iglobalfaces.clear();
+    zones.clear();
+    cells.clear();
+    target_interfaces.clear();
+    global_to_local_interfaces.clear();
+    local_to_global_interfaces.clear();
+    interface_to_bcface.clear();
+}
 
 void ScalarIFace::AddInterface( int global_interface_id, int neighbor_zoneid, int neighbor_cellid )
 {

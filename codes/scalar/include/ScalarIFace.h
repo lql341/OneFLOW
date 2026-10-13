@@ -38,8 +38,8 @@ class DataBook;
 class ScalarIFaceIJ
 {
 public:
-    ScalarIFaceIJ() ;
-    ~ScalarIFaceIJ();
+    ScalarIFaceIJ() = default;
+    ~ScalarIFaceIJ() = default;
 public:
     int zonei, zonej;
     std::vector< int > ghostCells;
@@ -94,6 +94,7 @@ public:
     void WriteInterfaceTopology( DataBook * databook ) const;
     void ReadInterfaceTopology( DataBook * databook );
     void ValidateInterfaceMappings() const;
+    void ResetTopology();
 };
 
 

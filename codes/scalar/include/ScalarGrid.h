@@ -36,13 +36,14 @@ BeginNameSpace( ONEFLOW )
 class RealList
 {
 public:
-    RealList() ;
-    ~RealList();
+    RealList() = default;
+    ~RealList() = default;
 public:
     std::vector< Real > data;
 public:
     size_t GetNElements() const;
     void AddData( Real value );
+    void Reserve( int new_capacity );
     Real operator [] ( int i ) const
     {
         return data[ i ];
@@ -68,8 +69,8 @@ public:
 class IntList
 {
 public:
-    IntList() ;
-    ~IntList();
+    IntList() = default;
+    ~IntList() = default;
     IntList( const IntList & rhs );
 public:
     std::vector< int > data;
@@ -97,8 +98,8 @@ public:
 class EList
 {
 public:
-    EList() ;
-    ~EList();
+    EList() = default;
+    ~EList() = default;
 public:
     std::vector< std::vector< int > > data;
 public:
@@ -128,8 +129,8 @@ class ScalarGrid;
 class ScalarBcco
 {
 public:
-    ScalarBcco();
-    ~ScalarBcco();
+    ScalarBcco() = default;
+    ~ScalarBcco() = default;
 public:
     std::string bcName;
     int bcType;
@@ -149,7 +150,7 @@ public:
 class ScalarBccos
 {
 public:
-    ScalarBccos();
+    ScalarBccos() = default;
     ~ScalarBccos();
 public:
     std::vector< std::unique_ptr< ScalarBcco > > bccos;
@@ -217,6 +218,7 @@ private:
     void ResetMeshData();
     void ResetTopologyData();
     void ResetGeometryData();
+    void ValidateFaceTopology( const char * operation ) const;
     std::vector< IntSet > CollectBoundaryVertexSets( int nodeCount ) const;
     std::unique_ptr< DataBase > dataBase;
 public:
@@ -261,7 +263,7 @@ public:
     void CalcInterfaceToBcFace();
     void Normalize();
 public:
-    void GetSId( int i_interface, int & sId );
+    void GetSId( int i_interface, int & sId ) const;
     void GetTId( int i_interface, int & tId );
 public:
     void DumpCalcGrid();
