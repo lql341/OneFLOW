@@ -27,6 +27,7 @@ License
 #include "UnsGrid.h"
 #include "DataBase.h"
 #include "FieldWrap.h"
+#include "SolverDef.h"
 #include "UCom.h"
 #include "UNsCom.h"
 #include "NsCom.h"
@@ -872,7 +873,7 @@ void UNsInvFlux::AddInvFlux()
 {
     ScopedStageTimer timer( "residual_state_update" );
     UnsGrid * grid = Zone::GetUnsGrid();
-    MRField * res = FieldHome::GetResidualField( grid );
+    MRField * res = FieldHome::GetResidualField( grid, NS_SOLVER );
 
     ONEFLOW::AddF2CField( res, invflux.get() );
 }
