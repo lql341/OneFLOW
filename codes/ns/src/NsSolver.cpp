@@ -24,6 +24,7 @@ License
 #include "NsCom.h"
 #include "NsCtrl.h"
 #include "SolverInfo.h"
+#include "NsFieldNames.h"
 #include "SolverDef.h"
 #include "UNsBcSolver.h"
 #include "HeatFlux.h"
@@ -55,26 +56,15 @@ void NsSolver::StaticInit()
 
     this->solverType = ONEFLOW::NS_SOLVER;
     SolverInfo * solverInfo = SolverInfoFactory::GetSolverInfo( this->solverType );
-    solverInfo->nEqu  = nscom.nEqu;
-    solverInfo->nTEqu = nscom.nTEqu;
-    solverInfo->residualName = "res";
-    solverInfo->solutionGradNames.clear();
-    solverInfo->implicitFieldNames.clear();
-    solverInfo->bcGradFieldNames.clear();
-    solverInfo->resFileName = GetDataValue< std::string >( "resFile" );
-    solverInfo->solutionGradNames.push_back( "q"    );
-    solverInfo->solutionGradNames.push_back( "dqdx" );
-    solverInfo->solutionGradNames.push_back( "dqdy" );
-    solverInfo->solutionGradNames.push_back( "dqdz" );
-
-    solverInfo->implicitFieldNames.push_back( "q"  );
-    solverInfo->implicitFieldNames.push_back( "dq" );
-
-    solverInfo->bcGradFieldNames.push_back( "bcdqdx" );
-    solverInfo->bcGradFieldNames.push_back( "bcdqdy" );
-    solverInfo->bcGradFieldNames.push_back( "bcdqdz" );
-    solverInfo->limiterName = "limiter";
-    solverInfo->bcSolutionName = "bc_q";
+    // Metadata only: field names + equation counts (unit-testable registration).
+    // Resource init (ctrl/com/bc files) stays above -- not part of the name contract.
+    RegisterSolverFieldInfo(
+        solverInfo,
+        nscom.nEqu,
+        nscom.nTEqu,
+        NsSolverFieldLogisticsNames(),
+        NsSolverUnsteadyFieldNames(),
+        GetDataValue< std::string >( "resFile" ) );
 }
 
 EndNameSpace

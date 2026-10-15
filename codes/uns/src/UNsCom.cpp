@@ -27,6 +27,7 @@ License
 #include "Zone.h"
 #include "DataBase.h"
 #include "FieldWrap.h"
+#include "ZoneSharedFields.h"
 #include "SolverDef.h"
 #include "Ctrl.h"
 #include "TimeIntegral.h"
@@ -42,12 +43,12 @@ void UNsField::Init()
     const int ns = NS_SOLVER;
 
     q  = FieldHome::GetSolutionField( grid, ns );
-    q1  = GetFieldPointer< MRField > ( grid, "q1" );
-    q2  = GetFieldPointer< MRField > ( grid, "q2" );
+    q1  = FieldHome::GetStageSolutionField( grid, ns, 0 );
+    q2  = FieldHome::GetStageSolutionField( grid, ns, 1 );
     dq  = FieldHome::GetUpdateDeltaField( grid, ns );
     // limiter / bc_q: always literal NS names (no FieldHome; not in dual-use API set).
     limiter  = GetFieldPointer< MRField > ( grid, "limiter" );
-    gama  = GetFieldPointer< MRField > ( grid, "gama" );
+    gama  = GetFieldPointer< MRField > ( grid, ZoneSharedFieldNames::Gamma );
     dqdx  = FieldHome::GetGradField( grid, ns, 1 );
     dqdy  = FieldHome::GetGradField( grid, ns, 2 );
     dqdz  = FieldHome::GetGradField( grid, ns, 3 );
@@ -60,20 +61,20 @@ void UNsField::Init()
     bcdqdy  = FieldHome::GetBcGradField( grid, ns, 1 );
     bcdqdz  = FieldHome::GetBcGradField( grid, ns, 2 );
 
-    visl  = GetFieldPointer< MRField > ( grid, "visl" );
-    vist  = GetFieldPointer< MRField > ( grid, "vist" );
+    visl  = GetFieldPointer< MRField > ( grid, ZoneSharedFieldNames::ViscosityLaminar );
+    vist  = GetFieldPointer< MRField > ( grid, ZoneSharedFieldNames::ViscosityTurbulent );
 
     tempr = GetFieldPointer< MRField >( grid, "tempr" );
 
-    timestep = GetFieldPointer< MRField >( grid, "timestep" );
+    timestep = GetFieldPointer< MRField >( grid, ZoneSharedFieldNames::TimeStep );
 
     invsr = ONEFLOW::GetFieldPointer< MRField >( grid, "invsr" );
     vissr = ONEFLOW::GetFieldPointer< MRField >( grid, "vissr" );
     impsr = ONEFLOW::GetFieldPointer< MRField >( grid, "impsr" );
 
     res  = FieldHome::GetResidualField( grid, ns );
-    res1  = GetFieldPointer< MRField > ( grid, "res1" );
-    res2  = GetFieldPointer< MRField > ( grid, "res2" );
+    res1  = FieldHome::GetStageResidualField( grid, ns, 0 );
+    res2  = FieldHome::GetStageResidualField( grid, ns, 1 );
 
     rhs = res;
 

@@ -823,7 +823,7 @@ void ScalarGrid::SetCgnsZone( CgnsZone & cgnsZone )
 void ScalarGrid::DumpCgnsGrid()
 {
 	std::string prjFileName = Prj::GetPrjFileName( "scalar.cgns" );
-	// FIX: Use stack allocation instead of raw pointer
+	// Use stack allocation instead of raw pointer
 	CgnsZbase cgnsZbase;
 	cgnsZbase.nBases = 1;
 	cgnsZbase.InitCgnsBase();
@@ -850,7 +850,7 @@ void ScalarGrid::DumpCgnsGrid()
 
 void ScalarGrid::GenerateGridFromCgns( const std::string & prjFileName )
 {
-	// FIX: Use stack allocation instead of raw pointer
+	// Use stack allocation instead of raw pointer
 	CgnsZbase cgnsZbase;
 	cgnsZbase.OpenCgnsFile( prjFileName, CG_MODE_READ );
 	cgnsZbase.ReadCgnsMultiBase();
@@ -1616,8 +1616,7 @@ void ScalarGrid::SetBcTypes()
 
 void ScalarGrid::CalcC2C( EList & c2c ) const
 {
-	if ( c2c.GetNElements() != 0 ) return;
-
+	// Rebuild adjacency from the current face connectivity on every call.
 	const int nFaces = this->GetNFaces();
 	const int nCells = this->GetNCells();
 	const int nBFaces = this->GetNBFaces();
