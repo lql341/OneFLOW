@@ -102,3 +102,46 @@ target_link_libraries(task_test
 gtest_discover_tests(task_test
   DISCOVERY_MODE PRE_TEST          # 关键！
 )
+
+add_executable(distributed_domain_plan_test
+  DistributedDomainPlanTest.cpp
+  ${PARALLEL_SRC_DIR}/DistributedDomainPlan.cpp
+)
+
+target_include_directories(distributed_domain_plan_test
+  PRIVATE
+    ${PARALLEL_INCLUDE_DIR}
+)
+
+target_link_libraries(distributed_domain_plan_test
+  PRIVATE
+    GTest::gtest_main
+)
+
+target_compile_features(distributed_domain_plan_test PRIVATE cxx_std_20)
+
+gtest_discover_tests(distributed_domain_plan_test
+  DISCOVERY_MODE PRE_TEST
+)
+
+add_executable(boundary_exchange_contract_test
+  BoundaryExchangeContractTest.cpp
+  ${PARALLEL_SRC_DIR}/BoundaryExchangeContract.cpp
+)
+
+target_include_directories(boundary_exchange_contract_test
+  PRIVATE
+    ${PARALLEL_INCLUDE_DIR}
+    ${BASIC_INCLUDE_DIR}
+)
+
+target_link_libraries(boundary_exchange_contract_test
+  PRIVATE
+    GTest::gtest_main
+)
+
+target_compile_features(boundary_exchange_contract_test PRIVATE cxx_std_20)
+
+gtest_discover_tests(boundary_exchange_contract_test
+  DISCOVERY_MODE PRE_TEST
+)

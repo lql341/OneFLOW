@@ -62,6 +62,8 @@ TEST( EulerInvFluxCapability, RejectsEveryUnsupportedRequestWithReason )
           []( auto & request ) { request.limiterEquations = 3; } },
         { EulerInvFluxCapabilityReason::UnsupportedInviscidScheme,
           []( auto & request ) { request.laxFriedrichsScheme = false; } },
+        { EulerInvFluxCapabilityReason::InterfaceExchangeEnabled,
+          []( auto & request ) { request.hasInterfaceExchange = true; } },
     };
 
     for ( const auto & testCase : cases )
@@ -89,6 +91,33 @@ TEST( EulerInvFluxCapability, ReportsFirstBlockingReasonDeterministically )
     EXPECT_EQ(
         decision.reason,
         EulerInvFluxCapabilityReason::RuntimeNotInitialized );
+}
+
+TEST( EulerInvFluxCapability, AcceptsSupportedInterfaceExchange )
+{
+    auto request = SupportedRequest();
+    request.hasInterfaceExchange = true;
+    request.backendSupportsInterfaceExchange = true;
+
+    const auto decision = EvaluateEulerInvFluxCapability( request );
+    EXPECT_TRUE( decision.enabled );
+    EXPECT_EQ(
+        decision.reason,
+        EulerInvFluxCapabilityReason::Supported );
+}
+
+TEST( EulerInvFluxCapability, AcceptsMultipleLocalZonesWithSupportedExchange )
+{
+    auto request = SupportedRequest();
+    request.localZoneCount = 4;
+    request.hasInterfaceExchange = true;
+    request.backendSupportsInterfaceExchange = true;
+
+    const auto decision = EvaluateEulerInvFluxCapability( request );
+    EXPECT_TRUE( decision.enabled );
+    EXPECT_EQ(
+        decision.reason,
+        EulerInvFluxCapabilityReason::Supported );
 }
 
 } // namespace

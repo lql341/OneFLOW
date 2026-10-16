@@ -1374,6 +1374,182 @@ bool TestMainSolverStateUpdate()
     return true;
 }
 
+bool TestMainSolverBoundaryExchange()
+{
+    constexpr int nCells = 2;
+    constexpr int nGhostCells = 2;
+    constexpr int totalCells = nCells + nGhostCells;
+    constexpr int nFaces = 2;
+    constexpr int nEq = 5;
+
+    std::vector< ONEFLOW::Real > primitive( nEq * totalCells, -1.0 );
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        primitive[ equation * totalCells + 0 ] = 10.0 * equation + 1.0;
+        primitive[ equation * totalCells + 1 ] = 10.0 * equation + 2.0;
+    }
+    std::vector< ONEFLOW::Real > gradient(
+        nEq * 3 * totalCells, 0.0 );
+    const ONEFLOW::Real xFace[ nFaces ] = { -0.5, 1.5 };
+    const ONEFLOW::Real yFace[ nFaces ] = { 0.0, 0.0 };
+    const ONEFLOW::Real zFace[ nFaces ] = { 0.0, 0.0 };
+    const ONEFLOW::Real xNormal[ nFaces ] = { -1.0, 1.0 };
+    const ONEFLOW::Real yNormal[ nFaces ] = { 0.0, 0.0 };
+    const ONEFLOW::Real zNormal[ nFaces ] = { 0.0, 0.0 };
+    const ONEFLOW::Real faceArea[ nFaces ] = { 1.0, 1.0 };
+    const ONEFLOW::Real xCell[ totalCells ] = { 0.0, 1.0, -1.0, 2.0 };
+    const ONEFLOW::Real yCell[ totalCells ] = {};
+    const ONEFLOW::Real zCell[ totalCells ] = {};
+    const ONEFLOW::Real cellVolume[ nCells ] = { 1.0, 1.0 };
+    const int leftCell[ nFaces ] = { 0, 1 };
+    const int rightCell[ nFaces ] = { 2, 3 };
+
+    const ONEFLOW::EulerDomainProblem problem{
+        nCells, nGhostCells, nEq, 1.4, 1.0e-3, 1.0,
+        ONEFLOW::EulerDomainBoundary::Periodic };
+    const ONEFLOW::EulerDomainStateKey key{
+        0, 0, 0, ONEFLOW::AccelBackendKind::HIP, 0 };
+    ONEFLOW::Ns3DDeviceState owner( problem, key );
+    owner.ReserveFaces( nFaces );
+    owner.AttachBackendState( ONEFLOW::CreateHipNs3DBackendState( 0 ) );
+
+    ONEFLOW::HipFluxBackend backend;
+    const void * cacheKey = &owner;
+    backend.BindState( cacheKey, owner );
+
+    ONEFLOW::CellGradientView view;
+    view.nCells = nCells;
+    view.nGhostCells = nGhostCells;
+    view.nFaces = nFaces;
+    view.nBoundaryFaces = nFaces;
+    view.nEquations = nEq;
+    view.xFace = xFace;
+    view.yFace = yFace;
+    view.zFace = zFace;
+    view.xNormal = xNormal;
+    view.yNormal = yNormal;
+    view.zNormal = zNormal;
+    view.faceArea = faceArea;
+    view.xCell = xCell;
+    view.yCell = yCell;
+    view.zCell = zCell;
+    view.cellVolume = cellVolume;
+    view.leftCell = leftCell;
+    view.rightCell = rightCell;
+    view.cacheKey = cacheKey;
+    view.downloadToHost = false;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        view.q[ equation ] =
+            primitive.data() + equation * totalCells;
+        const int base = equation * 3 * totalCells;
+        view.dqdx[ equation ] = gradient.data() + base;
+        view.dqdy[ equation ] = gradient.data() + base + totalCells;
+        view.dqdz[ equation ] = gradient.data() + base + 2 * totalCells;
+    }
+    backend.CalcGradient( view );
+
+    ONEFLOW::BoundaryFieldExchangePlan plan;
+    plan.sourceZone = 0;
+    plan.targetZone = 1;
+    plan.sourceRank = 0;
+    plan.targetRank = 1;
+    plan.nEquations = nEq;
+    plan.sourceCellCount = totalCells;
+    plan.targetCellCount = totalCells;
+    plan.sendCellIds = { 1, 0 };
+    plan.receiveCellIds = { 2, 3 };
+
+    const ONEFLOW::BoundaryBufferView send = backend.PackBoundary(
+        cacheKey, plan, ONEFLOW::BoundaryTransferMode::HostStaged );
+    ONEFLOW::BoundaryBufferView receive = backend.PrepareBoundaryReceive(
+        cacheKey, plan, ONEFLOW::BoundaryTransferMode::HostStaged );
+    std::copy(
+        send.values,
+        send.values + send.valueCount,
+        receive.values );
+    backend.UnpackBoundary(
+        cacheKey, plan, ONEFLOW::BoundaryTransferMode::HostStaged );
+
+    ONEFLOW::BoundaryFieldExchangePlan verifyPlan = plan;
+    verifyPlan.sendCellIds = plan.receiveCellIds;
+    verifyPlan.receiveCellIds = plan.receiveCellIds;
+    const ONEFLOW::BoundaryBufferView verified = backend.PackBoundary(
+        cacheKey, verifyPlan, ONEFLOW::BoundaryTransferMode::HostStaged );
+
+    double maxError = 0.0;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        for ( int interfaceId = 0; interfaceId < 2; ++ interfaceId )
+        {
+            const ONEFLOW::Real expected =
+                primitive[
+                    equation * totalCells
+                    + plan.sendCellIds[ interfaceId ] ];
+            const ONEFLOW::Real actual =
+                verified.values[ equation * 2 + interfaceId ];
+            maxError = std::max(
+                maxError,
+                static_cast< double >( std::abs( actual - expected ) ) );
+        }
+    }
+
+    ONEFLOW::BoundaryFieldExchangePlan directPlan = plan;
+    directPlan.sendCellIds = { 0, 1 };
+    directPlan.receiveCellIds = { 3, 2 };
+    const ONEFLOW::BoundaryBufferView directSend = backend.PackBoundary(
+        cacheKey, directPlan, ONEFLOW::BoundaryTransferMode::DeviceDirect );
+    ONEFLOW::BoundaryBufferView directReceive =
+        backend.PrepareBoundaryReceive(
+            cacheKey, directPlan,
+            ONEFLOW::BoundaryTransferMode::DeviceDirect );
+    ONEFLOW::AccelRuntime::Instance().Backend().Copy(
+        directReceive.values,
+        directSend.values,
+        directSend.valueCount * sizeof( ONEFLOW::Real ),
+        ONEFLOW::AccelCopyKind::DeviceToDevice );
+    backend.UnpackBoundary(
+        cacheKey, directPlan,
+        ONEFLOW::BoundaryTransferMode::DeviceDirect );
+
+    verifyPlan.sendCellIds = directPlan.receiveCellIds;
+    verifyPlan.receiveCellIds = directPlan.receiveCellIds;
+    const ONEFLOW::BoundaryBufferView directVerified =
+        backend.PackBoundary(
+            cacheKey, verifyPlan,
+            ONEFLOW::BoundaryTransferMode::HostStaged );
+    double directError = 0.0;
+    for ( int equation = 0; equation < nEq; ++ equation )
+    {
+        for ( int interfaceId = 0; interfaceId < 2; ++ interfaceId )
+        {
+            const ONEFLOW::Real expected =
+                primitive[
+                    equation * totalCells
+                    + directPlan.sendCellIds[ interfaceId ] ];
+            const ONEFLOW::Real actual =
+                directVerified.values[ equation * 2 + interfaceId ];
+            directError = std::max(
+                directError,
+                static_cast< double >( std::abs( actual - expected ) ) );
+        }
+    }
+    backend.UnbindState( cacheKey );
+    if ( maxError > 1.0e-15 || directError > 1.0e-15 )
+    {
+        std::fprintf(
+            stderr,
+            "Main solver HIP boundary exchange FAIL: %.3e %.3e\n",
+            maxError, directError );
+        return false;
+    }
+    std::printf(
+        "OneFLOW HIP main solver boundary exchange: PASS "
+        "(host-staged %.3e, device-direct %.3e)\n",
+        maxError, directError );
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -1391,6 +1567,7 @@ int main()
         ok = TestMainSolverBoundarySemantics() && ok;
         ok = TestMainSolverAleAreaContract() && ok;
         ok = TestMainSolverStateUpdate() && ok;
+        ok = TestMainSolverBoundaryExchange() && ok;
 
         ONEFLOW::FinalizeAccelRuntime();
         return ok ? 0 : 1;

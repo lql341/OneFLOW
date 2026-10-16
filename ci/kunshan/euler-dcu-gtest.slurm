@@ -121,12 +121,12 @@ if [ "$rc_build" -eq 0 ]; then
     rc_test=1
   fi
   if [ "$rc_test" -eq 0 ]; then
-    "$ctest_bin" --test-dir "$build_dir" \
+    "$project/ci/kunshan/ctest-nonempty.sh" "$build_dir" \
       -L 'hardware' \
       -R 'HIP' \
       --output-on-failure > "$artifact_dir/ctest.log" 2>&1
     rc_ctest=$?
-    if [ "$rc_ctest" -ne 0 ] || ! grep -Eq "100% tests passed(, 0 tests failed out of [1-9][0-9]*)?" "$artifact_dir/ctest.log"; then
+    if [ "$rc_ctest" -ne 0 ]; then
       echo "HIP CTest did not report a fully passing test suite" >&2
       rc_test=1
     fi

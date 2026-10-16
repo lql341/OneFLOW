@@ -29,7 +29,6 @@ License
 #include "UCom.h"
 #include "UNsCom.h"
 #include "UnsGrid.h"
-#include "NsCom.h"
 #include "NsIdx.h"
 #include "UNsInvFlux.h"
 #include "UNsVisFlux.h"
@@ -65,8 +64,6 @@ void NsCalcBcDebug( const std::string & title )
 
 void NsCalcGamaT( int flag )
 {
-	UnsGrid * grid = Zone::GetUnsGrid();
-
 	ug.Init();
 	unsf.Init();
 	ug.SetStEd(flag);
@@ -80,12 +77,25 @@ void NsCalcGamaT( int flag )
 		Real * density = ( * unsf.q )[ IDX::IR ].data();
 		Real * pressure = ( * unsf.q )[ IDX::IP ].data();
 		Real * gama = ( * unsf.gama )[ 0 ].data();
-		Real * temperature = ( * unsf.tempr )[ IDX::ITT ].data();
+		// Inviscid three-equation configurations set nTModel=0 and
+		// consequently allocate no temperature components.  Gamma is still
+		// required by the flux path, but there is no temperature field to
+		// populate in that case.
+		Real * temperature = nullptr;
+		if ( nscom.nTModel > IDX::ITT && unsf.tempr != nullptr
+		     && unsf.tempr->GetNEqu() > IDX::ITT )
+		{
+			temperature = ( * unsf.tempr )[ IDX::ITT ].data();
+		}
 		for ( int cId = ug.ist; cId < ug.ied; ++ cId )
 		{
 			gama[ cId ] = nscom.gama_ref;
-			temperature[ cId ] =
-				pressure[ cId ] / ( nscom.statecoef * density[ cId ] * oamw );
+			if ( temperature != nullptr )
+			{
+				temperature[ cId ] =
+					pressure[ cId ] /
+					( nscom.statecoef * density[ cId ] * oamw );
+			}
 		}
 	}
 }

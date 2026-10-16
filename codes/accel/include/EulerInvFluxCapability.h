@@ -16,7 +16,8 @@ enum class EulerInvFluxCapabilityReason
     MultipleGridLevels,
     UnsupportedEquationCount,
     UnsupportedLimiterEquationCount,
-    UnsupportedInviscidScheme
+    UnsupportedInviscidScheme,
+    InterfaceExchangeEnabled
 };
 
 // Solver-side facts required before the production UNs flux path may enter
@@ -34,6 +35,11 @@ struct EulerInvFluxCapabilityRequest
     int nEquations = 0;
     int limiterEquations = 0;
     bool laxFriedrichsScheme = false;
+    // Multi-zone partitions can have one local zone per rank while still
+    // requiring cross-rank interface exchange. Keep this explicit so the HIP
+    // path cannot infer support from localZoneCount alone.
+    bool hasInterfaceExchange = false;
+    bool backendSupportsInterfaceExchange = false;
 };
 
 struct EulerInvFluxCapabilityDecision

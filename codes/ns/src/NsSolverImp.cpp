@@ -51,6 +51,7 @@ License
 #include <string>
 #include <iomanip>
 #include <memory>
+#include <stdexcept>
 
 
 BeginNameSpace( ONEFLOW )
@@ -183,6 +184,19 @@ void NsVisual( StringField & data )
 
 void NsCalcBoundary( StringField & data )
 {
+    if ( vis_model.vismodel > 0 && nscom.nTModel <= 0 )
+    {
+        throw std::runtime_error(
+            "viscous or turbulent NS boundary conditions require "
+            "nTModel > 0" );
+    }
+    const bool requested = HipBoundaryRequested();
+    if ( requested && ! HipBoundarySupported() )
+    {
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1 is unsupported for the "
+            "current solver, boundary set, or runtime" );
+    }
     {
         ScopedStageTimer timer( "boundary_gamma_inner" );
         NsCalcGamaT( F_INNER );
@@ -191,13 +205,6 @@ void NsCalcBoundary( StringField & data )
     {
         ScopedStageTimer timer( "boundary_viscosity_inner" );
         CalcLaminarViscosity( F_INNER );
-    }
-    const bool requested = HipBoundaryRequested();
-    if ( requested && ! HipBoundarySupported() )
-    {
-        throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1 is unsupported for the "
-            "current solver, boundary set, or runtime" );
     }
     if ( requested )
     {

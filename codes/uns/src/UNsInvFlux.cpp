@@ -51,6 +51,7 @@ License
 #include "CpuFluxBackend.h"
 #include "EulerCpuAdapter.h"
 #include "EulerInvFluxCapability.h"
+#include "Parallel.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -67,6 +68,34 @@ BeginNameSpace( ONEFLOW )
 
 namespace
 {
+
+std::string RankAwareTracePath( const char * configured )
+{
+    std::string path( configured == nullptr ? "" : configured );
+    const std::string token( "%r" );
+    const char * rank = nullptr;
+    const char * rankNames[] = {
+        "OMPI_COMM_WORLD_RANK", "MV2_COMM_WORLD_RANK", "SLURM_PROCID" };
+    for ( const char * name : rankNames )
+    {
+        const char * value = std::getenv( name );
+        if ( value != nullptr && value[ 0 ] != '\0' )
+        {
+            rank = value;
+            break;
+        }
+    }
+    const std::string fallback = std::to_string( Parallel::GetPid() );
+    if ( rank == nullptr ) rank = fallback.c_str();
+    const std::string rankValue( rank );
+    std::size_t tokenPos = path.find( token );
+    while ( tokenPos != std::string::npos )
+    {
+        path.replace( tokenPos, token.size(), rankValue );
+        tokenPos = path.find( token, tokenPos + rankValue.size() );
+    }
+    return path;
+}
 
 void AppendStageTraceRecord(
     const char * path,
@@ -489,6 +518,12 @@ bool UNsInvFlux::UseHipBatchAdapter() const
     request.limiterEquations = limf == nullptr ? 0 : limf->nEqu;
     request.laxFriedrichsScheme =
         nscom.ischeme == ISCHEME_LAX_FRIEDRICHS;
+    request.hasInterfaceExchange =
+        ZoneState::nZones > 1 || ZoneState::nLocal > 1;
+    const char * interfaceEnabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
+    request.backendSupportsInterfaceExchange =
+        interfaceEnabled != nullptr && interfaceEnabled[ 0 ] == '1';
 
     const EulerInvFluxCapabilityDecision decision =
         EvaluateEulerInvFluxCapability( request );
@@ -761,8 +796,9 @@ void UNsInvFlux::UpdateFaceInvFlux()
 
 void UNsInvFlux::DumpInvFluxTrace()
 {
-    const char * traceFile = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
-    if ( traceFile == nullptr || traceFile[ 0 ] == '\0' ) return;
+    const char * configured = std::getenv( "ONEFLOW_UNS_TRACE_FILE" );
+    if ( configured == nullptr || configured[ 0 ] == '\0' ) return;
+    const std::string tracePath = RankAwareTracePath( configured );
 
     MRField * qf1 = limiter->GetLeftField();
     MRField * qf2 = limiter->GetRightField();
@@ -774,7 +810,7 @@ void UNsInvFlux::DumpInvFluxTrace()
             "UNsInvFlux trace requested before face fields are available" );
     }
 
-    std::ofstream output( traceFile, std::ios::binary | std::ios::trunc );
+    std::ofstream output( tracePath, std::ios::binary | std::ios::trunc );
     if ( ! output )
     {
         throw std::runtime_error( "cannot open UNsInvFlux trace file" );
@@ -822,8 +858,9 @@ void UNsInvFlux::DumpInvFluxTrace()
 
 void UNsInvFlux::DumpInvFluxStageTrace()
 {
-    const char * traceFile = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
-    if ( traceFile == nullptr || traceFile[ 0 ] == 0 ) return;
+    const char * configured = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    if ( configured == nullptr || configured[ 0 ] == 0 ) return;
+    const std::string tracePath = RankAwareTracePath( configured );
     if ( limf == nullptr || limf->qf1 == nullptr || limf->qf2 == nullptr
          || invflux == nullptr )
     {
@@ -843,7 +880,7 @@ void UNsInvFlux::DumpInvFluxStageTrace()
     const std::uint32_t nEquations =
         static_cast< std::uint32_t >( limf->nEqu );
     AppendStageTraceRecord(
-        traceFile, 1, sequence,
+        tracePath.c_str(), 1, sequence,
         static_cast< std::uint64_t >( ug.nFaces ), nEquations,
         { limf->qf1.get(), limf->qf2.get(), invflux.get() } );
     std::vector< std::vector< Real > > faceMetadata(
@@ -860,10 +897,10 @@ void UNsInvFlux::DumpInvFluxStageTrace()
         faceMetadata[ 7 ][ face ] = ( * ug.farea )[ face ];
     }
     AppendStageTraceValueRecord(
-        traceFile, 4, sequence,
+        tracePath.c_str(), 4, sequence,
         static_cast< std::uint64_t >( ug.nFaces ), faceMetadata );
     AppendStageTraceRecord(
-        traceFile, 2, sequence,
+        tracePath.c_str(), 2, sequence,
         static_cast< std::uint64_t >( ug.nCells ), nEquations,
         { residual } );
     ++ sequence;

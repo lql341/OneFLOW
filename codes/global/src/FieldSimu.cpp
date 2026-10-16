@@ -30,6 +30,8 @@ License
 #include "MultiBlock.h"
 #include "SolverMap.h"
 #include "SolverCatalog.h"
+#include "SolverNameList.h"
+#include "SolverNamePolicy.h"
 #include "CmxTask.h"
 #include "Multigrid.h"
 #include "BcData.h"
@@ -64,20 +66,26 @@ void FieldSimuPrepareWallDist()
 void FieldSimuCreateSolvers()
 {
     // Prefer SolverCatalog name at the pipeline boundary (owns via SolverMap today).
-    SolverCatalog::CreateDefault();
+    const StringField names = FilterSolverNamesForViscosity(
+        SolverNameClass::GetSolverNames( ONEFLOW::UMESH ),
+        vis_model.vismodel );
+    SolverCatalog::CreateDefault( ONEFLOW::UMESH, &names );
 }
 
 void FieldSimuCreateSolvers( const SimuContext & ctx )
 {
     if ( ctx.HasExpandedSolverNames() )
     {
+        const StringField names = FilterSolverNamesForViscosity(
+            ctx.ExpandedSolverNames(),
+            vis_model.vismodel );
         SolverCatalog::CreateDefault(
             ONEFLOW::UMESH,
-            &ctx.ExpandedSolverNames() );
+            &names );
     }
     else
     {
-        SolverCatalog::CreateDefault();
+        FieldSimuCreateSolvers();
     }
 }
 

@@ -122,7 +122,8 @@ void SetInterfaceFieldData( int iSr, FieldRecord * fieldRecord )
     //By design, the current zone is the jth neighbor of zone I.
     //How many neighbors of the current zone do you need to find out? This value is neiid.
 
-    int neiId = interFace->z2n[ ZoneState::GetZid( oppoSr ) ];
+    int neiId =
+        interFace->GetNeighborIndex( ZoneState::GetZid( oppoSr ) );
     int nIFaces = interFace->GetInterfacePair( neiId ).nIFaces;
     IntField & interfaceId = interFace->GetInterfaceId( neiId, iSr );
     

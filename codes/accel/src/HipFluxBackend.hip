@@ -1045,6 +1045,40 @@ __global__ void UpdatePrimitiveStateKernel(
     primitive[ 4 * totalCells + cell ] = updatedPressure;
 }
 
+__global__ void PackBoundaryKernel(
+    const Real * state,
+    const int * cellIds,
+    int cellCount,
+    int interfaceCount,
+    int nEquations,
+    Real * packed )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int valueCount = interfaceCount * nEquations;
+    if ( index >= valueCount ) return;
+    const int equation = index / interfaceCount;
+    const int interfaceId = index - equation * interfaceCount;
+    packed[ index ] =
+        state[ equation * cellCount + cellIds[ interfaceId ] ];
+}
+
+__global__ void UnpackBoundaryKernel(
+    const Real * packed,
+    const int * cellIds,
+    int cellCount,
+    int interfaceCount,
+    int nEquations,
+    Real * state )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int valueCount = interfaceCount * nEquations;
+    if ( index >= valueCount ) return;
+    const int equation = index / interfaceCount;
+    const int interfaceId = index - equation * interfaceCount;
+    state[ equation * cellCount + cellIds[ interfaceId ] ] =
+        packed[ index ];
+}
+
 } // namespace
 
 std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
@@ -1932,6 +1966,320 @@ void HipFluxBackend::UpdatePrimitiveState(
     storage.cachedStateFieldGeneration = owner->FieldGeneration();
     storage.residualValid = false;
     storage.residentStateReady = view.retainResidentState;
+}
+
+BoundaryBufferView HipFluxBackend::PackBoundary(
+    const void * cacheKey,
+    const BoundaryFieldExchangePlan & plan,
+    BoundaryTransferMode mode )
+{
+    plan.Validate();
+    return this->PackBoundary(
+        cacheKey,
+        { plan.sourceCellCount, plan.sendCellIds },
+        plan.nEquations,
+        mode );
+}
+
+BoundaryBufferView HipFluxBackend::PackBoundary(
+    const void * cacheKey,
+    const BoundaryEndpointMap & endpoint,
+    int nEquations,
+    BoundaryTransferMode mode )
+{
+    endpoint.Validate();
+    if ( nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "HIP boundary pack equation count must be positive" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP boundary pack requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP boundary pack state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
+    if ( ! storage.residentStateReady
+         || cellCount != endpoint.cellCount
+         || binding->second->problem.nEquations != nEquations )
+    {
+        throw std::logic_error(
+            "HIP boundary pack requires a compatible resident state" );
+    }
+
+    if ( ! endpoint.cellIds.empty() )
+    {
+        storage.boundarySendCell.CopyFromHost(
+            endpoint.cellIds.data(), endpoint.cellIds.size() );
+    }
+    else
+    {
+        storage.boundarySendCell.Resize( 0 );
+    }
+    const std::size_t valueCount =
+        endpoint.cellIds.size() * static_cast< std::size_t >( nEquations );
+    storage.boundarySendValues.Resize( valueCount );
+    if ( valueCount != 0 )
+    {
+        const int kernelValueCount = static_cast< int >( valueCount );
+        const int blockSize = 256;
+        hipLaunchKernelGGL(
+            PackBoundaryKernel,
+            dim3( ( kernelValueCount + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0,
+            storage.cellState.Data(), storage.boundarySendCell.Data(),
+            cellCount, static_cast< int >( endpoint.cellIds.size() ),
+            nEquations, storage.boundarySendValues.Data() );
+        CheckHip( hipGetLastError(), "boundary pack kernel launch" );
+    }
+
+    if ( mode == BoundaryTransferMode::DeviceDirect )
+    {
+        CheckHip(
+            hipDeviceSynchronize(),
+            "boundary pack kernel synchronize" );
+        return {
+            storage.boundarySendValues.Data(),
+            valueCount,
+            BoundaryMemorySpace::Device };
+    }
+
+    storage.hostBoundarySendValues.resize( valueCount );
+    if ( valueCount != 0 )
+    {
+        storage.boundarySendValues.CopyToHost(
+            storage.hostBoundarySendValues.data(),
+            valueCount );
+    }
+    return {
+        storage.hostBoundarySendValues.data(),
+        valueCount,
+        BoundaryMemorySpace::Host };
+}
+
+void HipFluxBackend::UploadBoundaryState(
+    const void * cacheKey,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    const Real * const * components )
+{
+    if ( cacheKey == nullptr || nCells <= 0 || nGhostCells < 0
+         || ( nEquations != 3 && nEquations != 5 )
+         || components == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid HIP boundary state upload" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP boundary state upload requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP boundary upload state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = nCells + nGhostCells;
+    storage.cellState.Resize(
+        static_cast< std::size_t >( nEquations ) * totalCells );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( components[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "HIP boundary state component is null" );
+        }
+        AccelRuntime::Instance().Backend().Copy(
+            storage.cellState.Data()
+                + static_cast< std::size_t >( equation ) * totalCells,
+            components[ equation ],
+            static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+            AccelCopyKind::HostToDevice );
+        storage.cachedStateQ[ equation ] = components[ equation ];
+    }
+    storage.cachedCells = nCells;
+    storage.cachedGhostCells = nGhostCells;
+    storage.cachedEquations = nEquations;
+    storage.cachedStateCells = nCells;
+    storage.cachedStateGhostCells = nGhostCells;
+    storage.cachedStateOwnerToken = binding->second->OwnerToken();
+    storage.cachedStateFieldGeneration = binding->second->FieldGeneration();
+    storage.residentStateReady = true;
+}
+
+BoundaryBufferView HipFluxBackend::PrepareBoundaryReceive(
+    const void * cacheKey,
+    const BoundaryFieldExchangePlan & plan,
+    BoundaryTransferMode mode )
+{
+    plan.Validate();
+    return this->PrepareBoundaryReceive(
+        cacheKey,
+        { plan.targetCellCount, plan.receiveCellIds },
+        plan.nEquations,
+        mode );
+}
+
+BoundaryBufferView HipFluxBackend::PrepareBoundaryReceive(
+    const void * cacheKey,
+    const BoundaryEndpointMap & endpoint,
+    int nEquations,
+    BoundaryTransferMode mode )
+{
+    endpoint.Validate();
+    if ( nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "HIP boundary receive equation count must be positive" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP boundary receive requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP boundary receive state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
+    if ( ! storage.residentStateReady
+         || cellCount != endpoint.cellCount
+         || binding->second->problem.nEquations != nEquations )
+    {
+        throw std::logic_error(
+            "HIP boundary receive requires a compatible resident state" );
+    }
+
+    if ( ! endpoint.cellIds.empty() )
+    {
+        storage.boundaryReceiveCell.CopyFromHost(
+            endpoint.cellIds.data(), endpoint.cellIds.size() );
+    }
+    else
+    {
+        storage.boundaryReceiveCell.Resize( 0 );
+    }
+    const std::size_t valueCount =
+        endpoint.cellIds.size() * static_cast< std::size_t >( nEquations );
+    storage.boundaryReceiveValues.Resize( valueCount );
+    if ( mode == BoundaryTransferMode::DeviceDirect )
+    {
+        return {
+            storage.boundaryReceiveValues.Data(),
+            valueCount,
+            BoundaryMemorySpace::Device };
+    }
+
+    storage.hostBoundaryReceiveValues.resize( valueCount );
+    return {
+        storage.hostBoundaryReceiveValues.data(),
+        valueCount,
+        BoundaryMemorySpace::Host };
+}
+
+void HipFluxBackend::UnpackBoundary(
+    const void * cacheKey,
+    const BoundaryFieldExchangePlan & plan,
+    BoundaryTransferMode mode )
+{
+    plan.Validate();
+    this->UnpackBoundary(
+        cacheKey,
+        { plan.targetCellCount, plan.receiveCellIds },
+        plan.nEquations,
+        mode );
+}
+
+void HipFluxBackend::UnpackBoundary(
+    const void * cacheKey,
+    const BoundaryEndpointMap & endpoint,
+    int nEquations,
+    BoundaryTransferMode mode )
+{
+    endpoint.Validate();
+    if ( nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "HIP boundary unpack equation count must be positive" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP boundary unpack requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP boundary unpack state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
+    const std::size_t valueCount =
+        endpoint.cellIds.size() * static_cast< std::size_t >( nEquations );
+    if ( ! storage.residentStateReady
+         || cellCount != endpoint.cellCount
+         || binding->second->problem.nEquations != nEquations
+         || storage.boundaryReceiveValues.Size() != valueCount
+         || storage.boundaryReceiveCell.Size() != endpoint.cellIds.size() )
+    {
+        throw std::logic_error(
+            "HIP boundary unpack requires a prepared receive buffer" );
+    }
+    if ( mode == BoundaryTransferMode::HostStaged )
+    {
+        if ( storage.hostBoundaryReceiveValues.size() != valueCount )
+        {
+            throw std::logic_error(
+                "HIP host-staged boundary receive buffer is not prepared" );
+        }
+        if ( valueCount != 0 )
+        {
+            storage.boundaryReceiveValues.CopyFromHost(
+                storage.hostBoundaryReceiveValues.data(),
+                valueCount );
+        }
+    }
+
+    if ( valueCount != 0 )
+    {
+        const int kernelValueCount = static_cast< int >( valueCount );
+        const int blockSize = 256;
+        hipLaunchKernelGGL(
+            UnpackBoundaryKernel,
+            dim3( ( kernelValueCount + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0,
+            storage.boundaryReceiveValues.Data(),
+            storage.boundaryReceiveCell.Data(),
+            cellCount, static_cast< int >( endpoint.cellIds.size() ),
+            nEquations, storage.cellState.Data() );
+        CheckHip( hipGetLastError(), "boundary unpack kernel launch" );
+        CheckHip(
+            hipDeviceSynchronize(),
+            "boundary unpack kernel synchronize" );
+    }
 }
 
 HipFluxBackend & HipFluxBackend::Shared()

@@ -106,12 +106,10 @@ if [ -x "$test_binary" ]; then
 fi
 
 if [ -x "$ctest_bin" ]; then
-    "$ctest_bin" --test-dir "$build_dir" -L hardware -R HIP \
+    "$source_dir/ci/kunshan/ctest-nonempty.sh" "$build_dir" \
+        -L hardware -R HIP \
         --output-on-failure > "$artifact_dir/ctest.log" 2>&1
     rc_ctest=$?
-    if [ "$rc_ctest" -eq 0 ] && ! grep -Eq "100% tests passed(, 0 tests failed out of [1-9][0-9]*| out of [1-9][0-9]*)" "$artifact_dir/ctest.log"; then
-        rc_ctest=1
-    fi
 fi
 
 if [ "$rc_smoke" -eq 0 ] && [ "$rc_gtest" -eq 0 ] && [ "$rc_ctest" -eq 0 ] && [ -r "$runner" ]; then

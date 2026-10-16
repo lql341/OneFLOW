@@ -27,7 +27,7 @@ EulerInvFluxCapabilityDecision EvaluateEulerInvFluxCapability(
         decision.reason = EulerInvFluxCapabilityReason::UnsupportedSolver;
         return decision;
     }
-    if ( request.localZoneCount != 1 )
+    if ( request.localZoneCount <= 0 )
     {
         decision.reason = EulerInvFluxCapabilityReason::MultipleLocalZones;
         return decision;
@@ -57,6 +57,20 @@ EulerInvFluxCapabilityDecision EvaluateEulerInvFluxCapability(
     {
         decision.reason =
             EulerInvFluxCapabilityReason::UnsupportedInviscidScheme;
+        return decision;
+    }
+    if ( request.hasInterfaceExchange
+         && ! request.backendSupportsInterfaceExchange )
+    {
+        decision.reason =
+            EulerInvFluxCapabilityReason::InterfaceExchangeEnabled;
+        return decision;
+    }
+    if ( request.localZoneCount > 1
+         && ( ! request.hasInterfaceExchange
+              || ! request.backendSupportsInterfaceExchange ) )
+    {
+        decision.reason = EulerInvFluxCapabilityReason::MultipleLocalZones;
         return decision;
     }
 
@@ -92,6 +106,8 @@ const char * EulerInvFluxCapabilityReasonName(
         return "unsupported_limiter_equation_count";
     case EulerInvFluxCapabilityReason::UnsupportedInviscidScheme:
         return "unsupported_inviscid_scheme";
+    case EulerInvFluxCapabilityReason::InterfaceExchangeEnabled:
+        return "interface_exchange_enabled";
     }
     return "unknown";
 }

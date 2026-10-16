@@ -240,7 +240,9 @@ int main( int argc, char ** argv )
                       << " local_rank=" << hip.localRank
                       << " local_ranks=" << hip.localRanks
                       << " device_index=" << hip.deviceIndex
-                      << " visible_devices=" << hip.visibleDeviceCount << "\n";
+                      << " visible_devices=" << hip.visibleDeviceCount
+                      << " gpu_aware_mpi="
+                      << ( hip.gpuAwareMpi ? "1" : "0" ) << "\n";
             std::cout << "max_scaled_error=" << globalScaledError
                       << " violations=" << globalViolations
                       << " physical=" << globalPhysical << "\n";

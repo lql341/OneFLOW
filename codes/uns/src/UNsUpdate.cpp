@@ -33,6 +33,7 @@ License
 #include "SolverDef.h"
 #include "AccelViews.h"
 #include "AccelRuntime.h"
+#include "Parallel.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -48,6 +49,34 @@ BeginNameSpace( ONEFLOW )
 
 namespace
 {
+
+std::string RankAwareTracePath( const char * configured )
+{
+    std::string path( configured == nullptr ? "" : configured );
+    const std::string token( "%r" );
+    const char * rank = nullptr;
+    const char * rankNames[] = {
+        "OMPI_COMM_WORLD_RANK", "MV2_COMM_WORLD_RANK", "SLURM_PROCID" };
+    for ( const char * name : rankNames )
+    {
+        const char * value = std::getenv( name );
+        if ( value != nullptr && value[ 0 ] != '\0' )
+        {
+            rank = value;
+            break;
+        }
+    }
+    const std::string fallback = std::to_string( Parallel::GetPid() );
+    if ( rank == nullptr ) rank = fallback.c_str();
+    const std::string rankValue( rank );
+    std::size_t tokenPos = path.find( token );
+    while ( tokenPos != std::string::npos )
+    {
+        path.replace( tokenPos, token.size(), rankValue );
+        tokenPos = path.find( token, tokenPos + rankValue.size() );
+    }
+    return path;
+}
 
 void AppendStateStageTrace(
     const char * path,
@@ -153,9 +182,12 @@ bool UseHipDeviceStateUpdate( int solverType )
 
 bool RetainHipStateForBoundary()
 {
-    const char * enabled =
+    const char * boundaryEnabled =
         std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
-    return enabled != nullptr && enabled[ 0 ] == '1';
+    const char * interfaceEnabled =
+        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
+    return ( boundaryEnabled != nullptr && boundaryEnabled[ 0 ] == '1' )
+        || ( interfaceEnabled != nullptr && interfaceEnabled[ 0 ] == '1' );
 }
 
 }
@@ -217,8 +249,9 @@ void UNsUpdate::UpdateFlowField( int solverType )
 
 void UNsUpdate::DumpUpdatedStateTrace()
 {
-    const char * traceFile = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
-    if ( traceFile == nullptr || traceFile[ 0 ] == 0 ) return;
+    const char * configured = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
+    if ( configured == nullptr || configured[ 0 ] == 0 ) return;
+    const std::string tracePath = RankAwareTracePath( configured );
     if ( unsf.q == nullptr )
     {
         throw std::runtime_error(
@@ -227,7 +260,7 @@ void UNsUpdate::DumpUpdatedStateTrace()
 
     static std::uint32_t sequence = 0;
     AppendStateStageTrace(
-        traceFile, sequence,
+        tracePath.c_str(), sequence,
         static_cast< std::uint64_t >( ug.nCells ),
         static_cast< std::uint32_t >( nscom.nTEqu ), * unsf.q );
     ++ sequence;

@@ -31,6 +31,9 @@ along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 #include "ZoneState.h"
 #include "InterFace.h"
 #include "FaceTopo.h"
+#include "BoundaryExchangeContract.h"
+
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -97,15 +100,31 @@ void UploadInterfaceValue( UnsGrid * grid, MRField * field2D, const std::string 
                 + name );
         }
 
+        BoundaryEndpointMap endpoint;
+        endpoint.cellCount =
+            static_cast< int >( ( * field2D )[ 0 ].size() );
+        endpoint.cellIds.resize( nIFaces );
         for ( int iFace = 0; iFace < nIFaces; ++ iFace )
         {
             int iCell;
             grid->GetFaceTopo().GetSId(iFace, ghostId + 1, iCell);
+            endpoint.cellIds[ iFace ] = iCell;
+        }
 
-            for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        std::vector< const Real * > components;
+        components.reserve( nEqu );
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            components.push_back( ( * field2D )[ iEqu ].data() );
+        }
+        std::vector< Real > packed;
+        PackBoundaryHost( endpoint, nEqu, components, packed );
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            for ( int iFace = 0; iFace < nIFaces; ++ iFace )
             {
                 ( * fieldStorage )[ iEqu ][ iFace ] =
-                    ( * field2D )[ iEqu ][ iCell ];
+                    packed[ iEqu * nIFaces + iFace ];
             }
         }
     }
@@ -132,18 +151,40 @@ void DownloadInterfaceValue( UnsGrid * grid, MRField * field2D, const std::strin
                 + name );
         }
 
-        int nIFaces = interFace->nIFaces;
+        const int nIFaces = interFace->nIFaces;
+        std::vector< Real > packed(
+            static_cast< std::size_t >( nEqu ) * nIFaces );
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            for ( int iFace = 0; iFace < nIFaces; ++ iFace )
+            {
+                packed[ iEqu * nIFaces + iFace ] =
+                    ( * fieldStorage )[ iEqu ][ iFace ];
+            }
+        }
+
+        BoundaryEndpointMap endpoint;
+        endpoint.cellCount =
+            static_cast< int >( ( * field2D )[ 0 ].size() );
+        endpoint.cellIds.resize( nIFaces );
         for ( int iFace = 0; iFace < nIFaces; ++ iFace )
         {
             int iCell;
             grid->GetFaceTopo().GetTId(iFace, ghostId + 1, iCell);
-
-            for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
-            {
-                ( * field2D )[ iEqu ][ iCell ] =
-                    ( * fieldStorage )[ iEqu ][ iFace ];
-            }
+            endpoint.cellIds[ iFace ] = iCell;
         }
+
+        std::vector< Real * > components;
+        components.reserve( nEqu );
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            components.push_back( ( * field2D )[ iEqu ].data() );
+        }
+        UnpackBoundaryHost(
+            endpoint,
+            nEqu,
+            packed,
+            components );
     }
 }
 

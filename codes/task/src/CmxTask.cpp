@@ -456,11 +456,37 @@ void SingleSolverSingleGridTask( int operationId )
     }
 }
 
+void SingleSolverSingleGridTask(
+    int operationId,
+    SimuContext & context )
+{
+    GenerateCmdList( operationId );
+    const char * category =
+        StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
+    if ( category[ 0 ] != '\0' )
+    {
+        ScopedStageTimer timer( category );
+        CMD::ExecuteCmd( & context );
+    }
+    else
+    {
+        CMD::ExecuteCmd( & context );
+    }
+}
+
 void SingleSolverSingleGridTask( const std::string & taskName )
 {
     // Source form: resolve name once, then use id path.
     const int operationId = MessageMap::GetMsgId( taskName );
     SingleSolverSingleGridTask( operationId );
+}
+
+void SingleSolverSingleGridTask(
+    const std::string & taskName,
+    SimuContext & context )
+{
+    const int operationId = MessageMap::GetMsgId( taskName );
+    SingleSolverSingleGridTask( operationId, context );
 }
 
 
@@ -488,6 +514,23 @@ void MultiSolverMultiGridTask( int operationId )
     }
 }
 
+void MultiSolverMultiGridTask(
+    int operationId,
+    SimuContext & context )
+{
+    for ( int solverIndex = 0;
+        solverIndex < SolverState::nSolver;
+        ++ solverIndex )
+    {
+        SolverState::SetSolverTypeBySolverIndex( solverIndex );
+        for ( int gl = 0; gl < GridState::nGrids; ++ gl )
+        {
+            GridState::SetGridLevel( gl );
+            SingleSolverSingleGridTask( operationId, context );
+        }
+    }
+}
+
 void MultiSolverMultiGridTask( const std::string & taskName )
 {
     // Resolve once outside solver x grid loops.
@@ -495,6 +538,13 @@ void MultiSolverMultiGridTask( const std::string & taskName )
     MultiSolverMultiGridTask( operationId );
 }
 
+void MultiSolverMultiGridTask(
+    const std::string & taskName,
+    SimuContext & context )
+{
+    const int operationId = MessageMap::GetMsgId( taskName );
+    MultiSolverMultiGridTask( operationId, context );
+}
 
 
 EndNameSpace

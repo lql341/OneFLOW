@@ -64,6 +64,12 @@ bool HighPrecisionResidualOutputEnabled()
     return setting == "1" || setting == "true" || setting == "on";
 }
 
+bool ResidualDiagnosticEnabled()
+{
+    const char * value = std::getenv( "ONEFLOW_RESIDUAL_DIAGNOSTIC" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
 }
 
 ResidualTask::ResidualTask()
@@ -106,6 +112,29 @@ void ResidualTask::CalcRes( int solverType, ResData & data )
 
     // Residual for the solverType passed into CalcRes (not ambient SolverState alone).
     const MRField * res = FieldHome::GetConstResidualField( grid, solverType );
+    if ( ResidualDiagnosticEnabled() )
+    {
+        const MRField * namedRes =
+            GetFieldPointer< MRField >( grid, "res" );
+        std::cout << "RESIDUAL_DIAG rank=" << Parallel::GetPid()
+                  << " zone=" << ZoneState::zid
+                  << " solver=" << solverType
+                  << " grid=" << static_cast< const void * >( grid )
+                  << " field=" << static_cast< const void * >( res )
+                  << " named=" << static_cast< const void * >( namedRes )
+                  << " nEqu=" << ( res == nullptr ? -1 : res->GetNEqu() )
+                  << " first="
+                  << ( res == nullptr || res->GetNEqu() == 0
+                           || ( * res )[ 0 ].empty()
+                       ? 0.0
+                       : ( * res )[ 0 ][ 0 ] )
+                  << " named_first="
+                  << ( namedRes == nullptr || namedRes->GetNEqu() == 0
+                           || ( * namedRes )[ 0 ].empty()
+                       ? 0.0
+                       : ( * namedRes )[ 0 ][ 0 ] )
+                  << std::endl;
+    }
 
     data.resave.Zero();
     data.resave.nCells =  grid->nCells;

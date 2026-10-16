@@ -9,6 +9,7 @@ License
 #pragma once
 
 #include "FluxBackend.h"
+#include "BoundaryExchangeContract.h"
 #include "DeviceBuffer.h"
 #include "EulerDomain.h"
 
@@ -88,6 +89,12 @@ struct HipGradientStorage
     DeviceBuffer< Real > boundaryMeshVelocityNormal;
     DeviceBuffer< int > boundaryLeftCell;
     DeviceBuffer< int > boundaryRightCell;
+    DeviceBuffer< int > boundarySendCell;
+    DeviceBuffer< int > boundaryReceiveCell;
+    DeviceBuffer< Real > boundarySendValues;
+    DeviceBuffer< Real > boundaryReceiveValues;
+    std::vector< Real > hostBoundarySendValues;
+    std::vector< Real > hostBoundaryReceiveValues;
     const ReconstructionBoundaryOperation * cachedBoundaryOperationHost =
         nullptr;
     std::size_t cachedBoundaryOperationCount = 0;
@@ -199,6 +206,40 @@ public:
     void UpdatePrimitiveState(
         const CellStateUpdateView & view,
         bool downloadToHost = true );
+
+    BoundaryBufferView PackBoundary(
+        const void * cacheKey,
+        const BoundaryFieldExchangePlan & plan,
+        BoundaryTransferMode mode );
+    BoundaryBufferView PackBoundary(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode );
+    void UploadBoundaryState(
+        const void * cacheKey,
+        int nCells,
+        int nGhostCells,
+        int nEquations,
+        const Real * const * components );
+    BoundaryBufferView PrepareBoundaryReceive(
+        const void * cacheKey,
+        const BoundaryFieldExchangePlan & plan,
+        BoundaryTransferMode mode );
+    BoundaryBufferView PrepareBoundaryReceive(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode );
+    void UnpackBoundary(
+        const void * cacheKey,
+        const BoundaryFieldExchangePlan & plan,
+        BoundaryTransferMode mode );
+    void UnpackBoundary(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode );
 
     void BindState( const void * cacheKey, Ns3DDeviceState & state );
     void UnbindState( const void * cacheKey ) noexcept;

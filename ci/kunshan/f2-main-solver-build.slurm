@@ -111,8 +111,6 @@ cmake --build "$ONEFLOW_F2_BUILD_DIR" \
 "$ONEFLOW_F2_BUILD_DIR/bin/OneFLOWHipSmoke"
 "$ONEFLOW_F2_BUILD_DIR/bin/oneflow_euler_backend_hip_test"
 
-ctest --test-dir "$ONEFLOW_F2_BUILD_DIR" -L hardware -R HIP \
+"$ONEFLOW_F2_BUILD_SOURCE_DIR/ci/kunshan/ctest-nonempty.sh" \
+    "$ONEFLOW_F2_BUILD_DIR" -L hardware -R HIP \
     --output-on-failure | tee "$ONEFLOW_F2_BUILD_DIR/ctest.log"
-grep -Eq \
-    "100% tests passed(, 0 tests failed out of [1-9][0-9]*| out of [1-9][0-9]*)" \
-    "$ONEFLOW_F2_BUILD_DIR/ctest.log"
