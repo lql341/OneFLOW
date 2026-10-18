@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-10（PR #203 不再跟踪；3D HIP resident timestep 的准确性、稳定性和首轮配对性能已闭环，当前 revision 待本轮提交后确定。技术路线快照仍以各节记录日期为准）
+> 最后更新：2026-10-18（master 合入 dev；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -9,11 +9,23 @@
 
 ## 交接摘要（先读这一段）
 
+**2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`
+`9b3c909cf9be863b25faf5854adde1cd0c70ce98` merge 到 `dev`
+（原 head `c5c109c2f14a5e442ea2153a58d90db7156b3e3e`），保留双方历史，
+本轮授权包含推送 `origin/dev`。唯一文本冲突位于
+`tests/geometry/CMakeLists.txt`，保留 dev 的 `InterfaceNeighborMappingTest`
+与 master 的 `FaceSearchBasicTest` 两项注册。合并后 Python 测试
+`88/88` 通过（GUI services 52、case catalog 9、layout compilers 13、
+Tkinter runner 3、mesh export 6、mesh workflow 5）。当前环境缺少 C++
+构建工具，未运行 C++/CTest、CPU normal/strict 五算例或 HIP 验证；
+此记录不构成数值/后端验收。既有 CI 的分支过滤不覆盖 `dev`，
+不能把此次推送描述为 CI 已通过。下方旧 checkpoint 的不 push 边界仅属历史记录。
+
 **现在在飞什么**
 
 | 项 | 状态 |
 |---|---|
-| `origin/dev` / 本地 `dev` | 本地 `dev` 已合入 `upstream/master`，包含主线重复定义修复与 3D HIP residual 接入；当前本地相对 `origin/dev` **ahead 12**，本轮按用户要求只提交本地 commit，不 push。精确值以 `git rev-parse dev` 为准 |
+| `origin/dev` / 本地 `dev` | 2026-10-18 合入本仓库 `origin/master` `9b3c909c`；本轮按用户要求推送 `origin/dev`。精确 revision 与同步状态以 Git 为准 |
 | PR #159 `pr/agents-branch-model` | **MERGED**（2026-09-19，review approved）；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端 |
 | PR #160 `pr/euler-weno5-unified` | **MERGED**（2026-09-19，review approved）；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
 | PR #203 `pr/database-type-map-init` | **OPEN**；用户要求不跟踪，保持等待通过；不纳入本轮开发判断 |
