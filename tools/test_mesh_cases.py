@@ -21,13 +21,133 @@ class MeshCaseCatalogTest(unittest.TestCase):
         profile_ids = {
             entry["id"] for entry in catalog["cases"] if entry.get("profile")
         }
-        self.assertTrue({"minimal_rectangle", "minimal_cube", "two_connected_cubes"} <= profile_ids)
+        self.assertTrue({"minimal_rectangle", "minimal_cube", "two_connected_cubes", "two_connected_squares"} <= profile_ids)
         errors = [
             error
             for entry in catalog["cases"]
             for error in validate_case(REPOSITORY_ROOT, entry)
         ]
         self.assertEqual(errors, [])
+
+    def test_turbulent_flat_plate_uses_requested_bounds_and_tanh_distribution(self) -> None:
+        case_dir = REPOSITORY_ROOT / "grid" / "turbulent_flat_plate"
+        with (case_dir / "case.json").open("r", encoding="utf-8") as stream:
+            profile = json.load(stream)
+
+        runtime = profile["parameters"]["runtime"]
+        expected = profile["parameters"]["expected"]
+        layout = (case_dir / runtime["layout"]).read_text(encoding="utf-8")
+        self.assertEqual(runtime["dimension"], 2)
+        self.assertIn("Point(1)= {-0.35,0,0}", layout)
+        self.assertIn("Point(2)= {0,0,0}", layout)
+        self.assertIn("Point(3)= {2,0,0}", layout)
+        self.assertIn("Point(4)= {-0.35,1,0}", layout)
+        self.assertIn("Point(5)= {0,1,0}", layout)
+        self.assertIn("Point(6)= {2,1,0}", layout)
+        self.assertIn("Dim(3)={81}", layout)
+        self.assertIn("Dim(4)={81}", layout)
+        self.assertIn("Dim(5)={81}", layout)
+        expected_distributions = [
+            "Ds(1)={tanh,-1,0.002}",
+            "Ds(2)={tanh,0.002,-1}",
+            "Ds(3)={tanh,1.0e-6,-1}",
+            "Ds(4)={tanh,1.0e-6,-1}",
+            "Ds(5)={tanh,1.0e-6,-1}",
+            "Ds(6)={tanh,-1,0.002}",
+            "Ds(7)={tanh,0.002,-1}",
+        ]
+        for distribution in expected_distributions:
+            self.assertIn(distribution, layout)
+        self.assertEqual(expected["nodes"], 5913)
+        self.assertEqual(expected["cells"], 5760)
+        self.assertEqual(expected["faces"], 11672)
+        self.assertEqual(expected["boundaryFaces"], 304)
+        self.assertEqual(expected["internalFaces"], 11368)
+        self.assertEqual(expected["boundingBox"]["min"], [-0.35, 0.0, 0.0])
+        self.assertEqual(expected["boundingBox"]["max"], [2.0, 1.0, 0.0])
+
+    def test_two_connected_squares_profile_carries_grid_options(self) -> None:
+        case_dir = REPOSITORY_ROOT / "grid" / "two_connected_squares"
+        with (case_dir / "case.json").open("r", encoding="utf-8") as stream:
+            profile = json.load(stream)
+
+        runtime = profile["parameters"]["runtime"]
+        options = runtime["gridOptions"]
+        self.assertEqual(runtime["dimension"], 2)
+        self.assertEqual(runtime["objective"], 0)
+        self.assertEqual(runtime["generationId"], 4)
+        self.assertEqual(options["topology"], "unstructured")
+        self.assertTrue(options["multiBlock"])
+        self.assertEqual(options["fileFormat"], 1)
+        self.assertEqual(options["ioRoots"]["project"], ".")
+        self.assertEqual(options["ioRoots"]["meshOutput"], "case")
+        self.assertEqual(options["translation"], [0.0, 0.0, 0.0])
+        self.assertEqual(options["axisDirection"], 0)
+        self.assertEqual(options["sourceFormat"], "plot3d")
+        self.assertEqual(options["targetFormat"], "oneflow")
+        self.assertEqual(options["parallelStrategy"], 1)
+        self.assertEqual(profile["parameters"]["expected"]["cells"], 8)
+        self.assertEqual(profile["parameters"]["expected"]["internalFaces"], 9)
+
+        grid_parameters = (case_dir / "script" / "grid.txt").read_text(encoding="utf-8")
+        self.assertIn('string topoType = "u";', grid_parameters)
+        self.assertIn("int multiBlock = 1;", grid_parameters)
+        self.assertIn("int fileFormat = 1;", grid_parameters)
+        self.assertIn("Real gridScale = 1.0;", grid_parameters)
+        self.assertIn("Real gridTrans[3] = 0, 0, 0;", grid_parameters)
+        self.assertIn('string gridLayoutFileName = "grid/twoConnectedSquaresLayout.txt";', grid_parameters)
+        self.assertIn('string sourceGridType = "plot3d";', grid_parameters)
+        self.assertIn('string targetGridType = "oneflow";', grid_parameters)
+        self.assertIn("int parallelStrategy = 1;", grid_parameters)
+        self.assertIn('string projectRoot = ".";', grid_parameters)
+        self.assertIn('string inputRoot = "case";', grid_parameters)
+        self.assertIn('string outputRoot = "case";', grid_parameters)
+        self.assertIn('string meshInputRoot = "case";', grid_parameters)
+        self.assertIn('string flowInputRoot = "case";', grid_parameters)
+        self.assertIn('string meshOutputRoot = "case";', grid_parameters)
+        self.assertIn('string flowOutputRoot = "case";', grid_parameters)
+
+        layout = (case_dir / runtime["layout"]).read_text(encoding="utf-8")
+        self.assertIn("Boundary(2) = {-1}", layout)
+        self.assertIn("Add L2F 1 2 2", layout)
+        self.assertIn("Add L2F 2 4 2", layout)
+        self.assertIn("Add F2B 1 1 1", layout)
+        self.assertIn("Add F2B 2 1 2", layout)
+        self.assertNotIn("Add F2B 1 2 2", layout)
+        self.assertNotIn("Add F2B 2 4 2", layout)
+
+    def test_invalid_grid_options_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            case_dir = Path(directory)
+            (case_dir / "script").mkdir()
+            (case_dir / "script" / "grid.txt").write_text("", encoding="utf-8")
+            entry = {"id": "sample", "layout": "grid/layout.txt"}
+            profile = {
+                "schema": "oneflow.case",
+                "version": 1,
+                "parameters": {
+                    "runtime": {
+                        "dimension": 2,
+                        "layout": "grid/layout.txt",
+                        "parameterFiles": ["script/grid.txt"],
+                        "gridOptions": {
+                            "topology": "volume",
+                            "multiBlock": "yes",
+                            "fileFormat": "1",
+                            "scale": "1.0",
+                            "translation": [0.0, 1.0],
+                            "ioRoots": {"output": "case"},
+                        },
+                    }
+                },
+            }
+            errors = validate_profile(case_dir, entry, profile)
+            self.assertTrue(any("gridOptions.topology" in error for error in errors))
+            self.assertTrue(any("gridOptions.multiBlock" in error for error in errors))
+            self.assertTrue(any("gridOptions.fileFormat" in error for error in errors))
+            self.assertTrue(any("gridOptions.scale" in error for error in errors))
+            self.assertTrue(any("gridOptions.translation" in error for error in errors))
+            self.assertTrue(any("gridOptions.ioRoots.meshOutput" in error for error in errors))
 
     def test_duplicate_case_ids_are_rejected(self) -> None:
         catalog = {
