@@ -66,45 +66,66 @@ run_cpu() {
 
 run_hip() {
     local ranks="$1" nx="$2" output="$3"
-    if [ "$ranks" -eq 1 ]; then
-        export HIP_VISIBLE_DEVICES=0
-        export ROCR_VISIBLE_DEVICES=0
-    else
-        unset HIP_VISIBLE_DEVICES ROCR_VISIBLE_DEVICES
-    fi
+    case "$ranks" in
+        1)
+            export HIP_VISIBLE_DEVICES=0
+            export ROCR_VISIBLE_DEVICES=0
+            ;;
+        2)
+            export HIP_VISIBLE_DEVICES=0,1
+            export ROCR_VISIBLE_DEVICES=0,1
+            ;;
+        4)
+            unset HIP_VISIBLE_DEVICES ROCR_VISIBLE_DEVICES
+            ;;
+        *)
+            echo "unsupported HIP rank/DCU count: $ranks" >&2
+            return 2
+            ;;
+    esac
     mpirun -np "$ranks" --map-by "ppr:${ranks}:node" --bind-to core \
         "$build_dir/oneflow_1d_euler_mpi_hip_benchmark" "$nx" 100 2 1 \
         > "$output" 2>&1
 }
 
 check_output() {
-    local output="$1" ranks="$2" nx="$3"
+    local output="$1" backend="$2" ranks="$3" nx="$4"
+    grep -q "^backend=${backend} ranks=${ranks} local_ranks=${ranks} " "$output"
     grep -q '^decomposition=PASS$' "$output"
-    grep -q "ranks=${ranks} " "$output"
     grep -q "decomposition_active_ranks=${ranks} " "$output"
     grep -q "global_cells_sum=${nx} " "$output"
     grep -Eq 'local_nx_min=[1-9][0-9]* local_nx_max=[1-9][0-9]*' "$output"
+    grep -Eq 'halo_exchanges_sum=[1-9][0-9]* expected_halo_exchanges=[1-9][0-9]*' \
+        "$output"
+    if [ "$backend" = "HIP_MPI_SHARED_DEVICE" ]; then
+        grep -q \
+            "^device=.* local_rank=0 local_ranks=${ranks} device_index=0 visible_devices=${ranks}$" \
+            "$output"
+    fi
 }
 
-for nx in 262144 1048576 4194304; do
+for nx in 65536 262144 1048576 4194304; do
     for cpu_ranks in 8 16 32; do
         cpu_output="$job_tmp/cpu-${cpu_ranks}-${nx}.out"
         run_cpu "$cpu_ranks" "$nx" "$cpu_output"
-        check_output "$cpu_output" "$cpu_ranks" "$nx"
+        check_output "$cpu_output" CPU_MPI "$cpu_ranks" "$nx"
         cpu_hash="$(sed -n 's/^final_hash=//p' "$cpu_output")"
         cpu_ms="$(sed -n 's/^lifecycle_max_ms=\([0-9.]*\).*/\1/p' "$cpu_output")"
-        for hip_ranks in 1 4; do
+        for hip_ranks in 1 2 4; do
             hip_output="$job_tmp/hip-${hip_ranks}-${nx}.out"
             run_hip "$hip_ranks" "$nx" "$hip_output"
-            check_output "$hip_output" "$hip_ranks" "$nx"
+            check_output "$hip_output" HIP_MPI_SHARED_DEVICE "$hip_ranks" "$nx"
             hip_hash="$(sed -n 's/^final_hash=//p' "$hip_output")"
             test "$cpu_hash" = "$hip_hash"
             hip_ms="$(sed -n 's/^lifecycle_max_ms=\([0-9.]*\).*/\1/p' "$hip_output")"
             ratio="$(awk -v c="$cpu_ms" -v h="$hip_ms" \
                 'BEGIN { printf "%.6f", c / h }')"
-            echo "MATRIX_PASS nx=$nx cpu_ranks=$cpu_ranks hip_dcu=$hip_ranks \
+            echo "MATRIX_PASS nodes=1 nx=$nx cpu_ranks=$cpu_ranks \
+cpu_cores=$cpu_ranks hip_ranks=$hip_ranks hip_dcus=$hip_ranks \
 cpu_ms=$cpu_ms hip_ms=$hip_ms cpu_over_hip=${ratio}x \
-active_cpu_ranks=$cpu_ranks active_hip_ranks=$hip_ranks hash_match=1"
+active_cpu_ranks=$cpu_ranks active_hip_ranks=$hip_ranks \
+cpu_local_ranks=$cpu_ranks hip_local_ranks=$hip_ranks \
+hash_match=1 decomposition=PASS"
         done
     done
 done

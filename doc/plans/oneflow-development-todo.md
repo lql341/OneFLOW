@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-19（双节点 GPU-aware MPI standalone 验证；技术路线与历史测量仍以各节记录日期为准）
+> 最后更新：2026-10-19（standalone MPI rank/DCU 矩阵与 3D zone 分区边界；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -453,7 +453,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
 | 当前进度 | 受限的单 zone、finest-grid、5 方程、Lax–Friedrichs、limiter-off、inviscid HIP path 已覆盖 gradient → reconstruction → flux/residual → state update，并完成 3-step 36-record target-node accuracy gate。完整多 zone/MPI halo、viscous/turbulence、跨 stage 全量 device residency 和稳定的重复性能结论仍未完成。 |
-| 最新验证 | 2026-10-19 Kunshan：双节点、4 ranks、4 DCUs（每节点 2 ranks/2 DCUs）GPU-aware MPI regression 通过，`gfx906`、`gpu_aware_mpi=1`、CPU/HIP hash 一致、`decomposition=PASS`、halo 次数正确；同一 `steps=100,warmup=1,repeats=2` basis 下四规模 HIP/CPU lifecycle 为 `9.35x/35.70x/89.69x/138.08x`，GPU-aware 相对 host-staged 为 `1.39x/1.31x/1.19x/1.13x`。随后补齐了用户要求的同节点资源口径：单节点 32 个 CPU MPI ranks（32 核）对 1 DCU/1 rank 的 HIP lifecycle 为 `1.19x/8.64x/5.60x/7.70x`，对 4 DCUs/4 ranks 为 `1.21x/12.11x/12.79x/26.53x`（`nx=65536/262144/1048576/4194304`）；四规模 CPU/HIP hash、decomposition、halo count 全部通过。受单节点上限 `32 CPU + 4 DCU` 约束，64 CPU ranks 对 8 DCUs 另用双节点完成，HIP/CPU 为 `0.78x/2.12x/6.49x/22.01x`。这些是一维 Euler standalone 证据；root 3D 主 solver 仍需独立 paired timing。 |
+| 最新验证 | 2026-10-19 Kunshan：双节点、4 ranks、4 DCUs（每节点 2 ranks/2 DCUs）GPU-aware MPI regression 通过，`gfx906`、`gpu_aware_mpi=1`、CPU/HIP hash 一致、`decomposition=PASS`、halo 次数正确；同一 `steps=100,warmup=1,repeats=2` basis 下四规模 HIP/CPU lifecycle 为 `9.35x/35.70x/89.69x/138.08x`，GPU-aware 相对 host-staged 为 `1.39x/1.31x/1.19x/1.13x`。随后补齐了用户要求的同节点资源口径：单节点 32 个 CPU MPI ranks（32 核）对 1 DCU/1 rank 的 HIP lifecycle 为 `1.19x/8.64x/5.60x/7.70x`，对 4 DCUs/4 ranks 为 `1.21x/12.11x/12.79x/26.53x`（`nx=65536/262144/1048576/4194304`）；四规模 CPU/HIP hash、decomposition、halo count 全部通过。受单节点上限 `32 CPU + 4 DCU` 约束，64 CPU ranks 对 8 DCUs 另用双节点完成，HIP/CPU 为 `0.78x/2.12x/6.49x/22.01x`。随后完成单节点 CPU-rank/DCU-rank 矩阵（`nx=262144/1048576/4194304`）：每组均检查 `decomposition_active_ranks==ranks`、`local_ranks`、`global_cells_sum`、`decomposition=PASS` 和 CPU/HIP hash 一致。CPU 8/16/32 ranks 对 HIP 1 DCU 的加速分别为 `15.96x/5.63x/2.76x`、`29.29x/14.15x/5.51x`、`30.88x/14.90x/7.73x`；对 HIP 4 DCUs 分别为 `23.04x/7.95x/3.87x`、`69.11x/32.75x/12.88x`、`107.45x/51.79x/23.83x`。这些是一维 Euler standalone 证据；root 3D 主 solver 仍需独立 paired timing。 |
 
 **能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端、单节点 MPI 和双节点 GPU-aware MPI 已实测；CUDA、Kokkos、多 zone 3D MPI 和完整 Navier–Stokes 主线仍未验证。`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；3D 主 solver 当前只在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 条件下验证 HIP inviscid flux/residual 与 opt-in Green–Gauss gradient。q H2D、gradient D2H、reconstruction、RK/state update、viscous/turbulence 和 3D MPI/interface 仍依赖 host，不能称为完整 stateful/device-resident solver。
 
@@ -677,6 +677,21 @@ git show dev:doc/plans/oneflow-development-todo.md
         （每节点 32 CPU ranks、4 DCUs），四规模为 `0.78x/2.12x/6.49x/22.01x`。
         所有比较均为 `steps=100,warmup=1,repeats=2`，CPU 是实际活跃 MPI ranks，
         不是仅申请但未使用的 `cpus-per-task`；这些结果仍限于 standalone 1D Euler。
+  - [x] **P2.9.6：** 已按代码契约重设计 rank/DCU 实验。standalone 1D Euler
+        没有 zone；`Partition(globalNx, rank, ranks, ...)` 会随 rank 数重新划分同一
+        全局 cell array，halo 邻居也按新的 rank ring 重建。因此 CPU `8/16/32 ranks`
+        与 HIP `1/2/4 ranks = 1/2/4 DCUs` 必须保持相同 `globalNx`、初始条件、
+        `steps=100,warmup=1,repeats=2`，不复用另一 rank 数的 local timing。矩阵 runner
+        已扩展为四个网格规模、三种 CPU rank 和三种 DCU rank，并硬检查
+        `local_ranks`、`decomposition_active_ranks`、非空 local partition、
+        `halo_exchanges_sum == expected_halo_exchanges`、HIP `visible_devices` 与
+        DCU 数一致，以及 CPU/HIP final hash 一致。
+  - [x] **P2.9.7：** 已确认 3D root solver 不能按 standalone 方式“给单 zone 加 rank”。
+        `m6wingroe_sa` 是 single-zone，当前 HIP capability 要求 `ZoneState::nLocal == 1`；
+        多 rank 3D 实验必须使用已分区 multi-zone fixture，并按请求的 rank 数重新生成
+        `ownerRanks` 与 interface exchange plan，验证每个 rank 有非空 local zone 且
+        写出 solver work。未完成该 fixture 前，不报告 3D 的 8/16/32-rank CPU 或
+        1/2/4-DCU scaling。
 
 
 - [ ] **P2.10：GPU reduction**（优化计划阶段 D 唯一剩余项）

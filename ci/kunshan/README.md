@@ -242,6 +242,24 @@ the cluster-side `README.md`; the structure is:
 
 Common scale: `nx = 65536 / 262144 / 1048576 / 4194304`, `steps=100 repeats=2 warmup=1`.
 
+The standalone 1D Euler MPI port is not a zone-based 3D solver. Its
+`Partition(globalNx, rank, ranks, ...)` path repartitions the same global cell
+array whenever the MPI rank count changes, and the halo ring uses those rank
+neighbors. The rank-scaling matrix therefore keeps `global_nx`, initial
+conditions, `steps`, `warmup`, and `repeats` fixed while testing CPU
+`8/16/32 ranks` against HIP `1/2/4 ranks` (one rank per DCU). Each run must
+report `local_ranks == requested ranks`, `decomposition_active_ranks ==
+requested ranks`, a non-empty local partition, the expected halo-exchange
+count, and a CPU/HIP final-hash match.
+
+This rule does not apply to the root 3D solver. The checked-in `m6wingroe_sa`
+case is single-zone, and the supported HIP capability requires
+`ZoneState::nLocal == 1`; running that case with many MPI ranks would not
+create valid per-rank zones. A valid 3D multi-rank experiment must first build
+an already partitioned multi-zone fixture, then regenerate the
+`ownerRanks`/interface exchange plan for the requested rank count and verify
+that every rank owns a non-empty zone and writes solver work.
+
 `lifecycle_*_ms` sums over `repeats`; only datasets recorded with the same
 `repeats` value are comparable (see the erratum in
 `doc/reports/performance/oneflow-euler-performance-20260913.md`).
