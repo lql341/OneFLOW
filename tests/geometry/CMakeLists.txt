@@ -254,4 +254,12 @@ target_compile_definitions(GridLayoutGenerationTest PRIVATE ONEFLOW_SOURCE_DIR="
 add_oneflow_gtest(CellTopoConnectivityTest CellTopoConnectivityTest.cpp)
 add_oneflow_gtest(ElementHomeTest ElementHomeTest.cpp)
 add_oneflow_gtest(InterfaceNeighborMappingTest InterfaceNeighborMappingTest.cpp)
+add_executable(InterfaceEndpointTest
+    InterfaceEndpointTest.cpp
+    ${CMAKE_SOURCE_DIR}/codes/task/src/InterfaceEndpoint.cpp
+    ${CMAKE_SOURCE_DIR}/codes/parallel/src/BoundaryExchangeContract.cpp)
+target_link_libraries(InterfaceEndpointTest PRIVATE
+    OneFLOW_GeometryCore GTest::gtest_main)
+target_compile_features(InterfaceEndpointTest PRIVATE cxx_std_20)
+gtest_discover_tests(InterfaceEndpointTest DISCOVERY_MODE PRE_TEST)
 add_oneflow_gtest(FaceSearchBasicTest FaceSearchBasicTest.cpp)

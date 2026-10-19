@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "InterfaceTask.h"
+#include "InterfaceEndpoint.h"
 #include "Parallel.h"
 #include "Zone.h"
 #include "ZoneState.h"
@@ -72,38 +73,6 @@ bool GpuAwareMpiConfirmed()
 }
 
 #ifdef ONEFLOW_ENABLE_HIP
-bool BuildHipInterfaceEndpoint(
-    UnsGrid * grid,
-    int neighborZone,
-    int sendRecv,
-    BoundaryEndpointRole role,
-    BoundaryEndpointMap & endpoint )
-{
-    if ( grid == nullptr || grid->interFace == nullptr ) return false;
-    InterFace * interFace = grid->interFace.get();
-    int neighborIndex = -1;
-    if ( ! interFace->TryGetNeighborIndex( neighborZone, neighborIndex ) )
-        return false;
-
-    const IntField & interfaceIds =
-        interFace->GetInterfaceId( neighborIndex, sendRecv );
-    endpoint.cellCount = grid->nCells + grid->nBFaces;
-    endpoint.ownedCellCount = grid->nCells;
-    endpoint.role = role;
-    endpoint.cellIds.resize( interfaceIds.size() );
-    for ( HXSize_t iFace = 0; iFace < interfaceIds.size(); ++ iFace )
-    {
-        int cellId = -1;
-        if ( sendRecv == GREAT_SEND )
-            grid->GetFaceTopo().GetSId( interfaceIds[ iFace ], 1, cellId );
-        else
-            grid->GetFaceTopo().GetTId( interfaceIds[ iFace ], 1, cellId );
-        endpoint.cellIds[ iFace ] = cellId;
-    }
-    endpoint.Validate();
-    return true;
-}
-
 void ExchangeHipInterfaceQ(
     SimuContext & context,
     int sourceZone,
@@ -169,7 +138,7 @@ void ExchangeHipInterfaceQ(
                 sourceGrid != nullptr
                 && sourceQ != nullptr
                 && sourceQ->GetNEqu() == nEquations
-                && BuildHipInterfaceEndpoint(
+                && BuildInterfaceEndpoint(
                     sourceGrid, targetZone, GREAT_SEND,
                     BoundaryEndpointRole::OwnedCell, sourceEndpoint );
         }
@@ -193,7 +162,7 @@ void ExchangeHipInterfaceQ(
                 targetGrid != nullptr
                 && targetQ != nullptr
                 && targetQ->GetNEqu() == nEquations
-                && BuildHipInterfaceEndpoint(
+                && BuildInterfaceEndpoint(
                     targetGrid, sourceZone, GREAT_RECV,
                     BoundaryEndpointRole::GhostCell, targetEndpoint );
         }
