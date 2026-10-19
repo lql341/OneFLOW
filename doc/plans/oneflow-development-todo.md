@@ -7,6 +7,34 @@
 > 配套入口：[`AGENTS.md`](../../../AGENTS.md)（规则与文档地图）、
 > [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)（集群流程与标准套件）。
 
+## 2026-10-19 3D 多 zone 8-rank 对 8-rank paired timing
+
+- 算例为 3D `m6wingroe_sa` 的 8-zone 分区，不是已经完成的 1D Euler
+  microbenchmark。每个 zone 由一个 MPI rank 负责，单节点 8 个 zone/8 个 rank。
+- 准确性门禁：CPU 使用 `8 CPU cores / 8 CPU ranks`，HIP 使用
+  `1 DCU / 8 MPI ranks`，两者均单节点；3 steps、fixed CFL `0.01`。
+  CPU/HIP 均 `active_ranks=8`，8 个 rank 均写出 breakdown；36 条逐 rank
+  stage trace 通过，HIP 相对 CPU 最大绝对差约 `8.53e-14`。
+- 正式计时：同一输入、10 steps、warmup `1`、formal repeats `5`、fixed
+  CFL `0.01`，端到端 wall-clock（包含 MPI、初始化、host packing、H2D/D2H、
+  HIP kernel、输出）。
+  - CPU：`8 CPU cores / 8 CPU ranks`，单节点，mean
+    `3473.812429 ms`。
+  - HIP：`1 DCU / 8 MPI ranks`，单节点，每张 DCU 8 个 rank，mean
+    `4337.233101 ms`。
+  - 明确比值：`CPU / HIP = 3473.812429 / 4337.233101 = 0.800928x`。
+    等价地，HIP 时间是 CPU 的 `1.248551x`，比 CPU 慢约 `24.86%`；不能称为
+    3D 应用级加速。
+- 之前 `qf1` 约 `3.1e-3` 的失败 trace 来自残留 HIP gradient opt-in；
+  多 zone 路径现已显式清理 HIP gradient/reconstruction/state-update/boundary/
+  time-step 变量，并在 `UNsInvFlux::UseHipDeviceReconstruction()` 对
+  `nZones > 1` 强制回退 host reconstruction。当前多 zone 正确路径是
+  CPU gradient + CPU reconstruction + HIP flux/interface。
+- 结论：8-rank/8-rank 资源口径已经准确闭合，但当前 1 DCU/8 rank 的主 solver
+  仍慢于 8 CPU cores/8 ranks。下一优化重点应放在多 zone interface/halo 与
+  host-staged 数据搬运、跨 RK stage residency；在这些变化重新通过逐 rank trace、
+  fixed-CFL stability 和同 basis 多次 timing 前，不发布加速结论。
+
 ## 交接摘要（先读这一段）
 
 **2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`

@@ -480,6 +480,14 @@ bool UNsInvFlux::UseHipDeviceReconstruction() const
         std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
     if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
     if ( ! this->UseHipGradient() ) return false;
+    // The device reconstruction contract currently assumes that every
+    // boundary ghost is covered by the local boundary kernel.  A partitioned
+    // multi-zone grid also has cross-rank interface ghosts; until the
+    // boundary/interface exchange path supplies an explicit ghost map, keep
+    // reconstruction on the host so HIP cannot silently consume stale
+    // interface or physical-boundary values.
+    if ( ZoneState::nZones > 1 )
+        return false;
     return true;
 }
 

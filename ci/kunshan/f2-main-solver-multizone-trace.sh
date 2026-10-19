@@ -1,0 +1,130 @@
+#!/bin/bash
+set -euo pipefail
+
+: "${ONEFLOW_MZ_SOURCE_CASE:?Set ONEFLOW_MZ_SOURCE_CASE}"
+: "${ONEFLOW_MZ_CPU_BINARY:?Set ONEFLOW_MZ_CPU_BINARY}"
+: "${ONEFLOW_MZ_HIP_BINARY:?Set ONEFLOW_MZ_HIP_BINARY}"
+: "${ONEFLOW_MZ_RUN_ROOT:?Set ONEFLOW_MZ_RUN_ROOT}"
+: "${ONEFLOW_MZ_TRACE_VERIFIER:?Set ONEFLOW_MZ_TRACE_VERIFIER}"
+: "${ONEFLOW_MZ_RANK_VERIFIER:?Set ONEFLOW_MZ_RANK_VERIFIER}"
+
+ranks="${ONEFLOW_MZ_RANKS:-8}"
+steps="${ONEFLOW_MZ_STEPS:-3}"
+cfl="${ONEFLOW_MZ_CFL:-0.01}"
+timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-900}"
+
+for name in ranks steps timeout_seconds; do
+    value="${!name}"
+    case "$value" in
+        ''|*[!0-9]*|0) echo "invalid $name=$value" >&2; exit 2 ;;
+    esac
+done
+if ! awk -v value="$cfl" 'BEGIN {
+    valid = value ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/;
+    exit !(valid && value + 0.0 > 0.0);
+}'; then
+    echo "invalid cfl=$cfl" >&2
+    exit 2
+fi
+test -d "$ONEFLOW_MZ_SOURCE_CASE"
+test -x "$ONEFLOW_MZ_CPU_BINARY"
+test -x "$ONEFLOW_MZ_HIP_BINARY"
+test -r "$ONEFLOW_MZ_TRACE_VERIFIER"
+test -r "$ONEFLOW_MZ_RANK_VERIFIER"
+if [ -e "$ONEFLOW_MZ_RUN_ROOT" ]; then
+    echo "refusing to overwrite $ONEFLOW_MZ_RUN_ROOT" >&2
+    exit 2
+fi
+mkdir -p "$ONEFLOW_MZ_RUN_ROOT"
+
+prepare_case() {
+    local case_dir="$1"
+    cp -a "$ONEFLOW_MZ_SOURCE_CASE" "$case_dir"
+    printf 'string simutask = Solve;\n' > "$case_dir/script/simu.txt"
+    printf '4\n1 BCFarfield1\n0 BCOutflow0\n2 BCSymmetryPlane2\n3 BCWall0\n' \
+        > "$case_dir/grid/bcRegionMap.txt"
+    rm -rf "$case_dir/results" "$case_dir/restart" "$case_dir/log"
+    mkdir -p "$case_dir/results" "$case_dir/restart" "$case_dir/log"
+    sed -i -E \
+        "s/^int[[:space:]]+gridObj[[:space:]]*=.*/int gridObj = 3;/" \
+        "$case_dir/script/grid.txt"
+    sed -i -E \
+        's#^string gridFileName.*#string gridFileName = grid/m6wing-8.ofl;#' \
+        "$case_dir/script/cfd.txt"
+    sed -i -E \
+        "s/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = ${steps};/; \
+         s/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5;/; \
+         s/^int[[:space:]]+time_integral[[:space:]]*=.*/int time_integral = 1;/; \
+         s/^int[[:space:]]+rk_stage[[:space:]]*=.*/int rk_stage = 3;/; \
+         s/^Real[[:space:]]+cflst[[:space:]]*=.*/Real cflst = ${cfl};/; \
+         s/^Real[[:space:]]+cfled[[:space:]]*=.*/Real cfled = ${cfl};/; \
+         s/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0;/" \
+        "$case_dir/script/cfd.txt"
+    sed -i -E \
+        "s/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0;/; \
+         /^[[:space:]]*TurbSolver[[:space:]]*$/d" \
+        "$case_dir/script/vismodel.txt"
+    sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' \
+        "$case_dir/script/solver.txt"
+}
+
+run_mode() {
+    local mode="$1"
+    local binary="$2"
+    local case_dir="$ONEFLOW_MZ_RUN_ROOT/case-$mode"
+    local log="$ONEFLOW_MZ_RUN_ROOT/$mode.log"
+    local trace="$ONEFLOW_MZ_RUN_ROOT/$mode-%r.stage"
+    local breakdown="$ONEFLOW_MZ_RUN_ROOT/$mode-%r.tsv"
+
+    prepare_case "$case_dir"
+    (
+        cd "$ONEFLOW_MZ_RUN_ROOT"
+        unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
+            ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
+            ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
+            ONEFLOW_ENABLE_UNS_HIP_INTERFACE ONEFLOW_ENABLE_UNS_HIP_TIME_STEP || true
+        if [ "$mode" = hip ]; then
+            export ONEFLOW_ACCEL_BACKEND=HIP
+            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
+            export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
+            export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
+            export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
+        else
+            export ONEFLOW_ACCEL_BACKEND=CPU
+        fi
+        export ONEFLOW_STAGE_BREAKDOWN_FILE="$breakdown"
+        export ONEFLOW_UNS_STAGE_TRACE_FILE="$trace"
+        timeout --foreground --signal=TERM --kill-after=15s "$timeout_seconds" \
+            mpirun --bind-to core --map-by slot --report-bindings -np "$ranks" \
+            env ONEFLOW_FAIL_ON_NONPHYSICAL=1 "$binary" 0 "$case_dir"
+    ) > "$log" 2>&1
+    python3 "$ONEFLOW_MZ_RANK_VERIFIER" \
+        --expected-ranks "$ranks" \
+        --label "$mode" \
+        --pattern "$ONEFLOW_MZ_RUN_ROOT/$mode-*.tsv"
+}
+
+run_mode cpu "$ONEFLOW_MZ_CPU_BINARY"
+run_mode hip "$ONEFLOW_MZ_HIP_BINARY"
+
+trace_pids=()
+for rank in $(seq 0 $((ranks - 1))); do
+    python3 "$ONEFLOW_MZ_TRACE_VERIFIER" \
+        "$ONEFLOW_MZ_RUN_ROOT/cpu-${rank}.stage" \
+        "$ONEFLOW_MZ_RUN_ROOT/cpu-${rank}.stage" \
+        "$ONEFLOW_MZ_RUN_ROOT/hip-${rank}.stage" \
+        --absolute-tolerance 1e-10 \
+        --relative-tolerance 1e-10 \
+        > "$ONEFLOW_MZ_RUN_ROOT/trace-rank-${rank}.txt" &
+    trace_pids+=("$!")
+done
+trace_failed=0
+for rank in $(seq 0 $((ranks - 1))); do
+    if ! wait "${trace_pids[$rank]}"; then
+        trace_failed=1
+    fi
+    grep -q '^STAGE_TRACE_PASS ' "$ONEFLOW_MZ_RUN_ROOT/trace-rank-${rank}.txt" || trace_failed=1
+done
+test "$trace_failed" -eq 0
+printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s\n' "$ranks" "$steps" "$cfl" \
+    | tee "$ONEFLOW_MZ_RUN_ROOT/result.txt"
