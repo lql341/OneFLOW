@@ -586,6 +586,8 @@ git show dev:doc/plans/oneflow-development-todo.md
   - [x] `HipFluxBackend::Shared()` 已让同一 runtime 内的 flux/gradient 调用复用长期 backend 与 device buffers，不再在每次 `CalcInvFlux` 创建临时 backend。
   - [x] `SimuContext::TeardownEnvironment()` 在 accelerator runtime finalize 前先 clear registry state、再 `ReleaseShared()`，旧 teardown signal 11 已消除。
   - [x] 建立 backend-neutral reconstruction view、opaque state-owned backend seam、generation/token，以及包含 backend/device identity 的 state key；补齐 create/reuse/invalidate/restart/teardown contract tests。
+  - [x] 绑定 `Ns3DDeviceState` 的 host-staged primitive flux 入口现在把面状态、几何/连通性、boundary mask、residual 和可选 face flux 放入该 state 的 HIP storage；未绑定 direct/smoke API 继续使用 backend fallback，避免改变 CPU/standalone oracle。
+  - [ ] 该 ownership 收敛尚未在本机编译 HIP；需在 Kunshan DTK 目标节点完成编译、3-step accuracy、fixed-CFL stability、teardown/reinitialize 和 MPI correctness 复验后再关闭本项。
   - [ ] 把实际 shared backend/device buffers 收敛到按 solver/zone/grid/backend/device key 管理的 `Ns3DDeviceState`，补 teardown/reinitialize contract，形成唯一且可失效的 device ownership。
   - [x] 连续多个 RK stage、3-step accuracy 与 fixed-CFL 50-step 重复宏步均无 device allocation/lifecycle 错误。
 
