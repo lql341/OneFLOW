@@ -44,7 +44,11 @@ The isolated directory is the current one-dimensional validation path. CPU remai
 the default reference and execution path; the HIP targets are validation adapters
 and reserved integration points, not a claim that the full Navier–Stokes solver is
 GPU-ported. CUDA and Kokkos remain extension interfaces only, and Kokkos is not introduced here.
-The current multi-GPU evidence is limited to the single-node 4-rank/4-DCU HIP MPI path.
+The Kunshan multi-GPU evidence includes a single-node 4-rank/4-DCU path and a
+two-node 4-rank/4-DCU path. The two-node result validates the standalone Euler
+MPI decomposition, CPU/HIP hash agreement, halo counts, and GPU-aware
+`MPI_Sendrecv` on `gfx906`; it is not evidence that the full 3D Navier--Stokes
+solver is multi-node ready.
 
 HIP architecture selection is intentionally not hard-coded:
 

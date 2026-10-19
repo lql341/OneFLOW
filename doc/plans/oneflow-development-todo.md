@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-18（master 合入 dev；技术路线与历史测量仍以各节记录日期为准）
+> 最后更新：2026-10-19（双节点 GPU-aware MPI standalone 验证；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -35,6 +35,8 @@ PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-on
 **当前交接事项**：PR #203 按用户要求只等待其 review/CI 结果，不再跟踪或刷新状态；本轮工作转回 3D HIP resident timestep 的准确性、稳定性、配对性能和后续 ownership/MPI 门禁。PR #203 的数据库初始化证据仍保留作历史记录，不作为当前开发阻塞项。
 
 **当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。同 basis 探索性 timing 已记录，但没有足够的配对重复来形成稳定性能结论或更新正式报告。该验收不等同于完整 MPI/halo、多 zone、viscous/turbulence 或全链路 GPU residency；gradient 的 q H2D、gradient D2H，以及现有 boundary/下一 stage 所需的 host state 路径仍是后续工作。
+
+2026-10-19 又完成双节点 4-rank standalone Euler GPU-aware MPI correctness 与四规模 benchmark；CPU/HIP hash、decomposition、halo count 和 physical checks 全部通过。3D root solver 的 ownership 与应用级 paired timing 仍是后续门禁。
 
 **Kunshan 默认测试依赖（2026-10-09 起）**：所有新 CPU、CPU MPI 与 root main-solver 测试使用 GCC `16.2.0`（`gcc/16.2.0`）、OpenMPI `5.0.11`（`openmpi/5.0.11`）、CMake `4.4.3`（`cmake/4.4.3`），MPI 测试设置 `OMPI_MCA_coll=^hcoll`，并在运行证据中记录实际版本与 MPI 路径。旧 GCC 9/OpenMPI 4/CMake 3.25 记录只作为历史结果；DTK/HIP 测试如确需兼容工具链，必须作为明确的 HIP 专用例外记录，不能用于 CPU/MPI 验证。权威说明见 [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)。
 
@@ -451,9 +453,9 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
 | 当前进度 | 受限的单 zone、finest-grid、5 方程、Lax–Friedrichs、limiter-off、inviscid HIP path 已覆盖 gradient → reconstruction → flux/residual → state update，并完成 3-step 36-record target-node accuracy gate。完整多 zone/MPI halo、viscous/turbulence、跨 stage 全量 device residency 和稳定的重复性能结论仍未完成。 |
-| 最新验证 | 2026-10-09 Kunshan：GCC `16.2.0` / CMake `4.4.3` / OpenMPI `5.0.11` 下 CPU normal/strict 五算例各 `5/5`、CPU backend contract `8/8`，task/database/register/adt GoogleTest `145/145`，CPU MPI 32-rank 运行成功；DCU single 与 4-rank DCU MPI 均通过。root HIP 使用兼容 DTK 的 GCC 9.3 toolchain，smoke 通过、GoogleTest `15/15`、CTest `16/16`；F-stage 36 条 trace PASS，legacy→CPU batch/HIP batch 最大绝对差分别 `2.28e-13` / `3.52e-13`。F-stage 两个 verifier 默认绝对/相对容差已在本地收紧至 `1e-12`，尚未重跑新默认；现有完整 trace 最大缩放误差 `2.44e-13`、守恒误差约 `5.80e-13`。 |
+| 最新验证 | 2026-10-19 Kunshan：双节点、4 ranks、4 DCUs（每节点 2 ranks/2 DCUs）GPU-aware MPI regression 通过，`gfx906`、`gpu_aware_mpi=1`、CPU/HIP hash 一致、`decomposition=PASS`、halo 次数正确；同一 `steps=100,warmup=1,repeats=2` basis 下四规模 HIP/CPU lifecycle 为 `9.35x/35.70x/89.69x/138.08x`，GPU-aware 相对 host-staged 为 `1.39x/1.31x/1.19x/1.13x`。这是一维 Euler standalone 证据；root 3D 主 solver 仍需独立 paired timing。 |
 
-**能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端与单节点 MPI 已实测；CUDA、Kokkos、跨节点 MPI 和完整 Navier–Stokes 主线均未验证。`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；3D 主 solver 当前只在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 条件下验证 HIP inviscid flux/residual 与 opt-in Green–Gauss gradient。q H2D、gradient D2H、reconstruction、RK/state update、viscous/turbulence 和 MPI/interface 仍依赖 host，不能称为完整 stateful/device-resident solver。
+**能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端、单节点 MPI 和双节点 GPU-aware MPI 已实测；CUDA、Kokkos、多 zone 3D MPI 和完整 Navier–Stokes 主线仍未验证。`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；3D 主 solver 当前只在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 条件下验证 HIP inviscid flux/residual 与 opt-in Green–Gauss gradient。q H2D、gradient D2H、reconstruction、RK/state update、viscous/turbulence 和 3D MPI/interface 仍依赖 host，不能称为完整 stateful/device-resident solver。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
@@ -661,7 +663,13 @@ git show dev:doc/plans/oneflow-development-todo.md
   - [ ] **P2.9.1：** 评估 stage-level stream/event 优化。
   - [ ] **P2.9.2：** 比较 residual scatter 的 atomic、CSR 和 segmented reduction。
   - [ ] **P2.9.3：** 增加 device-side finite/positivity/error/conservation reduction。
-  - [ ] **P2.9.4：** 单独探测 MPI/halo 与 GPU-aware MPI capability。
+  - [x] **P2.9.4：** 2026-10-19 在 Kunshan `kshdnormal` 完成双节点、4 ranks、4 DCUs
+        GPU-aware MPI capability 与 standalone Euler halo correctness。每节点 2 ranks/2
+        DCUs，`gfx906`，`gpu_aware_mpi=1`，`decomposition=PASS`，CPU/HIP hash 完全一致，
+        workload exit code 为 0。相同 `steps=100,warmup=1,repeats=2` basis 下，HIP/CPU
+        lifecycle speedup 为 `9.35x/35.70x/89.69x/138.08x`（`nx=65536/262144/1048576/4194304`），
+        GPU-aware 相对 host-staged halo 为 `1.39x/1.31x/1.19x/1.13x`。这是 standalone
+        1D Euler kernel/MPI 证据，不外推为 3D 主 solver 跨节点性能。
 
 
 - [ ] **P2.10：GPU reduction**（优化计划阶段 D 唯一剩余项）
