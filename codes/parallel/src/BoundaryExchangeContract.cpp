@@ -20,12 +20,35 @@ void BoundaryEndpointMap::Validate() const
         throw std::invalid_argument(
             "boundary endpoint cell count must be positive" );
     }
+    if ( ownedCellCount >= 0 && ownedCellCount > cellCount )
+    {
+        throw std::invalid_argument(
+            "boundary endpoint owned-cell count exceeds cell count" );
+    }
+    if ( ownedCellCount < 0
+         && role != BoundaryEndpointRole::Unspecified )
+    {
+        throw std::invalid_argument(
+            "boundary endpoint ownership role requires an owned-cell count" );
+    }
     for ( const int cellId : cellIds )
     {
         if ( cellId < 0 || cellId >= cellCount )
         {
             throw std::out_of_range(
                 "boundary endpoint cell is out of range" );
+        }
+        if ( role == BoundaryEndpointRole::OwnedCell
+             && cellId >= ownedCellCount )
+        {
+            throw std::out_of_range(
+                "owned-cell boundary endpoint points at a ghost cell" );
+        }
+        if ( role == BoundaryEndpointRole::GhostCell
+             && cellId < ownedCellCount )
+        {
+            throw std::out_of_range(
+                "ghost-cell boundary endpoint points at an owned cell" );
         }
     }
 }

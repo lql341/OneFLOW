@@ -28,6 +28,17 @@ enum class BoundaryTransferMode
     DeviceDirect
 };
 
+// Endpoint ownership is explicit because a partition interface sends values
+// from real cells and receives values into ghost cells.  Unspecified keeps
+// the value-only contract usable by legacy callers that do not have a cell
+// ownership split.
+enum class BoundaryEndpointRole
+{
+    Unspecified,
+    OwnedCell,
+    GhostCell
+};
+
 struct BoundaryBufferView
 {
     Real * values = nullptr;
@@ -39,6 +50,8 @@ struct BoundaryEndpointMap
 {
     int cellCount = 0;
     std::vector< int > cellIds;
+    int ownedCellCount = -1;
+    BoundaryEndpointRole role = BoundaryEndpointRole::Unspecified;
 
     void Validate() const;
 };

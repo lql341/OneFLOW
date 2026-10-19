@@ -9,6 +9,8 @@ namespace
 {
 
 using ONEFLOW::BoundaryFieldExchangePlan;
+using ONEFLOW::BoundaryEndpointMap;
+using ONEFLOW::BoundaryEndpointRole;
 using ONEFLOW::PackBoundaryHost;
 using ONEFLOW::Real;
 using ONEFLOW::UnpackBoundaryHost;
@@ -97,6 +99,41 @@ TEST( BoundaryExchangeContractTest, RejectsInconsistentMappings )
     plan = MakePlan();
     plan.receiveCellIds[ 0 ] = -1;
     EXPECT_THROW( plan.Validate(), std::out_of_range );
+}
+
+TEST( BoundaryExchangeContractTest, ValidatesOwnedAndGhostEndpointRoles )
+{
+    BoundaryEndpointMap send;
+    send.cellCount = 6;
+    send.ownedCellCount = 4;
+    send.role = BoundaryEndpointRole::OwnedCell;
+    send.cellIds = { 0, 3 };
+    EXPECT_NO_THROW( send.Validate() );
+
+    BoundaryEndpointMap receive;
+    receive.cellCount = 6;
+    receive.ownedCellCount = 4;
+    receive.role = BoundaryEndpointRole::GhostCell;
+    receive.cellIds = { 4, 5 };
+    EXPECT_NO_THROW( receive.Validate() );
+
+    send.cellIds[ 1 ] = 4;
+    EXPECT_THROW( send.Validate(), std::out_of_range );
+
+    receive.cellIds[ 0 ] = 2;
+    EXPECT_THROW( receive.Validate(), std::out_of_range );
+}
+
+TEST( BoundaryExchangeContractTest, RejectsIncompleteEndpointOwnership )
+{
+    BoundaryEndpointMap endpoint;
+    endpoint.cellCount = 4;
+    endpoint.ownedCellCount = 5;
+    endpoint.role = BoundaryEndpointRole::OwnedCell;
+    EXPECT_THROW( endpoint.Validate(), std::invalid_argument );
+
+    endpoint.ownedCellCount = -1;
+    EXPECT_THROW( endpoint.Validate(), std::invalid_argument );
 }
 
 }

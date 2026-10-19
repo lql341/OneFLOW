@@ -76,6 +76,7 @@ bool BuildHipInterfaceEndpoint(
     UnsGrid * grid,
     int neighborZone,
     int sendRecv,
+    BoundaryEndpointRole role,
     BoundaryEndpointMap & endpoint )
 {
     if ( grid == nullptr || grid->interFace == nullptr ) return false;
@@ -87,6 +88,8 @@ bool BuildHipInterfaceEndpoint(
     const IntField & interfaceIds =
         interFace->GetInterfaceId( neighborIndex, sendRecv );
     endpoint.cellCount = grid->nCells + grid->nBFaces;
+    endpoint.ownedCellCount = grid->nCells;
+    endpoint.role = role;
     endpoint.cellIds.resize( interfaceIds.size() );
     for ( HXSize_t iFace = 0; iFace < interfaceIds.size(); ++ iFace )
     {
@@ -167,7 +170,8 @@ void ExchangeHipInterfaceQ(
                 && sourceQ != nullptr
                 && sourceQ->GetNEqu() == nEquations
                 && BuildHipInterfaceEndpoint(
-                    sourceGrid, targetZone, GREAT_SEND, sourceEndpoint );
+                    sourceGrid, targetZone, GREAT_SEND,
+                    BoundaryEndpointRole::OwnedCell, sourceEndpoint );
         }
         catch ( const std::exception & )
         {
@@ -190,7 +194,8 @@ void ExchangeHipInterfaceQ(
                 && targetQ != nullptr
                 && targetQ->GetNEqu() == nEquations
                 && BuildHipInterfaceEndpoint(
-                    targetGrid, sourceZone, GREAT_RECV, targetEndpoint );
+                    targetGrid, sourceZone, GREAT_RECV,
+                    BoundaryEndpointRole::GhostCell, targetEndpoint );
         }
         catch ( const std::exception & )
         {
