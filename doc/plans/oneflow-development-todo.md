@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-19（standalone MPI rank/DCU 矩阵与 3D zone 分区边界；技术路线与历史测量仍以各节记录日期为准）
+> 最后更新：2026-10-19（3D 多 zone interface endpoint topology handoff；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -15,25 +15,50 @@
   `1 DCU / 8 MPI ranks`，两者均单节点；3 steps、fixed CFL `0.01`。
   CPU/HIP 均 `active_ranks=8`，8 个 rank 均写出 breakdown；36 条逐 rank
   stage trace 通过，HIP 相对 CPU 最大绝对差约 `8.53e-14`。
-- 正式计时：同一输入、10 steps、warmup `1`、formal repeats `5`、fixed
-  CFL `0.01`，端到端 wall-clock（包含 MPI、初始化、host packing、H2D/D2H、
-  HIP kernel、输出）。
+- 2026-10-19 在 endpoint topology 修正 revision 上重新完成 Kunshan root
+  HIP build、硬件 HIP CTest `16/16`、3-step trace、50-step stability 和
+  同口径 paired timing。trace/stability 使用外部已分区 8-zone fixture；该
+  fixture 不是 checked-in single-zone `test/cfd/m6wingroe_sa`。
+- 当前 paired timing：同一 8-zone 输入、10 steps、warmup `1`、formal
+  repeats `5`、fixed CFL `0.01`，端到端 wall-clock（包含 MPI、初始化、host
+  packing、H2D/D2H、HIP kernel、interface 和输出）。
   - CPU：`8 CPU cores / 8 CPU ranks`，单节点，mean
-    `3473.812429 ms`。
+    `6249.223629 ms`。
   - HIP：`1 DCU / 8 MPI ranks`，单节点，每张 DCU 8 个 rank，mean
-    `4337.233101 ms`。
-  - 明确比值：`CPU / HIP = 3473.812429 / 4337.233101 = 0.800928x`。
-    等价地，HIP 时间是 CPU 的 `1.248551x`，比 CPU 慢约 `24.86%`；不能称为
-    3D 应用级加速。
+    `5868.614810 ms`。
+  - 明确比值：`CPU / HIP = 6249.223629 / 5868.614810 = 1.064855x`。
+    等价地，HIP 为 CPU 的 `0.939095x`。这只是当前节点和当前 revision 的
+    复核结果，尚不足以替换正式性能报告或宣称稳定应用级加速。
+- 旧的 `3473.812429 ms` 对 `4337.233101 ms` 是另一轮节点/运行环境的历史
+  测量，不能与本轮数据混合平均或直接比较。
 - 之前 `qf1` 约 `3.1e-3` 的失败 trace 来自残留 HIP gradient opt-in；
   多 zone 路径现已显式清理 HIP gradient/reconstruction/state-update/boundary/
   time-step 变量，并在 `UNsInvFlux::UseHipDeviceReconstruction()` 对
   `nZones > 1` 强制回退 host reconstruction。当前多 zone 正确路径是
   CPU gradient + CPU reconstruction + HIP flux/interface。
-- 结论：8-rank/8-rank 资源口径已经准确闭合，但当前 1 DCU/8 rank 的主 solver
-  仍慢于 8 CPU cores/8 ranks。下一优化重点应放在多 zone interface/halo 与
-  host-staged 数据搬运、跨 RK stage residency；在这些变化重新通过逐 rank trace、
-  fixed-CFL stability 和同 basis 多次 timing 前，不发布加速结论。
+- 结论：8-rank/8-rank 资源口径、accuracy、stability 和 rank utilization 已闭合；
+  当前复核 timing 显示小幅 HIP 优势，但重复测量的节点敏感性仍然明显。下一优化
+  重点继续放在多 zone interface/halo、ghost ownership、host-staged 数据搬运和
+  跨 RK stage residency；在形成跨节点/多轮稳定 timing 前，不发布正式加速结论。
+
+## 2026-10-19 interface endpoint topology checkpoint
+
+- `7f2c1d7f` 增加多 zone interface endpoint ownership contract：
+  source 使用 `OwnedCell`，target 使用 `GhostCell`。
+- `5ea98a88` 将 endpoint topology mapping 提取为 backend-neutral
+  `BuildInterfaceEndpoint()`，由 `InterfaceTask` 和 HIP/CPU 路径共享。
+- `877d1f16` 删除误接入 `OneFLOW_GeometryCore` 的 heavyweight
+  `InterfaceEndpointTest` target，避免轻量 contract 触发完整 geometry 静态库重编译；
+  轻量 boundary/interface contract 保留在既有 task/parallel 测试边界内。
+- 当前仍未打开：
+  `ONEFLOW_ENABLE_UNS_HIP_GRADIENT`、
+  `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION`、
+  `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE`、
+  `ONEFLOW_ENABLE_UNS_HIP_BOUNDARY`、
+  `ONEFLOW_ENABLE_UNS_HIP_TIME_STEP`。
+- 下一刀是把 local zone、interface face、owned cell、ghost cell、send/receive
+  buffer 和 host/device memory space 写成明确 contract，再在该 contract 上接 HIP
+  ghost synchronization；不能先恢复未经验证的 device gradient/reconstruction。
 
 ## 交接摘要（先读这一段）
 
