@@ -2596,19 +2596,64 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     const int totalFlux = nFaces * nEq;
     const int totalResidual = nCells * nEq;
 
+    HipGradientStorage * boundStorage = nullptr;
+    if ( cacheKey != nullptr )
+    {
+        const auto binding = boundStates_.find( cacheKey );
+        if ( binding != boundStates_.end() )
+        {
+            auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+                binding->second->BackendState() );
+            if ( hipState == nullptr )
+            {
+                throw std::logic_error(
+                    "bound HIP primitive state is not HIP-owned" );
+            }
+            boundStorage = &hipState->Gradient();
+        }
+    }
+
+    DeviceBuffer< Real > * leftBuffer = &qLeft_;
+    DeviceBuffer< Real > * rightBuffer = &qRight_;
+    DeviceBuffer< Real > * xNormalBuffer = &xNormal_;
+    DeviceBuffer< Real > * yNormalBuffer = &yNormal_;
+    DeviceBuffer< Real > * zNormalBuffer = &zNormal_;
+    DeviceBuffer< Real > * meshVelocityBuffer = &meshVelocityNormal_;
+    DeviceBuffer< Real > * areaBuffer = &area_;
+    DeviceBuffer< int > * leftCellBuffer = &leftCell_;
+    DeviceBuffer< int > * rightCellBuffer = &rightCell_;
+    DeviceBuffer< unsigned char > * boundaryMaskBuffer = &boundaryMask_;
+    DeviceBuffer< Real > * residualBuffer = &deviceResidual_;
+    DeviceBuffer< Real > * fluxBuffer = &deviceFlux_;
+    if ( boundStorage != nullptr )
+    {
+        leftBuffer = &boundStorage->qf1;
+        rightBuffer = &boundStorage->qf2;
+        xNormalBuffer = &boundStorage->xNormal;
+        yNormalBuffer = &boundStorage->yNormal;
+        zNormalBuffer = &boundStorage->zNormal;
+        meshVelocityBuffer = &boundStorage->meshVelocityNormal;
+        areaBuffer = &boundStorage->faceArea;
+        leftCellBuffer = &boundStorage->leftCell;
+        rightCellBuffer = &boundStorage->rightCell;
+        boundaryMaskBuffer = &boundStorage->boundaryMask;
+        residualBuffer = &boundStorage->residual;
+        fluxBuffer = &boundStorage->faceFlux;
+    }
+
     if ( componentInput )
     {
         ScopedStageTimer timer( "H2D" );
-        qLeft_.Resize( totalFlux );
-        qRight_.Resize( totalFlux );
+        leftBuffer->Resize( totalFlux );
+        rightBuffer->Resize( totalFlux );
         for ( int equation = 0; equation < nEq; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
-                qLeft_.Data() + equation * nFaces,
+                leftBuffer->Data() + equation * nFaces,
                 state.primitiveLeftComponents[ equation ],
                 nFaces * sizeof( Real ), AccelCopyKind::HostToDevice );
             AccelRuntime::Instance().Backend().Copy(
-                qRight_.Data() + equation * nFaces,
+                rightBuffer->Data() + equation * nFaces,
                 state.primitiveRightComponents[ equation ],
                 nFaces * sizeof( Real ), AccelCopyKind::HostToDevice );
         }
@@ -2616,76 +2661,114 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     else
     {
         ScopedStageTimer timer( "H2D" );
-        qLeft_.CopyFromHost( state.primitiveLeft, totalFlux );
-        qRight_.CopyFromHost( state.primitiveRight, totalFlux );
+        leftBuffer->CopyFromHost( state.primitiveLeft, totalFlux );
+        rightBuffer->CopyFromHost( state.primitiveRight, totalFlux );
     }
 
+    const void * ownerToken = cacheKey;
     const bool geometryCacheMatches =
-        geometryCacheValid_
-        && cachedFaces_ == nFaces
-        && cachedBoundaryFaces_ == connectivity.nBoundaryFaces
-        && cachedOwner_ == cacheKey
-        && cachedXNormal_ == state.xNormal
-        && cachedYNormal_ == state.yNormal
-        && cachedZNormal_ == state.zNormal
-        && cachedMeshVelocityNormal_ == state.meshVelocityNormal
-        && cachedArea_ == state.faceArea
-        && cachedLeftCell_ == connectivity.leftCell
-        && cachedRightCell_ == connectivity.rightCell
-        && cachedBoundaryMask_ == connectivity.boundaryMask;
+        boundStorage != nullptr
+        ? ( boundStorage->fluxGeometryCacheValid
+            && boundStorage->cachedFluxFaces == nFaces
+            && boundStorage->cachedFluxBoundaryFaces
+                == connectivity.nBoundaryFaces
+            && boundStorage->cachedFluxOwnerToken == ownerToken
+            && boundStorage->cachedFluxXNormal == state.xNormal
+            && boundStorage->cachedFluxYNormal == state.yNormal
+            && boundStorage->cachedFluxZNormal == state.zNormal
+            && boundStorage->cachedFluxMeshVelocityNormal
+                == state.meshVelocityNormal
+            && boundStorage->cachedFluxFaceArea == state.faceArea
+            && boundStorage->cachedFluxLeftCell == connectivity.leftCell
+            && boundStorage->cachedFluxRightCell == connectivity.rightCell
+            && boundStorage->cachedFluxBoundaryMask
+                == connectivity.boundaryMask )
+        : ( geometryCacheValid_
+            && cachedFaces_ == nFaces
+            && cachedBoundaryFaces_ == connectivity.nBoundaryFaces
+            && cachedOwner_ == cacheKey
+            && cachedXNormal_ == state.xNormal
+            && cachedYNormal_ == state.yNormal
+            && cachedZNormal_ == state.zNormal
+            && cachedMeshVelocityNormal_ == state.meshVelocityNormal
+            && cachedArea_ == state.faceArea
+            && cachedLeftCell_ == connectivity.leftCell
+            && cachedRightCell_ == connectivity.rightCell
+            && cachedBoundaryMask_ == connectivity.boundaryMask );
     if ( ! geometryCacheMatches )
     {
         ScopedStageTimer timer( "geometry_connectivity_H2D" );
         if ( state.xNormal )
-            xNormal_.CopyFromHost( state.xNormal, nFaces );
+            xNormalBuffer->CopyFromHost( state.xNormal, nFaces );
         if ( state.yNormal )
-            yNormal_.CopyFromHost( state.yNormal, nFaces );
+            yNormalBuffer->CopyFromHost( state.yNormal, nFaces );
         if ( state.zNormal )
-            zNormal_.CopyFromHost( state.zNormal, nFaces );
+            zNormalBuffer->CopyFromHost( state.zNormal, nFaces );
         if ( state.meshVelocityNormal )
         {
-            meshVelocityNormal_.CopyFromHost(
+            meshVelocityBuffer->CopyFromHost(
                 state.meshVelocityNormal, nFaces );
         }
         if ( state.faceArea )
-            area_.CopyFromHost( state.faceArea, nFaces );
-        leftCell_.CopyFromHost( connectivity.leftCell, nFaces );
-        rightCell_.CopyFromHost( connectivity.rightCell, nFaces );
+            areaBuffer->CopyFromHost( state.faceArea, nFaces );
+        leftCellBuffer->CopyFromHost( connectivity.leftCell, nFaces );
+        rightCellBuffer->CopyFromHost( connectivity.rightCell, nFaces );
         if ( connectivity.boundaryMask )
         {
-            boundaryMask_.CopyFromHost(
+            boundaryMaskBuffer->CopyFromHost(
                 connectivity.boundaryMask, nFaces );
         }
-        cachedXNormal_ = state.xNormal;
-        cachedYNormal_ = state.yNormal;
-        cachedZNormal_ = state.zNormal;
-        cachedMeshVelocityNormal_ = state.meshVelocityNormal;
-        cachedArea_ = state.faceArea;
-        cachedLeftCell_ = connectivity.leftCell;
-        cachedRightCell_ = connectivity.rightCell;
-        cachedBoundaryMask_ = connectivity.boundaryMask;
-        cachedOwner_ = cacheKey;
-        cachedFaces_ = nFaces;
-        cachedBoundaryFaces_ = connectivity.nBoundaryFaces;
-        geometryCacheValid_ = true;
+        if ( boundStorage != nullptr )
+        {
+            boundStorage->cachedFluxXNormal = state.xNormal;
+            boundStorage->cachedFluxYNormal = state.yNormal;
+            boundStorage->cachedFluxZNormal = state.zNormal;
+            boundStorage->cachedFluxMeshVelocityNormal =
+                state.meshVelocityNormal;
+            boundStorage->cachedFluxFaceArea = state.faceArea;
+            boundStorage->cachedFluxLeftCell = connectivity.leftCell;
+            boundStorage->cachedFluxRightCell = connectivity.rightCell;
+            boundStorage->cachedFluxBoundaryMask =
+                connectivity.boundaryMask;
+            boundStorage->cachedFluxOwnerToken = ownerToken;
+            boundStorage->cachedFluxFaces = nFaces;
+            boundStorage->cachedFluxBoundaryFaces =
+                connectivity.nBoundaryFaces;
+            boundStorage->fluxGeometryCacheValid = true;
+        }
+        else
+        {
+            cachedXNormal_ = state.xNormal;
+            cachedYNormal_ = state.yNormal;
+            cachedZNormal_ = state.zNormal;
+            cachedMeshVelocityNormal_ = state.meshVelocityNormal;
+            cachedArea_ = state.faceArea;
+            cachedLeftCell_ = connectivity.leftCell;
+            cachedRightCell_ = connectivity.rightCell;
+            cachedBoundaryMask_ = connectivity.boundaryMask;
+            cachedOwner_ = cacheKey;
+            cachedFaces_ = nFaces;
+            cachedBoundaryFaces_ = connectivity.nBoundaryFaces;
+            geometryCacheValid_ = true;
+        }
     }
-    deviceResidual_.Resize( totalResidual );
+    residualBuffer->Resize( totalResidual );
     { ScopedStageTimer timer( "H2D" );
     if ( residual.values != nullptr )
     {
-        deviceResidual_.CopyFromHost( residual.values, totalResidual );
+        residualBuffer->CopyFromHost( residual.values, totalResidual );
     }
     else
     {
         for ( int equation = 0; equation < nEq; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
-                deviceResidual_.Data() + equation * nCells,
+                residualBuffer->Data() + equation * nCells,
                 residual.components[ equation ],
                 nCells * sizeof( Real ), AccelCopyKind::HostToDevice );
         }
     }
-    if ( hostFlux != nullptr ) deviceFlux_.Resize( totalFlux );
+    if ( hostFlux != nullptr ) fluxBuffer->Resize( totalFlux );
     }
 
     const int blockSize = 256;
@@ -2697,24 +2780,24 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         dim3( blockSize ),
         0,
         0,
-        qLeft_.Data(),
-        qRight_.Data(),
-        state.xNormal ? xNormal_.Data() : nullptr,
-        state.yNormal ? yNormal_.Data() : nullptr,
-        state.zNormal ? zNormal_.Data() : nullptr,
-        state.meshVelocityNormal ? meshVelocityNormal_.Data() : nullptr,
-        state.faceArea ? area_.Data() : nullptr,
-        leftCell_.Data(),
-        rightCell_.Data(),
-        connectivity.boundaryMask ? boundaryMask_.Data() : nullptr,
+        leftBuffer->Data(),
+        rightBuffer->Data(),
+        state.xNormal ? xNormalBuffer->Data() : nullptr,
+        state.yNormal ? yNormalBuffer->Data() : nullptr,
+        state.zNormal ? zNormalBuffer->Data() : nullptr,
+        state.meshVelocityNormal ? meshVelocityBuffer->Data() : nullptr,
+        state.faceArea ? areaBuffer->Data() : nullptr,
+        leftCellBuffer->Data(),
+        rightCellBuffer->Data(),
+        connectivity.boundaryMask ? boundaryMaskBuffer->Data() : nullptr,
         connectivity.nBoundaryFaces,
         nFaces,
         nCells,
         nEq,
         state.gamma,
         scheme,
-        hostFlux != nullptr ? deviceFlux_.Data() : nullptr,
-        deviceResidual_.Data() );
+        hostFlux != nullptr ? fluxBuffer->Data() : nullptr,
+        residualBuffer->Data() );
     CheckHip(
         hipGetLastError(), "CalcAndScatterPrimitiveEulerKernel launch" );
     CheckHip(
@@ -2724,7 +2807,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     { ScopedStageTimer timer( "D2H" );
     if ( residual.values != nullptr )
     {
-        deviceResidual_.CopyToHost( residual.values, totalResidual );
+        residualBuffer->CopyToHost( residual.values, totalResidual );
     }
     else
     {
@@ -2732,7 +2815,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         {
             AccelRuntime::Instance().Backend().Copy(
                 residual.components[ equation ],
-                deviceResidual_.Data() + equation * nCells,
+                residualBuffer->Data() + equation * nCells,
                 nCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
         }
     }
@@ -2740,9 +2823,12 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     if ( hostFlux != nullptr )
     {
         ScopedStageTimer timer( "D2H" );
-        deviceFlux_.CopyToHost( hostFlux->values, totalFlux );
-        deviceFluxFaces_ = nFaces;
-        deviceFluxEquations_ = nEq;
+        fluxBuffer->CopyToHost( hostFlux->values, totalFlux );
+        if ( boundStorage == nullptr )
+        {
+            deviceFluxFaces_ = nFaces;
+            deviceFluxEquations_ = nEq;
+        }
     }
 }
 

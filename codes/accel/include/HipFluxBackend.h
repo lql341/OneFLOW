@@ -130,6 +130,20 @@ struct HipGradientStorage
     const Real * cachedStateQ[ 5 ] = {};
     int cachedStateCells = 0;
     int cachedStateGhostCells = -1;
+    // Cache metadata for the bound-state host-staged primitive path. The
+    // unbound direct/smoke path keeps using HipFluxBackend's fallback cache.
+    const void * cachedFluxOwnerToken = nullptr;
+    const Real * cachedFluxXNormal = nullptr;
+    const Real * cachedFluxYNormal = nullptr;
+    const Real * cachedFluxZNormal = nullptr;
+    const Real * cachedFluxMeshVelocityNormal = nullptr;
+    const Real * cachedFluxFaceArea = nullptr;
+    const int * cachedFluxLeftCell = nullptr;
+    const int * cachedFluxRightCell = nullptr;
+    const unsigned char * cachedFluxBoundaryMask = nullptr;
+    int cachedFluxFaces = 0;
+    int cachedFluxBoundaryFaces = -1;
+    bool fluxGeometryCacheValid = false;
 };
 
 std::unique_ptr< Ns3DBackendState > CreateHipNs3DBackendState(
