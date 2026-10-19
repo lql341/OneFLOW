@@ -71,6 +71,26 @@ HIP 相对 legacy 约 `4.24x`。这是当前最直接的“完整受限应用路
 - 非法三方程配置现在 fail-fast。当前 compressible NS 状态契约仍是五分量 `(rho,u,v,w,p)`；二维仍保存退化的 `w` 分量，不要把 `nEqu=3` 当作已实现的二维 NS。
 - 缺失 wall-distance 文件已有自动计算/策略隔离；不要把 fixture 缺失文件当作 GPU 算法错误。
 
+## 2026-10-19 rank/DCU 矩阵与 zone 分区边界
+
+在 `af7580cc` 上，Kunshan 单节点 `kshdnormal` 完成 standalone 1D Euler
+rank/DCU 矩阵：CPU 使用 8/16/32 MPI ranks（每 rank 1 core），HIP 使用
+1/2/4 MPI ranks（每 rank 1 DCU），全局规模为 65,536、262,144、1,048,576
+和 4,194,304，固定 `steps=100,warmup=1,repeats=2`。36 个 CPU/HIP 配对
+全部通过。每组均满足 `local_ranks == requested ranks`、
+`decomposition_active_ranks == requested ranks`、非空 local partition、预期
+halo 次数、HIP `visible_devices == DCU ranks`、CPU/HIP final hash 一致和
+`decomposition=PASS`。完整表格见
+[`oneflow-1d-euler-mpi-rank-dcu-matrix-20261019.md`](../reports/performance/oneflow-1d-euler-mpi-rank-dcu-matrix-20261019.md)。
+
+这里没有“按 zone 重划”的步骤，因为该 standalone 端口没有 zone；代码在每次
+`MPI_Comm_size` 后按 `Partition(globalNx, rank, ranks, ...)` 重新切连续 cell
+区间，halo 邻居也随 rank ring 改变。相反，3D `m6wingroe_sa` 是 single-zone，
+HIP capability 要求 `ZoneState::nLocal == 1`，不能把单 zone 通过增加 MPI rank
+包装成有效 8/16/32-rank 或 1/2/4-DCU zone 实验。3D 多 rank 下一步必须准备
+已分区 multi-zone fixture，重新生成 `ownerRanks` 和 interface exchange plan，
+并验证每个 rank 的 local zone 非空且实际写出 solver work。
+
 ## 主要优化目标
 
 ### 1. HIP 整体路径

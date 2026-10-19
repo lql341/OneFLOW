@@ -14,6 +14,7 @@ and environment dumps belong in CI artifacts or isolated cluster run directories
 ## Performance
 
 - [2026-10-14 standalone 1D Euler MPI/DCU strong-scaling benchmark](performance/oneflow-1d-euler-mpi-dcu-benchmark-20261014.md)
+- [2026-10-19 standalone 1D Euler rank/DCU matrix](performance/oneflow-1d-euler-mpi-rank-dcu-matrix-20261019.md)
 - [2026-09-13 CPU/DCU performance comparison](performance/oneflow-euler-performance-20260913.md)
 - [Current one-dimensional Euler performance report](performance/oneflow-euler-performance-current.md)
 - [Current one-dimensional Euler performance report (HTML)](performance/oneflow-euler-performance-current.html)
