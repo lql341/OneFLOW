@@ -47,8 +47,12 @@ cfl_end="${ONEFLOW_F2_STABILITY_CFL_END:-$cfl_start}"
 disable_viscous="${ONEFLOW_F2_STABILITY_DISABLE_VISCOUS:-1}"
 disable_limiter="${ONEFLOW_F2_STABILITY_DISABLE_LIMITER:-1}"
 limiter="${ONEFLOW_F2_STABILITY_LIMITER:-}"
+partitioned_case="${ONEFLOW_F2_STABILITY_PARTITIONED_CASE:-0}"
+partitioned_grid="${ONEFLOW_F2_STABILITY_GRID_FILE:-grid/m6wing-8.ofl}"
 stability_root="${ONEFLOW_F2_STABILITY_RUN_DIR:-$PWD/f2-main-solver-stability-${SLURM_JOB_ID:-manual}}"
 rank_utilization_verifier="$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/verify-rank-utilization.py"
+fixture_verifier="${ONEFLOW_F2_STABILITY_FIXTURE_VERIFIER:-$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/verify-multizone-fixture.py}"
+fixture_metadata="${ONEFLOW_F2_STABILITY_FIXTURE_METADATA:-${ONEFLOW_MZ_FIXTURE_METADATA:-${KUNSHAN_MZ_FIXTURE_METADATA:-}}}"
 
 for value_name in steps timeout_seconds cpu_ranks hip_ranks time_integral rk_stages; do
     value="${!value_name}"
@@ -76,6 +80,18 @@ for value_name in disable_viscous disable_limiter; do
         *) echo "Invalid $value_name=$value (expected 0 or 1)" >&2; exit 2 ;;
     esac
 done
+case "$partitioned_case" in
+    0|1) ;;
+    *) echo "Invalid partitioned_case=$partitioned_case (expected 0 or 1)" >&2; exit 2 ;;
+esac
+if [ "$partitioned_case" = 1 ] && [ "$cpu_ranks" -lt 2 ]; then
+    echo "partitioned stability cases require at least two CPU ranks" >&2
+    exit 2
+fi
+if [ "$partitioned_case" = 1 ] && [ "$cpu_ranks" != "$hip_ranks" ]; then
+    echo "partitioned stability cases require matching CPU/HIP rank counts" >&2
+    exit 2
+fi
 
 if [ -n "$limiter" ]; then
     case "$limiter" in
@@ -91,6 +107,17 @@ if [ -e "$stability_root" ]; then
     exit 2
 fi
 test -r "$rank_utilization_verifier"
+fixture_summary="MULTIZONE_FIXTURE_UNCHECKED metadata=unset"
+if [ -n "$fixture_metadata" ]; then
+    test -r "$fixture_verifier"
+    test -r "$fixture_metadata"
+    fixture_summary="$(
+        python3 "$fixture_verifier" \
+            --metadata "$fixture_metadata" \
+            --expected-ranks "$cpu_ranks"
+    )"
+    printf '%s\n' "$fixture_summary"
+fi
 mkdir -p "$stability_root"
 
 {
@@ -101,18 +128,40 @@ mkdir -p "$stability_root"
     echo "mpi_root=$mpi_root"
     echo "OMPI_MCA_coll=$OMPI_MCA_coll"
     echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
+    echo "partitioned_case=$partitioned_case"
+    echo "partitioned_grid=$partitioned_grid"
+    echo "fixture_metadata=${fixture_metadata:-unset}"
+    echo "fixture_summary=$fixture_summary"
 } > "$stability_root/environment.txt"
 grep -q '16\.2\.0' "$stability_root/environment.txt"
 grep -q '4\.4\.3' "$stability_root/environment.txt"
 grep -q '5\.0\.11' "$stability_root/environment.txt"
 
 source_case="$ONEFLOW_F2_STABILITY_SOURCE_DIR/$ONEFLOW_F2_STABILITY_CASE"
+test -d "$source_case"
+if [ "$partitioned_case" = 1 ]; then
+    test -f "$source_case/$partitioned_grid"
+fi
 for mode in legacy cpu_batch hip_batch; do
     cp -a "$source_case" "$stability_root/$mode"
     rm -rf "$stability_root/$mode/results" "$stability_root/$mode/restart" \
         "$stability_root/$mode/log"
     mkdir -p "$stability_root/$mode/results" "$stability_root/$mode/restart" \
         "$stability_root/$mode/log"
+    # A prepared multi-zone fixture is input data, not a grid-generation job.
+    # The short trace uses the same overrides; leaving the fixture's original
+    # "Grid" task here re-enters Partition::ReadGrid and crashes before solve.
+    printf 'string simutask = Solve;\n' > "$stability_root/$mode/script/simu.txt"
+    if [ "$partitioned_case" = 1 ]; then
+        printf '4\n1 BCFarfield1\n0 BCOutflow0\n2 BCSymmetryPlane2\n3 BCWall0\n' \
+            > "$stability_root/$mode/grid/bcRegionMap.txt"
+        sed -i -E \
+            "s/^int[[:space:]]+gridObj[[:space:]]*=.*/int gridObj = 3;/" \
+            "$stability_root/$mode/script/grid.txt"
+        sed -i -E \
+            "s#^string[[:space:]]+gridFileName.*#string gridFileName = ${partitioned_grid};#" \
+            "$stability_root/$mode/script/cfd.txt"
+    fi
     sed -i -E "s/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = ${steps};/" \
         "$stability_root/$mode/script/cfd.txt"
     sed -i -E 's/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5; \/\/ Lax-Friedrichs F stability gate/' \
@@ -161,7 +210,14 @@ config_file="$stability_root/configuration.tsv"
     printf 'hip_state_update\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-0}"
     printf 'hip_boundary\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-0}"
     printf 'hip_time_step\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_TIME_STEP:-0}"
+    printf 'partitioned_case\t%s\n' "$partitioned_case"
+    printf 'partitioned_grid\t%s\n' "$partitioned_grid"
+    printf 'fixture_metadata\t%s\n' "${fixture_metadata:-unset}"
+    printf 'fixture_summary\t%s\n' "$fixture_summary"
 } > "$config_file"
+printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
+    "${fixture_metadata:-unset}" "$fixture_summary" \
+    > "$stability_root/fixture-validation.txt"
 overall=0
 
 run_mode() {
@@ -207,7 +263,9 @@ run_mode() {
             fi
         fi
         timeout --foreground --signal=TERM --kill-after=10s "$timeout_seconds" \
-            mpirun -np "$ranks" "${app_prefix[@]}" "$ONEFLOW_F2_STABILITY_BINARY" 0 "$mode"
+            mpirun --bind-to core --map-by slot --report-bindings -np "$ranks" \
+            "${app_prefix[@]}" "$ONEFLOW_F2_STABILITY_BINARY" 0 \
+            "$stability_root/$mode"
     ) > "$log_file" 2>&1
     rc=$?
     set -e
