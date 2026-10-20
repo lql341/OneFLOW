@@ -38,6 +38,7 @@ License
 #include "FieldWrap.h"
 #include "SimuContext.h"
 #include "AccelRuntime.h"
+#include "HipProductionPolicy.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -56,9 +57,8 @@ namespace
 
 bool HipInterfaceRequested()
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
-    return enabled != nullptr && enabled[ 0 ] == '1';
+    return HipProductionFeatureEnabled(
+        "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
 }
 
 bool GpuAwareMpiRequested()

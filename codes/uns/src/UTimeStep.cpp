@@ -47,6 +47,7 @@ License
 #include "SolverState.h"
 #include "TimeIntegral.h"
 #include "AccelRuntime.h"
+#include "HipProductionPolicy.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -62,9 +63,7 @@ namespace
 
 bool HipTimeStepRequested()
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
-    return enabled != nullptr && enabled[ 0 ] == '1';
+    return HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
 }
 
 bool EnvironmentEnabled( const char * name )
@@ -95,8 +94,10 @@ bool HipTimeStepSupported()
         && ug.nCells > 0
         && ug.nFaces > 0
         && ug.nTCell - ug.nCells == ug.nBFaces
-        && EnvironmentEnabled( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" )
-        && EnvironmentEnabled( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
+        && HipProductionFeatureEnabled(
+            "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" )
+        && HipProductionFeatureEnabled(
+            "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
 #endif
 }
 
@@ -221,14 +222,22 @@ void UTimeStep::CalcTimeStep()
 
     this->CalcCfl();
 
-    if ( HipTimeStepRequested() )
+    const bool explicitRequest =
+        HipProductionFeatureExplicitlyEnabled(
+            "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
+    bool useHipTimeStep = HipTimeStepRequested();
+    if ( useHipTimeStep && ! HipTimeStepSupported() )
     {
-        if ( ! HipTimeStepSupported() )
+        if ( explicitRequest )
         {
             throw std::runtime_error(
                 "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP=1 is unsupported for the "
                 "current solver, timestep model, or accelerator chain" );
         }
+        useHipTimeStep = false;
+    }
+    if ( useHipTimeStep )
+    {
         CalcHipLocalInviscidTimeStep();
         return;
     }

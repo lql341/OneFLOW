@@ -33,6 +33,7 @@ License
 #include "SolverDef.h"
 #include "AccelViews.h"
 #include "AccelRuntime.h"
+#include "HipProductionPolicy.h"
 #include "Parallel.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
@@ -152,23 +153,26 @@ namespace
 
 bool UseHipDeviceStateUpdate( int solverType )
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    const char * feature = "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE";
+    const bool explicitRequest =
+        HipProductionFeatureExplicitlyEnabled( feature );
+    if ( ! HipProductionFeatureEnabled( feature ) ) return false;
     if ( solverType != NS_SOLVER )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update is only supported for the NS solver" );
     }
-    const char * reconstruction =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
-    if ( reconstruction == nullptr || reconstruction[ 0 ] != '1' )
+    if ( ! HipProductionFeatureEnabled(
+             "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" ) )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update requires HIP device reconstruction" );
     }
     if ( nscom.chemModel != 0 || nscom.nTModel != 1 )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update requires a single ideal-gas temperature field" );
     }
@@ -182,12 +186,8 @@ bool UseHipDeviceStateUpdate( int solverType )
 
 bool RetainHipStateForBoundary()
 {
-    const char * boundaryEnabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
-    const char * interfaceEnabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
-    return ( boundaryEnabled != nullptr && boundaryEnabled[ 0 ] == '1' )
-        || ( interfaceEnabled != nullptr && interfaceEnabled[ 0 ] == '1' );
+    return HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" )
+        || HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
 }
 
 }

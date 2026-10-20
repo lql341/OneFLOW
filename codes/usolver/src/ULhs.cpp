@@ -33,6 +33,7 @@ License
 #include "NsCom.h"
 #include "AccelRuntime.h"
 #include "AccelViews.h"
+#include "HipProductionPolicy.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
@@ -48,23 +49,27 @@ namespace
 
 bool UseHipDeviceStateUpdate( int solverType )
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    const char * feature = "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE";
+    const bool explicitRequest =
+        HipProductionFeatureExplicitlyEnabled( feature );
+    if ( ! HipProductionFeatureEnabled( feature ) )
+        return false;
     if ( solverType != NS_SOLVER )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update is only supported for the NS solver" );
     }
-    const char * reconstruction =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
-    if ( reconstruction == nullptr || reconstruction[ 0 ] != '1' )
+    if ( ! HipProductionFeatureEnabled(
+             "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" ) )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update requires HIP device reconstruction" );
     }
     if ( nscom.chemModel != 0 || nscom.nTModel != 1 )
     {
+        if ( ! explicitRequest ) return false;
         throw std::runtime_error(
             "HIP state update requires a single ideal-gas temperature field" );
     }

@@ -51,6 +51,7 @@ License
 #include "CpuFluxBackend.h"
 #include "EulerCpuAdapter.h"
 #include "EulerInvFluxCapability.h"
+#include "HipProductionPolicy.h"
 #include "Parallel.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
@@ -454,31 +455,43 @@ bool UNsInvFlux::UseCpuBatchAdapter() const
 
 bool UNsInvFlux::UseHipGradient() const
 {
-    const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_GRADIENT" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    const char * feature = "ONEFLOW_ENABLE_UNS_HIP_GRADIENT";
+    if ( ! HipProductionFeatureEnabled( feature ) ) return false;
     if ( ! this->UseHipBatchAdapter() )
     {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires the HIP batch path" );
     }
     if ( ctrl.ilim != 0 )
     {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires limiter off" );
     }
     if ( vis_model.vismodel != 0 )
     {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires inviscid mode" );
     }
+    // Cross-zone gradient ownership still needs the resident halo map.  Keep
+    // the production auto policy on the verified single-zone path until the
+    // device halo exchange is enabled for this stage.
+    if ( ZoneState::nZones > 1
+         && ! HipProductionFeatureExplicitlyEnabled( feature ) )
+        return false;
     return true;
 }
 
 bool UNsInvFlux::UseHipDeviceReconstruction() const
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    if ( ! HipProductionFeatureEnabled(
+             "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" ) )
+        return false;
     if ( ! this->UseHipGradient() ) return false;
     // The device reconstruction contract currently assumes that every
     // boundary ghost is covered by the local boundary kernel.  A partitioned
@@ -493,11 +506,12 @@ bool UNsInvFlux::UseHipDeviceReconstruction() const
 
 bool UNsInvFlux::UseHipDeviceStateUpdate() const
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    const char * feature = "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE";
+    if ( ! HipProductionFeatureEnabled( feature ) ) return false;
     if ( ! this->UseHipDeviceReconstruction() )
     {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1 requires HIP "
             "device reconstruction" );
@@ -507,8 +521,8 @@ bool UNsInvFlux::UseHipDeviceStateUpdate() const
 
 bool UNsInvFlux::UseHipBatchAdapter() const
 {
-    const char * enabled = std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BATCH" );
-    if ( enabled == nullptr || enabled[ 0 ] != '1' ) return false;
+    const char * feature = "ONEFLOW_ENABLE_UNS_HIP_BATCH";
+    if ( ! HipProductionFeatureEnabled( feature ) ) return false;
 
     AccelRuntime & runtime = AccelRuntime::Instance();
     EulerInvFluxCapabilityRequest request;
@@ -528,15 +542,15 @@ bool UNsInvFlux::UseHipBatchAdapter() const
         nscom.ischeme == ISCHEME_LAX_FRIEDRICHS;
     request.hasInterfaceExchange =
         ZoneState::nZones > 1 || ZoneState::nLocal > 1;
-    const char * interfaceEnabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
     request.backendSupportsInterfaceExchange =
-        interfaceEnabled != nullptr && interfaceEnabled[ 0 ] == '1';
+        HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
 
     const EulerInvFluxCapabilityDecision decision =
         EvaluateEulerInvFluxCapability( request );
     if ( ! decision.enabled )
     {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
         throw std::runtime_error(
             std::string( "ONEFLOW_ENABLE_UNS_HIP_BATCH=1 rejected: " )
             + EulerInvFluxCapabilityReasonName( decision.reason ) );

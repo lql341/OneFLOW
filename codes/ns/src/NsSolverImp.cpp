@@ -24,6 +24,7 @@ License
 #include "SolverImp.h"
 #include "UTimeStep.h"
 #include "Zone.h"
+#include "ZoneState.h"
 #include "UnsGrid.h"
 #include "GridState.h"
 #include "UNsVisFlux.h"
@@ -59,11 +60,22 @@ BeginNameSpace( ONEFLOW )
 namespace
 {
 
-bool HipBoundaryRequested()
+bool HipBoundaryExplicitlyRequested()
 {
     const char * enabled =
         std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
     return enabled != nullptr && enabled[ 0 ] == '1';
+}
+
+bool HipBackendSelected()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    AccelRuntime & runtime = AccelRuntime::Instance();
+    return runtime.IsInitialized()
+        && runtime.Backend().Kind() == AccelBackendKind::HIP;
+#else
+    return false;
+#endif
 }
 
 bool HipBoundarySupported()
@@ -74,6 +86,8 @@ bool HipBoundarySupported()
     AccelRuntime & runtime = AccelRuntime::Instance();
     if ( ! runtime.IsInitialized()
          || runtime.Backend().Kind() != AccelBackendKind::HIP )
+        return false;
+    if ( ZoneState::nZones != 1 || ZoneState::nLocal != 1 )
         return false;
     if ( SolverState::solverType != NS_SOLVER || nscom.nEqu != 5
          || vis_model.vismodel != 0 || ctrl.ilim != 0 )
@@ -190,8 +204,9 @@ void NsCalcBoundary( StringField & data )
             "viscous or turbulent NS boundary conditions require "
             "nTModel > 0" );
     }
-    const bool requested = HipBoundaryRequested();
-    if ( requested && ! HipBoundarySupported() )
+    const bool explicitRequest = HipBoundaryExplicitlyRequested();
+    const bool requested = HipBackendSelected() && HipBoundarySupported();
+    if ( explicitRequest && ! requested )
     {
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1 is unsupported for the "

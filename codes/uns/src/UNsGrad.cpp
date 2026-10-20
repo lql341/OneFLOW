@@ -34,6 +34,7 @@ License
 #include "FaceMesh.h"
 #include "CellMesh.h"
 #include "CellTopo.h"
+#include "HipProductionPolicy.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #include <cstdlib>
@@ -107,10 +108,9 @@ void UNsGrad::CalcGradHip()
     view.leftCell = ug.lcf->data();
     view.rightCell = ug.rcf->data();
     view.cacheKey = grid;
-    const char * deviceReconstruction =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
     view.downloadToHost =
-        deviceReconstruction == nullptr || deviceReconstruction[ 0 ] != '1';
+        ! HipProductionFeatureEnabled(
+            "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
     for ( int equation = 0; equation < nEqu; ++ equation )
     {
         view.q[ equation ] = ( * q )[ equation ].data();
