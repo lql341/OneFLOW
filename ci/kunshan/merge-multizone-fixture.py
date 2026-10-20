@@ -153,6 +153,22 @@ def merge_shards(shards: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
         receive = receives.get(receive_key)
         if receive is None:
             raise ValueError(f"send endpoint {send_key} has no reciprocal receive")
+        reverse_send = sends.get(
+            (neighbor_zone, zone, ordinal, neighbor_rank, rank)
+        )
+        reverse_receive = receives.get(
+            (zone, neighbor_zone, ordinal, rank, neighbor_rank)
+        )
+        if reverse_send is None or reverse_receive is None:
+            raise ValueError(f"endpoint pair {send_key} is not bidirectional")
+        if reverse_send["face"] != receive["face"]:
+            raise ValueError(
+                f"endpoint pair {send_key} disagrees on target face ID"
+            )
+        if reverse_receive["face"] != send["face"]:
+            raise ValueError(
+                f"endpoint pair {send_key} disagrees on source face ID"
+            )
         if send["role"] != "OwnedCell" or receive["role"] != "GhostCell":
             raise ValueError(f"endpoint pair {send_key} has invalid roles")
         if send["equations"] != receive["equations"]:
