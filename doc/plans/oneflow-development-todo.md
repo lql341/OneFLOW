@@ -17,6 +17,40 @@
   `ONEFLOW_MZ_FIXTURE_EXPORT_DIR` 跑一次 interface-update，再 merge/verify，
   然后重跑 CPU/HIP trace、fixed-CFL stability 和 paired timing。
 
+## 2026-10-20 ownership gate and HIP boundary-cache validation
+
+- Kunshan root HIP revision `553a9cc5`：DCU preflight/build 成功，硬件 HIP
+  CTest `16/16` 通过。此前 `58078e8c` build 暴露
+  `HipGradientStorage::cachedBoundaryFaces` 重复声明，已在 `553a9cc5`
+  删除并复验；该失败是代码回归，不能归因于节点环境。
+- 真实 8-zone fixture 已由 solver runtime exporter 生成 8 个 rank shard，
+  merge/verifier 输出 `MULTIZONE_FIXTURE_PASS`：
+  `ranks=8 zones=8 interfaces=35624`。每个 interface 为 5 方程，
+  `HostStaged`；总单向 equation-major value count `178120`，按 `Real=8`
+  计算约 `1,424,960` bytes。zone owned cells 均为 `36864`，ghost cells
+  分别为 `7680,7574,8040,6532,7336,7158,8192,6152`。
+- 同一 manifest 的 Kunshan 8-rank 3-step CPU/HIP trace 通过：
+  `MULTIZONE_TRACE_PASS`，每个 rank 有 `STAGE_TRACE_PASS`，36 条记录，
+  HIP 相对 legacy 最大绝对差约 `5.9952e-15`。fixed-CFL `0.01`、50-step
+  stability 三路（legacy/cpu_batch/hip_batch）均 `exit_code=0`、
+  `diagnostic_hits=0`，scheduler `COMPLETED/0:0`。
+- 同一 case、同一资源和 basis（`steps=10,warmup=1,repeats=3`，
+  CPU 8 ranks，HIP 8 ranks，1 DCU）paired timing：CPU mean
+  `4275.308459 ms`，HIP mean `4269.301077 ms`，CPU/HIP `1.001407x`。
+  这说明当前 HostStaged 多-zone端到端基本持平；ownership manifest 本身
+  不是直接 wall-clock 加速，收益是把错误 topology/ghost overwrite/MPI
+  deadlock 风险变成启动前可审计 gate，并为固定 pack layout、persistent
+  device state 和后续 DeviceDirect 提供真实计数。
+- P1 boundary metadata cache 已在代码中按 owner token、topology generation、
+  host pointer identity 和 face count 复用静态 boundary geometry/topology；
+  每个 RK stage 跳过 7 次 H2D（4 个 `Real` 数组 + 3 个 `int` 数组），
+  `inflow` 动态字段仍每次上传。该改动已随 root HIP build/CTest 验证，
+  但尚未在多轮 paired timing 中单独隔离其收益。
+- P0 ownership/interface 证据已闭合；尚未闭合的是 GPU-aware MPI
+  `DeviceDirect` 实测、跨节点/多 DCU correctness，以及把 manifest 消费
+  到 persistent device halo buffer。继续保持多 zone HIP gradient、
+  reconstruction、state-update、boundary、time-step opt-in 关闭。
+
 > 最后更新：2026-10-20（3D 多 zone stability runner 修复与 Kunshan 复核；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
