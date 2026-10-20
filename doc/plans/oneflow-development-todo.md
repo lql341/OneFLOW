@@ -1,6 +1,6 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后更新：2026-10-19（3D 多 zone interface endpoint topology handoff；技术路线与历史测量仍以各节记录日期为准）
+> 最后更新：2026-10-20（3D 多 zone stability runner 修复与 Kunshan 复核；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
@@ -157,6 +157,33 @@
   stability case 的 partition workflow 初始化，而非 HIP kernel、MPI halo
   payload 或非物理诊断。后续修复应先让 stability runner 明确接收已经分区的
   8-zone case，并避免再次触发不适用的 repartition path。
+
+## 2026-10-20 follow-up: partitioned stability runner repaired
+
+- `9c2870bc` 修复 `f2-main-solver-stability.slurm` 的 case preparation：
+  stability runner 现在在 `ONEFLOW_F2_STABILITY_PARTITIONED_CASE=1` 时显式写入
+  `simutask=Solve`、已分区 grid 文件和 boundary map，并把 case 绝对路径传给
+  solver；不再把 fixture 原有的 `simutask=Grid` 当作求解入口，避免再次进入
+  `Partition::ReadGrid`。同时加入可选的
+  `ONEFLOW_F2_STABILITY_FIXTURE_METADATA`/`ONEFLOW_MZ_FIXTURE_METADATA` gate，
+  结果写入 `fixture-validation.txt`。
+- Kunshan 第一次复核（revision `9c2870bc`，job `125000888`）确认修复方向：
+  legacy 与 CPU batch 均为 8/8 active ranks、`exit_code=0`、无诊断命中；
+  HIP batch 先因 runner 未开启 `ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1` 被应用
+  明确拒绝，属于配置失败而非 HIP 数值失败。
+- `1d7ad065` 补齐 partitioned stability 的 HIP interface opt-in，并同步到
+  Kunshan。job `125001559` 在节点 `b16r1n00` `COMPLETED/0:0`；fixed-CFL
+  `0.01`、50 steps、8 CPU ranks/8 HIP ranks 下，legacy、CPU batch、HIP batch
+  三路均为 `exit_code=0`、`diagnostic_hits=0`、`PASS`，每路 8 份
+  breakdown 均生成且 rank utilization 通过。
+- 该作业的 `fixture-validation.txt` 仍为
+  `MULTIZONE_FIXTURE_UNCHECKED metadata=unset`。因此 stability 的
+  solver/physicality/rank-utilization gate 已重新闭合，但 ownership/interface
+  metadata gate 仍未闭合；不能把这次结果升级为 `MULTIZONE_FIXTURE_PASS`。
+- 当前唯一未决的多 zone 证据是由 fixture owner 在 Kunshan 私有 case 上导出
+  schema v1 manifest（zone owner、owned/ghost cell、reciprocal endpoint
+  face/cell、equation-major counts、memory space），然后重新执行 verifier、
+  CPU/HIP trace 和 stability。未取得该 manifest 前不更新正式性能报告。
 
 ## 交接摘要（先读这一段）
 
