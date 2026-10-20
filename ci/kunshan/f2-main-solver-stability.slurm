@@ -209,6 +209,7 @@ config_file="$stability_root/configuration.tsv"
     printf 'hip_reconstruction\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_RECONSTRUCTION:-0}"
     printf 'hip_state_update\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-0}"
     printf 'hip_boundary\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-0}"
+    printf 'hip_interface\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-$partitioned_case}"
     printf 'hip_time_step\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_TIME_STEP:-0}"
     printf 'partitioned_case\t%s\n' "$partitioned_case"
     printf 'partitioned_grid\t%s\n' "$partitioned_grid"
@@ -232,7 +233,8 @@ run_mode() {
         unset ONEFLOW_ENABLE_UNS_CPU_BATCH ONEFLOW_ENABLE_UNS_HIP_BATCH \
             ONEFLOW_ENABLE_UNS_HIP_GRADIENT ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION \
             ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
-            ONEFLOW_ENABLE_UNS_HIP_TIME_STEP ONEFLOW_UNS_STAGE_TRACE_FILE || true
+            ONEFLOW_ENABLE_UNS_HIP_INTERFACE ONEFLOW_ENABLE_UNS_HIP_TIME_STEP \
+            ONEFLOW_UNS_STAGE_TRACE_FILE || true
         export ONEFLOW_STAGE_BREAKDOWN_FILE="$stability_root/$mode.breakdown-%r.tsv"
         app_prefix=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
@@ -241,6 +243,10 @@ run_mode() {
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
+            if [ "$partitioned_case" = 1 ] || \
+                [ "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-0}" = 1 ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
+            fi
             if [ "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
             fi
