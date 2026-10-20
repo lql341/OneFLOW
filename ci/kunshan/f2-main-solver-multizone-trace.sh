@@ -32,7 +32,9 @@ test -x "$ONEFLOW_MZ_HIP_BINARY"
 test -r "$ONEFLOW_MZ_TRACE_VERIFIER"
 test -r "$ONEFLOW_MZ_RANK_VERIFIER"
 fixture_verifier="${ONEFLOW_MZ_FIXTURE_VERIFIER:-$(dirname "$0")/verify-multizone-fixture.py}"
+fixture_merger="${ONEFLOW_MZ_FIXTURE_MERGER:-$(dirname "$0")/merge-multizone-fixture.py}"
 fixture_metadata="${ONEFLOW_MZ_FIXTURE_METADATA:-${KUNSHAN_MZ_FIXTURE_METADATA:-}}"
+fixture_export_dir="${ONEFLOW_MZ_FIXTURE_EXPORT_DIR:-}"
 fixture_summary="MULTIZONE_FIXTURE_UNCHECKED metadata=unset"
 if [ -n "$fixture_metadata" ]; then
     test -r "$fixture_metadata"
@@ -44,11 +46,25 @@ if [ -n "$fixture_metadata" ]; then
     )"
     printf '%s\n' "$fixture_summary"
 fi
+if [ -n "$fixture_export_dir" ]; then
+    test -r "$fixture_merger"
+    mkdir -p "$fixture_export_dir"
+    if compgen -G "$fixture_export_dir/rank-*.json" > /dev/null; then
+        echo "fixture export directory already contains rank shards: $fixture_export_dir" >&2
+        exit 2
+    fi
+fi
 if [ -e "$ONEFLOW_MZ_RUN_ROOT" ]; then
     echo "refusing to overwrite $ONEFLOW_MZ_RUN_ROOT" >&2
     exit 2
 fi
 mkdir -p "$ONEFLOW_MZ_RUN_ROOT"
+if [ -z "$fixture_metadata" ] && [ -z "$fixture_export_dir" ]; then
+    fixture_export_dir="$ONEFLOW_MZ_RUN_ROOT/fixture-shards"
+fi
+if [ -n "$fixture_export_dir" ]; then
+    mkdir -p "$fixture_export_dir"
+fi
 printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
     "${fixture_metadata:-unset}" "$fixture_summary" \
     > "$ONEFLOW_MZ_RUN_ROOT/fixture-validation.txt"
@@ -110,6 +126,11 @@ run_mode() {
         fi
         export ONEFLOW_STAGE_BREAKDOWN_FILE="$breakdown"
         export ONEFLOW_UNS_STAGE_TRACE_FILE="$trace"
+        if [ "$mode" = cpu ] && [ -n "$fixture_export_dir" ]; then
+            export ONEFLOW_MZ_FIXTURE_EXPORT_DIR="$fixture_export_dir"
+        else
+            unset ONEFLOW_MZ_FIXTURE_EXPORT_DIR || true
+        fi
         timeout --foreground --signal=TERM --kill-after=15s "$timeout_seconds" \
             mpirun --bind-to core --map-by slot --report-bindings -np "$ranks" \
             env ONEFLOW_FAIL_ON_NONPHYSICAL=1 "$binary" 0 "$case_dir"
@@ -121,6 +142,20 @@ run_mode() {
 }
 
 run_mode cpu "$ONEFLOW_MZ_CPU_BINARY"
+if [ -n "$fixture_export_dir" ] && [ -z "$fixture_metadata" ]; then
+    fixture_metadata="$ONEFLOW_MZ_RUN_ROOT/fixture-metadata.json"
+    python3 "$fixture_merger" \
+        --shards "$fixture_export_dir" \
+        --output "$fixture_metadata"
+    fixture_summary="$(
+        python3 "$fixture_verifier" \
+            --metadata "$fixture_metadata" \
+            --expected-ranks "$ranks"
+    )"
+    printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
+        "$fixture_metadata" "$fixture_summary" \
+        > "$ONEFLOW_MZ_RUN_ROOT/fixture-validation.txt"
+fi
 run_mode hip "$ONEFLOW_MZ_HIP_BINARY"
 
 trace_pids=()

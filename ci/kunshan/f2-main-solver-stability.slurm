@@ -52,7 +52,9 @@ partitioned_grid="${ONEFLOW_F2_STABILITY_GRID_FILE:-grid/m6wing-8.ofl}"
 stability_root="${ONEFLOW_F2_STABILITY_RUN_DIR:-$PWD/f2-main-solver-stability-${SLURM_JOB_ID:-manual}}"
 rank_utilization_verifier="$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/verify-rank-utilization.py"
 fixture_verifier="${ONEFLOW_F2_STABILITY_FIXTURE_VERIFIER:-$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/verify-multizone-fixture.py}"
+fixture_merger="${ONEFLOW_F2_STABILITY_FIXTURE_MERGER:-$ONEFLOW_F2_STABILITY_SOURCE_DIR/ci/kunshan/merge-multizone-fixture.py}"
 fixture_metadata="${ONEFLOW_F2_STABILITY_FIXTURE_METADATA:-${ONEFLOW_MZ_FIXTURE_METADATA:-${KUNSHAN_MZ_FIXTURE_METADATA:-}}}"
+fixture_export_dir="${ONEFLOW_F2_STABILITY_FIXTURE_EXPORT_DIR:-}"
 
 for value_name in steps timeout_seconds cpu_ranks hip_ranks time_integral rk_stages; do
     value="${!value_name}"
@@ -106,6 +108,9 @@ if [ -e "$stability_root" ]; then
     echo "Refusing to overwrite existing F2 stability run directory" >&2
     exit 2
 fi
+if [ -z "$fixture_metadata" ] && [ -z "$fixture_export_dir" ]; then
+    fixture_export_dir="$stability_root/fixture-shards"
+fi
 test -r "$rank_utilization_verifier"
 fixture_summary="MULTIZONE_FIXTURE_UNCHECKED metadata=unset"
 if [ -n "$fixture_metadata" ]; then
@@ -119,6 +124,14 @@ if [ -n "$fixture_metadata" ]; then
     printf '%s\n' "$fixture_summary"
 fi
 mkdir -p "$stability_root"
+if [ -n "$fixture_export_dir" ]; then
+    test -r "$fixture_merger"
+    mkdir -p "$fixture_export_dir"
+    if compgen -G "$fixture_export_dir/rank-*.json" > /dev/null; then
+        echo "fixture export directory already contains rank shards: $fixture_export_dir" >&2
+        exit 2
+    fi
+fi
 
 {
     echo "gcc=$(gcc --version | head -1)"
@@ -236,6 +249,11 @@ run_mode() {
             ONEFLOW_ENABLE_UNS_HIP_INTERFACE ONEFLOW_ENABLE_UNS_HIP_TIME_STEP \
             ONEFLOW_UNS_STAGE_TRACE_FILE || true
         export ONEFLOW_STAGE_BREAKDOWN_FILE="$stability_root/$mode.breakdown-%r.tsv"
+        if [ "$mode" = legacy ] && [ -n "$fixture_export_dir" ]; then
+            export ONEFLOW_MZ_FIXTURE_EXPORT_DIR="$fixture_export_dir"
+        else
+            unset ONEFLOW_MZ_FIXTURE_EXPORT_DIR || true
+        fi
         app_prefix=()
         if [ "${ONEFLOW_F2_STABILITY_FAIL_ON_NONPHYSICAL:-1}" = 1 ]; then
             app_prefix=( env ONEFLOW_FAIL_ON_NONPHYSICAL=1 )
@@ -298,6 +316,20 @@ run_mode() {
 # Preserve the diagnostic order: establish legacy CPU stability first, then
 # compare CPU batch, and only then run the HIP batch path.
 run_mode legacy "$cpu_ranks"
+if [ -n "$fixture_export_dir" ] && [ -z "$fixture_metadata" ]; then
+    fixture_metadata="$stability_root/fixture-metadata.json"
+    python3 "$fixture_merger" \
+        --shards "$fixture_export_dir" \
+        --output "$fixture_metadata"
+    fixture_summary="$(
+        python3 "$fixture_verifier" \
+            --metadata "$fixture_metadata" \
+            --expected-ranks "$cpu_ranks"
+    )"
+    printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
+        "$fixture_metadata" "$fixture_summary" \
+        > "$stability_root/fixture-validation.txt"
+fi
 run_mode cpu_batch "$cpu_ranks"
 run_mode hip_batch "$hip_ranks"
 
