@@ -140,6 +140,18 @@
   `DCU_PREFLIGHT_PASS expected_arch=gfx906`，随后 root HIP smoke 与硬件 CTest
   `16/16` 通过。该结果确认本轮 preflight/build 环境可用，但不替代真实
   8-zone HIP trace 或 stability gate。
+- 同一 root binary 在保留的 8-zone case、`e04r1n00`、8 ranks 上完成
+  3-step CPU/HIP trace（job `124995642`）：runner 返回
+  `MULTIZONE_TRACE_PASS ranks=8 steps=3 cfl=0.01`，8 个 rank 均有
+  `STAGE_TRACE_PASS records=36`。但 `fixture-validation.txt` 仍为
+  `MULTIZONE_FIXTURE_UNCHECKED metadata=unset`，所以这不是 ownership
+  metadata gate。
+- fixed-CFL 50-step stability 尝试（job `124996224`）在 legacy、CPU batch、
+  HIP batch 三种模式均以 exit `139`/`SIGSEGV` 结束，发生在 8-rank 网格/
+  face-topology 初始化阶段；没有把它记为数值或 DCU runtime failure。
+  短 trace 通过而 stability 初始化崩溃，下一步应检查 stability runner 对
+  partitioned case 的准备和路径契约，再重跑；在此之前 stability gate 仍是
+  FAIL/未闭合，不得更新性能报告。
 
 ## 交接摘要（先读这一段）
 
