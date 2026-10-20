@@ -205,7 +205,10 @@ void NsCalcBoundary( StringField & data )
             "nTModel > 0" );
     }
     const bool explicitRequest = HipBoundaryExplicitlyRequested();
-    const bool requested = HipBackendSelected() && HipBoundarySupported();
+    // Boundary device execution remains an explicit diagnostic opt-in until
+    // its multi-stage ordering is covered by the production trace oracle.
+    const bool requested = explicitRequest
+        && HipBackendSelected() && HipBoundarySupported();
     if ( explicitRequest && ! requested )
     {
         throw std::runtime_error(
