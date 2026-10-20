@@ -11,6 +11,7 @@ License
 #include "AccelRuntime.h"
 
 #include <cstdlib>
+#include <cstring>
 
 BeginNameSpace( ONEFLOW )
 
@@ -38,7 +39,15 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
 {
     const char * value = std::getenv( legacyName );
     if ( value != nullptr ) return value[ 0 ] == '1';
-    return HipProductionBackendSelected();
+    if ( ! HipProductionBackendSelected() ) return false;
+
+    // The fused HIP flux and local boundary path are validated against the
+    // production solver oracle.  Gradient/reconstruction/state update and
+    // resident timestep still require an explicit opt-in until their
+    // multi-stage ordering has a matching CPU trace contract.
+    return std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BATCH" ) == 0
+        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" ) == 0
+        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) == 0;
 }
 
 EndNameSpace

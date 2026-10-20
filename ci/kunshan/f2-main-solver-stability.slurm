@@ -260,7 +260,6 @@ run_mode() {
         fi
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
-            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
             if [ "$partitioned_case" = 1 ] || \
                 [ "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-0}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1

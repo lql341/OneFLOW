@@ -107,22 +107,13 @@ run_case() {
             ONEFLOW_ENABLE_UNS_HIP_TIME_STEP || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
-            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
-            if [ "${ONEFLOW_F2_STAGE_HIP_GRADIENT:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_RECONSTRUCTION:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_STATE_UPDATE:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_BOUNDARY:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_TIME_STEP:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_TIME_STEP=1
-            fi
+            for feature in GRADIENT RECONSTRUCTION STATE_UPDATE BOUNDARY TIME_STEP; do
+                request_var="ONEFLOW_F2_STAGE_HIP_${feature}"
+                value="${!request_var:-}"
+                if [ "$value" = 0 ] || [ "$value" = 1 ]; then
+                    export "ONEFLOW_ENABLE_UNS_HIP_${feature}=$value"
+                fi
+            done
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
             if [ "$mode" = cpu_batch ]; then
@@ -188,22 +179,13 @@ if [ "${ONEFLOW_F2_STAGE_BENCHMARK:-0}" = 1 ]; then
             ONEFLOW_ENABLE_UNS_HIP_TIME_STEP ONEFLOW_UNS_STAGE_TRACE_FILE || true
         if [ "$mode" = hip_batch ]; then
             export ONEFLOW_ACCEL_BACKEND=HIP
-            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
-            if [ "${ONEFLOW_F2_STAGE_HIP_GRADIENT:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_RECONSTRUCTION:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_STATE_UPDATE:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_BOUNDARY:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
-            fi
-            if [ "${ONEFLOW_F2_STAGE_HIP_TIME_STEP:-0}" = 1 ]; then
-                export ONEFLOW_ENABLE_UNS_HIP_TIME_STEP=1
-            fi
+            for feature in GRADIENT RECONSTRUCTION STATE_UPDATE BOUNDARY TIME_STEP; do
+                request_var="ONEFLOW_F2_STAGE_HIP_${feature}"
+                value="${!request_var:-}"
+                if [ "$value" = 0 ] || [ "$value" = 1 ]; then
+                    export "ONEFLOW_ENABLE_UNS_HIP_${feature}=$value"
+                fi
+            done
         else
             export ONEFLOW_ACCEL_BACKEND=CPU
             if [ "$mode" = cpu_batch ]; then
