@@ -112,6 +112,30 @@
   于 ownership metadata gate 通过。下一次应在可用 DCU 节点上重跑，并先为真实
   8-zone fixture 补齐 reciprocal endpoint manifest。
 
+## 2026-10-20 follow-up: fixture discovery and DCU preflight
+
+- Kunshan 私有 workspace 中已定位到真实 8-zone case：
+  `/public/home/luql/.scnet-hpc/oneflow/work/partition-3df1778b-8-3d/case`。
+  运行日志确认 `nTZones = 8`，8 个 rank 各拥有一个 zone；每个 zone 的
+  `nBFaces`/`nIFaces` 也已由 solver 读出。该目录和网格文件继续留在集群私有
+  workspace，不复制到仓库或公开报告。
+- 只读检查没有发现现成的 `ownerRanks`、endpoint cell/face map 或
+  `oneflow.multizone.fixture/v1` manifest。已有 8-zone trace 因此仍只能作为
+  solver/rank-utilization evidence，不能升级为
+  `MULTIZONE_FIXTURE_PASS`；不得根据 `nBFaces`/`nIFaces` 猜测 reciprocal
+  endpoint cell IDs。
+- 新增 `ci/kunshan/dcu-preflight.sh`，并接入 standalone
+  `euler-dcu-gtest.slurm` 与 root `f2-main-solver-build.slurm`。在 configure
+  前硬性检查 `rocminfo`、目标 `gfx906` agent 和 `amd_comgr` CMake package，
+  输出 `dcu-preflight.txt`（及 rocminfo capture）。无 `/dev/kfd`、错误节点或
+  缺 runtime 时作业以 preflight failure 结束，不再伪装成 CMake/build/数值
+  failure；HIP 专用流程仍记录为 DTK 例外。
+- 当前可并行推进项：由 fixture owner 导出 schema v1 manifest；由 Kunshan
+  调度在 preflight 通过的 DCU 节点上重跑 3-step trace 与 fixed-CFL 50-step
+  stability。manifest 和可用节点证据未齐前，继续关闭多 zone HIP
+  gradient/reconstruction/state-update/boundary/time-step opt-in，也不更新正式
+  performance report。
+
 ## 交接摘要（先读这一段）
 
 **2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`

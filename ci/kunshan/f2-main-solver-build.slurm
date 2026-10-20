@@ -65,6 +65,13 @@ link_flags="-L$gcc16_lib -Wl,-rpath,$gcc16_lib -Wl,-rpath-link,$gcc16_lib"
 build_log="$ONEFLOW_F2_BUILD_DIR/build.log"
 mkdir -p "$ONEFLOW_F2_BUILD_DIR"
 
+# Fail before CMake when the allocation has no usable DCU runtime.  This
+# keeps /dev/kfd, architecture, and amd_comgr problems distinct from build
+# or solver failures and leaves a bounded diagnostic artifact.
+export AMD_COMGR_DIR="$amd_comgr_dir"
+"$ONEFLOW_F2_BUILD_SOURCE_DIR/ci/kunshan/dcu-preflight.sh" \
+    "$ONEFLOW_F2_BUILD_DIR/dcu-preflight.txt"
+
 {
     echo "source=$ONEFLOW_F2_BUILD_SOURCE_DIR"
     echo "build=$ONEFLOW_F2_BUILD_DIR"

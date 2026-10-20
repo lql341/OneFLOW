@@ -52,6 +52,14 @@ CTest prefixes and the shared helper attaches
 an empty discovery result or a zero exit code without the expected summary is
 not successful validation.
 
+Before configure, the runner executes [`dcu-preflight.sh`](dcu-preflight.sh).
+It requires a successful `rocminfo` probe containing the requested
+`ONEFLOW_HIP_ARCHITECTURES` agent (default `gfx906`) and a readable
+`amd_comgr` CMake package directory. A node that cannot open `/dev/kfd`, has
+the wrong architecture, or lacks `amd_comgr` now stops with
+`preflight=1` in `result.txt`; it is not reported as a build or workload
+failure.
+
 The root project exposes the same HIP contract through
 `-DONEFLOW_ENABLE_HIP_TESTS=ON`. It is deliberately opt-in: a normal CPU build
 keeps the root CTest suite hardware-independent, while a target-node build must
