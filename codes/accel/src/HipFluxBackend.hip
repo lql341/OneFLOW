@@ -1525,20 +1525,54 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     storage->cachedStateGhostCells = view.nGhostCells;
     storage->cachedStateFieldGeneration = fieldGeneration;
 
-    storage->boundaryXNormal.CopyFromHost(
-        view.xNormal, view.nBoundaryFaces );
-    storage->boundaryYNormal.CopyFromHost(
-        view.yNormal, view.nBoundaryFaces );
-    storage->boundaryZNormal.CopyFromHost(
-        view.zNormal, view.nBoundaryFaces );
-    storage->boundaryMeshVelocityNormal.CopyFromHost(
-        view.meshVelocityNormal, view.nBoundaryFaces );
-    storage->boundaryLeftCell.CopyFromHost(
-        view.leftCell, view.nBoundaryFaces );
-    storage->boundaryRightCell.CopyFromHost(
-        view.rightCell, view.nBoundaryFaces );
-    storage->boundaryType.CopyFromHost(
-        view.boundaryType, view.nBoundaryFaces );
+    const void * ownerToken = owner != nullptr
+        ? owner->OwnerToken() : view.cacheKey;
+    const std::uint64_t topologyGeneration = owner != nullptr
+        ? owner->TopologyGeneration() : 0;
+    const bool boundaryGeometryMatches =
+        storage->boundaryGeometryCacheValid
+        && storage->cachedBoundaryOwnerToken == ownerToken
+        && storage->cachedBoundaryGeometryGeneration == topologyGeneration
+        && storage->cachedBoundaryXNormal == view.xNormal
+        && storage->cachedBoundaryYNormal == view.yNormal
+        && storage->cachedBoundaryZNormal == view.zNormal
+        && storage->cachedBoundaryMeshVelocityNormal
+            == view.meshVelocityNormal
+        && storage->cachedBoundaryLeftCell == view.leftCell
+        && storage->cachedBoundaryRightCell == view.rightCell
+        && storage->cachedBoundaryType == view.boundaryType
+        && storage->cachedBoundaryFaces == view.nBoundaryFaces;
+    if ( ! boundaryGeometryMatches )
+    {
+        storage->boundaryXNormal.CopyFromHost(
+            view.xNormal, view.nBoundaryFaces );
+        storage->boundaryYNormal.CopyFromHost(
+            view.yNormal, view.nBoundaryFaces );
+        storage->boundaryZNormal.CopyFromHost(
+            view.zNormal, view.nBoundaryFaces );
+        storage->boundaryMeshVelocityNormal.CopyFromHost(
+            view.meshVelocityNormal, view.nBoundaryFaces );
+        storage->boundaryLeftCell.CopyFromHost(
+            view.leftCell, view.nBoundaryFaces );
+        storage->boundaryRightCell.CopyFromHost(
+            view.rightCell, view.nBoundaryFaces );
+        storage->boundaryType.CopyFromHost(
+            view.boundaryType, view.nBoundaryFaces );
+        storage->cachedBoundaryOwnerToken = ownerToken;
+        storage->cachedBoundaryGeometryGeneration = topologyGeneration;
+        storage->cachedBoundaryXNormal = view.xNormal;
+        storage->cachedBoundaryYNormal = view.yNormal;
+        storage->cachedBoundaryZNormal = view.zNormal;
+        storage->cachedBoundaryMeshVelocityNormal =
+            view.meshVelocityNormal;
+        storage->cachedBoundaryLeftCell = view.leftCell;
+        storage->cachedBoundaryRightCell = view.rightCell;
+        storage->cachedBoundaryType = view.boundaryType;
+        storage->cachedBoundaryFaces = view.nBoundaryFaces;
+        storage->boundaryGeometryCacheValid = true;
+    }
+    // Inflow is a solver field and may change between calls; keep this copy
+    // unconditional even when the static boundary metadata is cached.
     storage->inflow.CopyFromHost( view.inflow, view.nEquations );
     storage->boundaryFaceState.Resize(
         view.nEquations * view.nBoundaryFaces );

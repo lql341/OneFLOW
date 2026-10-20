@@ -89,6 +89,21 @@ struct HipGradientStorage
     DeviceBuffer< Real > boundaryMeshVelocityNormal;
     DeviceBuffer< int > boundaryLeftCell;
     DeviceBuffer< int > boundaryRightCell;
+    // Boundary geometry/topology is immutable for a bound grid across RK
+    // stages. Keep its host-view identity so UpdateBoundaryState does not
+    // re-upload the same metadata on every stage. Dynamic inflow values are
+    // intentionally not part of this cache.
+    const void * cachedBoundaryOwnerToken = nullptr;
+    std::uint64_t cachedBoundaryGeometryGeneration = 0;
+    const Real * cachedBoundaryXNormal = nullptr;
+    const Real * cachedBoundaryYNormal = nullptr;
+    const Real * cachedBoundaryZNormal = nullptr;
+    const Real * cachedBoundaryMeshVelocityNormal = nullptr;
+    const int * cachedBoundaryLeftCell = nullptr;
+    const int * cachedBoundaryRightCell = nullptr;
+    const int * cachedBoundaryType = nullptr;
+    int cachedBoundaryFaces = -1;
+    bool boundaryGeometryCacheValid = false;
     DeviceBuffer< int > boundarySendCell;
     DeviceBuffer< int > boundaryReceiveCell;
     DeviceBuffer< Real > boundarySendValues;
