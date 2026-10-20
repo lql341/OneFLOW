@@ -1,5 +1,22 @@
 # OneFLOW 开发待办与衔接（living document）
 
+## 2026-10-20 runtime ownership exporter
+
+- `8de93bbe` 增加 `ONEFLOW_MZ_FIXTURE_EXPORT_DIR` runtime exporter。每个 MPI
+  rank 在第一次 interface-update 时从实际 `InterFace`/`FaceTopo` 写出
+  `rank-<rank>.json` shard，包含真实 send/receive face/cell endpoint、
+  zone/rank ownership、owned/ghost cell capacity、equation count 和 memory
+  space；不再需要根据 `nBFaces`/`nIFaces` 猜测 endpoint ID。
+- `ci/kunshan/merge-multizone-fixture.py` 将所有 rank shard 合并为
+  `oneflow.multizone.fixture/v1` manifest，严格拒绝缺 rank、重复 zone、
+  未配对 reciprocal endpoint、角色/方程数/memory space 不一致。合并后仍由
+  `verify-multizone-fixture.py` 执行最终 gate。
+- 本地 Python verifier/merge tests `8/8`、C++ `InterfaceTask.cpp`
+  `-fsyntax-only`、Kunshan shell syntax 和 `git diff --check` 已通过。真实
+  Kunshan manifest 尚未导出；下一步在可用 8-rank fixture 上设置
+  `ONEFLOW_MZ_FIXTURE_EXPORT_DIR` 跑一次 interface-update，再 merge/verify，
+  然后重跑 CPU/HIP trace、fixed-CFL stability 和 paired timing。
+
 > 最后更新：2026-10-20（3D 多 zone stability runner 修复与 Kunshan 复核；技术路线与历史测量仍以各节记录日期为准）
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。

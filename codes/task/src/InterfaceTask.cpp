@@ -165,6 +165,20 @@ void ExportFixtureMetadataShard()
                 grid->GetFaceTopo().GetSId( sendFaces[ ordinal ], 1, sendCell );
                 grid->GetFaceTopo().GetTId(
                     receiveFaces[ ordinal ], 1, receiveCell );
+                BoundaryEndpointMap sourceEndpoint{
+                    grid->nCells + grid->nBFaces,
+                    { sendCell },
+                    grid->nCells,
+                    BoundaryEndpointRole::OwnedCell
+                };
+                BoundaryEndpointMap targetEndpoint{
+                    grid->nCells + grid->nBFaces,
+                    { receiveCell },
+                    grid->nCells,
+                    BoundaryEndpointRole::GhostCell
+                };
+                sourceEndpoint.Validate();
+                targetEndpoint.Validate();
                 shard[ "endpoints" ].push_back( {
                     { "zone", zone },
                     { "rank", Parallel::pid },
