@@ -135,6 +135,11 @@
   stability。manifest 和可用节点证据未齐前，继续关闭多 zone HIP
   gradient/reconstruction/state-update/boundary/time-step opt-in，也不更新正式
   performance report。
+- `b33b7bc0` 已同步到 Kunshan；root HIP build 作业 `124989236` 在节点
+  `e04r1n00` 完成（`COMPLETED`, exit `0:0`）。`dcu-preflight.txt` 报告
+  `DCU_PREFLIGHT_PASS expected_arch=gfx906`，随后 root HIP smoke 与硬件 CTest
+  `16/16` 通过。该结果确认本轮 preflight/build 环境可用，但不替代真实
+  8-zone HIP trace 或 stability gate。
 
 ## 交接摘要（先读这一段）
 
