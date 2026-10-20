@@ -152,6 +152,11 @@
   短 trace 通过而 stability 初始化崩溃，下一步应检查 stability runner 对
   partitioned case 的准备和路径契约，再重跑；在此之前 stability gate 仍是
   FAIL/未闭合，不得更新性能报告。
+- 对 `root-b33b7bc0/bin/OneFLOW` 的崩溃地址做了 `addr2line`：入口为
+  `ONEFLOW::Partition::ReadGrid -> Zone::GetGridReference`，确认问题发生在
+  stability case 的 partition workflow 初始化，而非 HIP kernel、MPI halo
+  payload 或非物理诊断。后续修复应先让 stability runner 明确接收已经分区的
+  8-zone case，并避免再次触发不适用的 repartition path。
 
 ## 交接摘要（先读这一段）
 
