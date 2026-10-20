@@ -91,6 +91,27 @@
   synchronization，再让 HIP path 消费同一 contract。未完成该门禁前继续保持所有
   多 zone HIP gradient/reconstruction opt-in 关闭。
 
+## 2026-10-20 Kunshan validation checkpoint
+
+- 当前 revision 已用完整 `git archive` 同步到 Kunshan 独立 source 目录，没有用本机
+  build 代替目标节点证据。
+- `kshcnormal` CPU contract 作业通过：`BoundaryExchangeContractTest 8/8`、
+  `CpuOwnershipSynchronizationContractTest 6/6`，工具链为 GCC `16.2.0`、
+  OpenMPI `5.0.11`、CMake `4.4.3`。
+- `kshdnormal` root HIP build 成功，HIP smoke 成功，硬件 HIP CTest
+  `16/16` 通过；构建证据使用 DTK `26.04`、`gfx906`、单 DCU。
+- 同一 root binary 的 8-rank 3-step CPU 多 zone workload 已生成 8 份
+  breakdown/stage 文件；rank verifier 报告 `active_ranks=8` 且每个 rank 有
+  meaningful solver work。
+- 8-rank HIP trace 尚未形成 PASS：多次分配分别遇到目标节点
+  `hipGetDeviceCount: no ROCm-capable device is detected`，以及 DTK
+  `amd_comgr` 动态库加载失败。它们是节点/运行时环境失败，不是数值 trace 失败；
+  相关作业不得计入 HIP accuracy/stability 证据，也不能据此扩大 capability。
+- 本轮 8-zone 私有 fixture 尚未提供与新 schema 对齐的 endpoint metadata，因此
+  runner 明确记录 `MULTIZONE_FIXTURE_UNCHECKED`；CPU rank utilization 通过不等同
+  于 ownership metadata gate 通过。下一次应在可用 DCU 节点上重跑，并先为真实
+  8-zone fixture 补齐 reciprocal endpoint manifest。
+
 ## 交接摘要（先读这一段）
 
 **2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`
