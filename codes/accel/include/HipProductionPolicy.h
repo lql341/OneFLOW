@@ -45,9 +45,7 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
     // production solver oracle.  Gradient/reconstruction/state update and
     // resident timestep still require an explicit opt-in until their
     // multi-stage ordering has a matching CPU trace contract.
-    return std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BATCH" ) == 0
-        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" ) == 0
-        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) == 0;
+    return std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BATCH" ) == 0;
 }
 
 EndNameSpace
