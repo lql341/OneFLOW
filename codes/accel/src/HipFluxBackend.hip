@@ -1525,8 +1525,6 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     storage->cachedStateGhostCells = view.nGhostCells;
     storage->cachedStateFieldGeneration = fieldGeneration;
 
-    const void * ownerToken = owner != nullptr
-        ? owner->OwnerToken() : view.cacheKey;
     const std::uint64_t topologyGeneration = owner != nullptr
         ? owner->TopologyGeneration() : 0;
     const bool boundaryGeometryMatches =
