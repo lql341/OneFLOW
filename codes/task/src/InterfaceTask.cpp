@@ -41,8 +41,11 @@ License
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <vector>
 
@@ -70,6 +73,143 @@ bool GpuAwareMpiConfirmed()
     const char * confirmed =
         std::getenv( "ONEFLOW_GPU_AWARE_MPI_CONFIRMED" );
     return confirmed != nullptr && confirmed[ 0 ] == '1';
+}
+
+bool ExportFixtureMetadataRequested()
+{
+    const char * directory =
+        std::getenv( "ONEFLOW_MZ_FIXTURE_EXPORT_DIR" );
+    return directory != nullptr && directory[ 0 ] != '\0';
+}
+
+void ExportFixtureMetadataShard()
+{
+    static bool exported = false;
+    if ( exported || ! ExportFixtureMetadataRequested() ) return;
+
+    const char * directory =
+        std::getenv( "ONEFLOW_MZ_FIXTURE_EXPORT_DIR" );
+    const int nEquations = [] {
+        const char * value = std::getenv( "ONEFLOW_MZ_FIXTURE_EQUATIONS" );
+        if ( value == nullptr || value[ 0 ] == '\0' ) return 5;
+        char * end = nullptr;
+        const long parsed = std::strtol( value, & end, 10 );
+        if ( end == value || *end != '\0' || parsed <= 0 || parsed > 1024 )
+            throw std::invalid_argument(
+                "ONEFLOW_MZ_FIXTURE_EQUATIONS must be in 1..1024" );
+        return static_cast< int >( parsed );
+    }();
+    const char * memorySpaceValue =
+        std::getenv( "ONEFLOW_MZ_FIXTURE_MEMORY_SPACE" );
+    const std::string memorySpace =
+        memorySpaceValue == nullptr || memorySpaceValue[ 0 ] == '\0'
+            ? "HostStaged" : memorySpaceValue;
+    if ( memorySpace != "HostStaged" && memorySpace != "DeviceDirect" )
+        throw std::invalid_argument(
+            "ONEFLOW_MZ_FIXTURE_MEMORY_SPACE must be HostStaged or DeviceDirect" );
+
+    namespace fs = std::filesystem;
+    const fs::path outputDirectory( directory );
+    fs::create_directories( outputDirectory );
+    nlohmann::ordered_json shard;
+    shard[ "schema" ] = "oneflow.multizone.fixture/shard/v1";
+    shard[ "rank" ] = Parallel::pid;
+    shard[ "ranks" ] = Parallel::GetNProc();
+    shard[ "zones" ] = nlohmann::ordered_json::array();
+    shard[ "endpoints" ] = nlohmann::ordered_json::array();
+
+    for ( int zone = 0; zone < ZoneState::nZones; ++ zone )
+    {
+        if ( ZoneState::pid[ zone ] != Parallel::pid ) continue;
+        Grid * gridBase = Zone::GetGrid( zone, GridState::gridLevel );
+        UnsGrid * grid = gridBase != nullptr && IsUnsGrid( gridBase->type )
+            ? UnsGridCast( gridBase ) : nullptr;
+        if ( grid == nullptr )
+            throw std::runtime_error(
+                "fixture metadata export could not resolve local unstructured zone" );
+
+        shard[ "zones" ].push_back( {
+            { "zone", zone },
+            { "rank", Parallel::pid },
+            { "owned_cells", grid->nCells },
+            { "ghost_cells", grid->nBFaces }
+        } );
+        if ( grid->interFace == nullptr ) continue;
+
+        InterFace & interface = *grid->interFace;
+        for ( int neighborIndex = 0;
+              neighborIndex < interface.nNeighbor; ++ neighborIndex )
+        {
+            const int neighborZone =
+                interface.GetInterfacePair( neighborIndex ).nzid;
+            if ( neighborZone < 0 ||
+                 neighborZone >= static_cast< int >( ZoneState::pid.size() ) )
+                throw std::runtime_error(
+                    "fixture metadata export found an invalid neighbor zone" );
+            const int neighborRank = ZoneState::pid[ neighborZone ];
+            const int nInterfaces =
+                interface.GetInterfacePair( neighborIndex ).nIFaces;
+            const IntField & sendFaces =
+                interface.GetInterfaceId( neighborIndex, GREAT_SEND );
+            const IntField & receiveFaces =
+                interface.GetInterfaceId( neighborIndex, GREAT_RECV );
+            if ( sendFaces.size() != static_cast< HXSize_t >( nInterfaces )
+                 || receiveFaces.size() != static_cast< HXSize_t >( nInterfaces ) )
+                throw std::runtime_error(
+                    "fixture metadata export found inconsistent interface face counts" );
+
+            for ( int ordinal = 0; ordinal < nInterfaces; ++ ordinal )
+            {
+                int sendCell = -1;
+                int receiveCell = -1;
+                grid->GetFaceTopo().GetSId( sendFaces[ ordinal ], 1, sendCell );
+                grid->GetFaceTopo().GetTId(
+                    receiveFaces[ ordinal ], 1, receiveCell );
+                shard[ "endpoints" ].push_back( {
+                    { "zone", zone },
+                    { "rank", Parallel::pid },
+                    { "neighbor_zone", neighborZone },
+                    { "neighbor_rank", neighborRank },
+                    { "ordinal", ordinal },
+                    { "direction", "send" },
+                    { "face", sendFaces[ ordinal ] },
+                    { "cell", sendCell },
+                    { "role", "OwnedCell" },
+                    { "equations", nEquations },
+                    { "memory_space", memorySpace }
+                } );
+                shard[ "endpoints" ].push_back( {
+                    { "zone", zone },
+                    { "rank", Parallel::pid },
+                    { "neighbor_zone", neighborZone },
+                    { "neighbor_rank", neighborRank },
+                    { "ordinal", ordinal },
+                    { "direction", "receive" },
+                    { "face", receiveFaces[ ordinal ] },
+                    { "cell", receiveCell },
+                    { "role", "GhostCell" },
+                    { "equations", nEquations },
+                    { "memory_space", memorySpace }
+                } );
+            }
+        }
+    }
+
+    const fs::path finalPath =
+        outputDirectory / ( "rank-" + std::to_string( Parallel::pid ) + ".json" );
+    const fs::path temporaryPath = finalPath.string() + ".tmp";
+    {
+        std::ofstream output( temporaryPath );
+        if ( ! output )
+            throw std::runtime_error(
+                "fixture metadata export could not open temporary shard" );
+        output << shard.dump( 2 ) << '\n';
+        if ( ! output )
+            throw std::runtime_error(
+                "fixture metadata export could not write shard" );
+    }
+    fs::rename( temporaryPath, finalPath );
+    exported = true;
 }
 
 #ifdef ONEFLOW_ENABLE_HIP
@@ -332,6 +472,7 @@ CUpdateInterface::~CUpdateInterface()
 void CUpdateInterface::Run()
 {
     ActionState::dataBook = this->dataBook.get();
+    ExportFixtureMetadataShard();
 
     std::vector< int > ownerRanks(
         ZoneState::pid.begin(),

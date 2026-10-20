@@ -286,6 +286,29 @@ ownership/topology validation. A copyable two-zone manifest template is kept
 in [`multizone-fixture-metadata.example.json`](multizone-fixture-metadata.example.json);
 the eight-zone fixture should expand the same fields to ranks `0..7`.
 
+For a real prepared fixture, do not hand-edit endpoint IDs. Set
+`ONEFLOW_MZ_FIXTURE_EXPORT_DIR` to a private, shared directory before the
+solver's interface-update task runs. Each rank writes
+`rank-<rank>.json` using the runtime `InterFace` and `FaceTopo` mappings
+(including owned/ghost cell IDs and the configured equation count). After the
+MPI run, merge those shards and run the normal verifier:
+
+```bash
+python3 ci/kunshan/merge-multizone-fixture.py \
+  --shards "$ONEFLOW_MZ_FIXTURE_EXPORT_DIR" \
+  --output "$ONEFLOW_MZ_FIXTURE_EXPORT_DIR/fixture-metadata.json"
+python3 ci/kunshan/verify-multizone-fixture.py \
+  --metadata "$ONEFLOW_MZ_FIXTURE_EXPORT_DIR/fixture-metadata.json" \
+  --expected-ranks 8
+```
+
+The merger rejects missing ranks, duplicate zones, unpaired send/receive
+endpoints, role/count mismatches, and any topology that would require
+guessing from aggregate face counts. Set
+`ONEFLOW_MZ_FIXTURE_EQUATIONS` when the solver is not five-equation Euler;
+`ONEFLOW_MZ_FIXTURE_MEMORY_SPACE` defaults to `HostStaged` and must only be
+set to `DeviceDirect` after a GPU-aware MPI probe has passed.
+
 `lifecycle_*_ms` sums over `repeats`; only datasets recorded with the same
 `repeats` value are comparable (see the erratum in
 `doc/reports/performance/oneflow-euler-performance-20260913.md`).
