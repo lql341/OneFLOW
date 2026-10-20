@@ -102,7 +102,6 @@ struct HipGradientStorage
     const int * cachedBoundaryLeftCell = nullptr;
     const int * cachedBoundaryRightCell = nullptr;
     const int * cachedBoundaryType = nullptr;
-    int cachedBoundaryFaces = -1;
     bool boundaryGeometryCacheValid = false;
     DeviceBuffer< int > boundarySendCell;
     DeviceBuffer< int > boundaryReceiveCell;
