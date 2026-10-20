@@ -108,7 +108,8 @@ if [ -e "$stability_root" ]; then
     echo "Refusing to overwrite existing F2 stability run directory" >&2
     exit 2
 fi
-if [ -z "$fixture_metadata" ] && [ -z "$fixture_export_dir" ]; then
+if [ "$partitioned_case" = 1 ] \
+    && [ -z "$fixture_metadata" ] && [ -z "$fixture_export_dir" ]; then
     fixture_export_dir="$stability_root/fixture-shards"
 fi
 test -r "$rank_utilization_verifier"
