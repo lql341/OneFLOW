@@ -356,6 +356,10 @@ void ExchangeHipInterfaceQ(
 
     BoundaryBufferView send;
     BoundaryBufferView receive;
+    const HipBoundaryEndpointKey sourceEndpointKey{
+        sourceZone, targetZone, 0 };
+    const HipBoundaryEndpointKey targetEndpointKey{
+        targetZone, sourceZone, 0 };
     if ( isSource )
     {
         ZoneState::zid = sourceZone;
@@ -366,7 +370,8 @@ void ExchangeHipInterfaceQ(
             sourceKey, sourceEndpoint, nEquations,
             useDeviceDirect
                 ? BoundaryTransferMode::DeviceDirect
-                : BoundaryTransferMode::HostStaged );
+                : BoundaryTransferMode::HostStaged,
+            sourceEndpointKey );
     }
     if ( isTarget )
     {
@@ -378,7 +383,8 @@ void ExchangeHipInterfaceQ(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
                 ? BoundaryTransferMode::DeviceDirect
-                : BoundaryTransferMode::HostStaged );
+                : BoundaryTransferMode::HostStaged,
+            targetEndpointKey );
     }
 
     const BoundaryTransferMode transferMode = useDeviceDirect
@@ -463,7 +469,8 @@ void ExchangeHipInterfaceQ(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
                 ? BoundaryTransferMode::DeviceDirect
-                : BoundaryTransferMode::HostStaged );
+                : BoundaryTransferMode::HostStaged,
+            targetEndpointKey );
     }
     ZoneState::zid = previousZone;
     (void) context;

@@ -15,13 +15,47 @@ License
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 namespace ONEFLOW
 {
 
 struct PrimitiveFaceStateView;
+
+struct HipBoundaryEndpointKey
+{
+    int localZone = -1;
+    int neighborZone = -1;
+    int ghostLevel = 0;
+
+    bool operator==( const HipBoundaryEndpointKey & other ) const noexcept
+    {
+        return localZone == other.localZone
+            && neighborZone == other.neighborZone
+            && ghostLevel == other.ghostLevel;
+    }
+};
+
+struct HipBoundaryEndpointKeyHash
+{
+    std::size_t operator()(
+        const HipBoundaryEndpointKey & key ) const noexcept;
+};
+
+struct HipBoundaryEndpointStorage
+{
+    DeviceBuffer< int > cellIds;
+    DeviceBuffer< Real > values;
+    std::vector< int > cachedCellIds;
+    std::vector< Real > hostValues;
+    std::uint64_t topologyGeneration = 0;
+    int cellCount = 0;
+    int nEquations = 0;
+    BoundaryEndpointRole role = BoundaryEndpointRole::Unspecified;
+};
 
 // HIP-only storage owned either by a solver/grid Ns3DBackendState or by the
 // compatibility fallback in HipFluxBackend. Keeping this type in the HIP
@@ -103,12 +137,14 @@ struct HipGradientStorage
     const int * cachedBoundaryRightCell = nullptr;
     const int * cachedBoundaryType = nullptr;
     bool boundaryGeometryCacheValid = false;
-    DeviceBuffer< int > boundarySendCell;
-    DeviceBuffer< int > boundaryReceiveCell;
-    DeviceBuffer< Real > boundarySendValues;
-    DeviceBuffer< Real > boundaryReceiveValues;
-    std::vector< Real > hostBoundarySendValues;
-    std::vector< Real > hostBoundaryReceiveValues;
+    std::unordered_map<
+        HipBoundaryEndpointKey,
+        HipBoundaryEndpointStorage,
+        HipBoundaryEndpointKeyHash > boundarySend;
+    std::unordered_map<
+        HipBoundaryEndpointKey,
+        HipBoundaryEndpointStorage,
+        HipBoundaryEndpointKeyHash > boundaryReceive;
     const ReconstructionBoundaryOperation * cachedBoundaryOperationHost =
         nullptr;
     std::size_t cachedBoundaryOperationCount = 0;
@@ -244,6 +280,12 @@ public:
         const BoundaryEndpointMap & endpoint,
         int nEquations,
         BoundaryTransferMode mode );
+    BoundaryBufferView PackBoundary(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode,
+        const HipBoundaryEndpointKey & endpointKey );
     void UploadBoundaryState(
         const void * cacheKey,
         int nCells,
@@ -259,6 +301,12 @@ public:
         const BoundaryEndpointMap & endpoint,
         int nEquations,
         BoundaryTransferMode mode );
+    BoundaryBufferView PrepareBoundaryReceive(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode,
+        const HipBoundaryEndpointKey & endpointKey );
     void UnpackBoundary(
         const void * cacheKey,
         const BoundaryFieldExchangePlan & plan,
@@ -268,6 +316,12 @@ public:
         const BoundaryEndpointMap & endpoint,
         int nEquations,
         BoundaryTransferMode mode );
+    void UnpackBoundary(
+        const void * cacheKey,
+        const BoundaryEndpointMap & endpoint,
+        int nEquations,
+        BoundaryTransferMode mode,
+        const HipBoundaryEndpointKey & endpointKey );
 
     void BindState( const void * cacheKey, Ns3DDeviceState & state );
     void UnbindState( const void * cacheKey ) noexcept;
