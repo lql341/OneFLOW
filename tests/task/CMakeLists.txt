@@ -145,3 +145,26 @@ target_compile_features(boundary_exchange_contract_test PRIVATE cxx_std_20)
 gtest_discover_tests(boundary_exchange_contract_test
   DISCOVERY_MODE PRE_TEST
 )
+
+add_executable(cpu_ownership_synchronization_contract_test
+  CpuOwnershipSynchronizationContractTest.cpp
+  ${PARALLEL_SRC_DIR}/BoundaryExchangeContract.cpp
+  ${PARALLEL_SRC_DIR}/DistributedDomainPlan.cpp
+)
+
+target_include_directories(cpu_ownership_synchronization_contract_test
+  PRIVATE
+    ${PARALLEL_INCLUDE_DIR}
+    ${BASIC_INCLUDE_DIR}
+)
+
+target_link_libraries(cpu_ownership_synchronization_contract_test
+  PRIVATE
+    GTest::gtest_main
+)
+
+target_compile_features(cpu_ownership_synchronization_contract_test PRIVATE cxx_std_20)
+
+gtest_discover_tests(cpu_ownership_synchronization_contract_test
+  DISCOVERY_MODE PRE_TEST
+)

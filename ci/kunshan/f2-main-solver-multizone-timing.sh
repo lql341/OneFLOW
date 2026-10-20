@@ -37,14 +37,30 @@ if ! awk -v value="$cfl" 'BEGIN {
 fi
 
 rank_verifier="${ONEFLOW_MZ_RANK_VERIFIER:-$(dirname "$ONEFLOW_MZ_BINARY")/verify-rank-utilization.py}"
+fixture_verifier="${ONEFLOW_MZ_FIXTURE_VERIFIER:-$(dirname "$0")/verify-multizone-fixture.py}"
 test -d "$ONEFLOW_MZ_SOURCE_CASE"
 test -x "$ONEFLOW_MZ_BINARY"
 test -r "$rank_verifier"
+fixture_metadata="${ONEFLOW_MZ_FIXTURE_METADATA:-${KUNSHAN_MZ_FIXTURE_METADATA:-}}"
+fixture_summary="MULTIZONE_FIXTURE_UNCHECKED metadata=unset"
+if [ -n "$fixture_metadata" ]; then
+    test -r "$fixture_metadata"
+    test -r "$fixture_verifier"
+    fixture_summary="$(
+        python3 "$fixture_verifier" \
+            --metadata "$fixture_metadata" \
+            --expected-ranks "$ranks"
+    )"
+    printf '%s\n' "$fixture_summary"
+fi
 if [ -e "$ONEFLOW_MZ_RUN_ROOT" ]; then
     echo "refusing to overwrite $ONEFLOW_MZ_RUN_ROOT" >&2
     exit 2
 fi
 mkdir -p "$ONEFLOW_MZ_RUN_ROOT"
+printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
+    "${fixture_metadata:-unset}" "$fixture_summary" \
+    > "$ONEFLOW_MZ_RUN_ROOT/fixture-validation.txt"
 
 {
     echo "mode=$mode"
@@ -56,6 +72,8 @@ mkdir -p "$ONEFLOW_MZ_RUN_ROOT"
     echo "cfl=$cfl"
     echo "dcu_count=$([ "$mode" = hip ] && echo 1 || echo 0)"
     echo "ranks_per_dcu=$([ "$mode" = hip ] && echo "$ranks" || echo 0)"
+    echo "fixture_metadata=${fixture_metadata:-unset}"
+    echo "fixture_summary=$fixture_summary"
     echo "nodes=${SLURM_JOB_NUM_NODES:-1}"
     echo "hostlist=${SLURM_JOB_NODELIST:-unknown}"
     echo "mpirun=$(command -v mpirun)"

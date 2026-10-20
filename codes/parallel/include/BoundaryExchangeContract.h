@@ -76,6 +76,36 @@ struct BoundaryFieldExchangePlan
     std::size_t ValueCount() const;
 };
 
+// Backend-neutral description of one directed interface exchange.  The
+// source endpoint must name owned cells and the target endpoint must name
+// ghost cells; transfer code is responsible only for the selected buffers.
+struct BoundaryExchangeContract
+{
+    int sourceZone = -1;
+    int targetZone = -1;
+    int sourceRank = -1;
+    int targetRank = -1;
+    int nEquations = 0;
+    BoundaryEndpointMap source;
+    BoundaryEndpointMap target;
+
+    void Validate() const;
+    std::size_t InterfaceCount() const;
+    std::size_t ValueCount() const;
+};
+
+void ValidateBoundaryBuffer(
+    const BoundaryEndpointMap & endpoint,
+    int nEquations,
+    const BoundaryBufferView & buffer,
+    BoundaryTransferMode mode );
+
+void ValidateBoundaryExchangeBuffers(
+    const BoundaryExchangeContract & contract,
+    const BoundaryBufferView & send,
+    const BoundaryBufferView & receive,
+    BoundaryTransferMode mode );
+
 void PackBoundaryHost(
     const BoundaryEndpointMap & endpoint,
     int nEquations,

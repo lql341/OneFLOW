@@ -227,6 +227,33 @@ void ExchangeHipInterfaceQ(
                 : BoundaryTransferMode::HostStaged );
     }
 
+    const BoundaryTransferMode transferMode = useDeviceDirect
+        ? BoundaryTransferMode::DeviceDirect
+        : BoundaryTransferMode::HostStaged;
+    if ( isSource )
+    {
+        ValidateBoundaryBuffer(
+            sourceEndpoint, nEquations, send, transferMode );
+    }
+    if ( isTarget )
+    {
+        ValidateBoundaryBuffer(
+            targetEndpoint, nEquations, receive, transferMode );
+    }
+    if ( isSource && isTarget )
+    {
+        BoundaryExchangeContract contract;
+        contract.sourceZone = sourceZone;
+        contract.targetZone = targetZone;
+        contract.sourceRank = sourceRank;
+        contract.targetRank = targetRank;
+        contract.nEquations = nEquations;
+        contract.source = sourceEndpoint;
+        contract.target = targetEndpoint;
+        ValidateBoundaryExchangeBuffers(
+            contract, send, receive, transferMode );
+    }
+
     int sendCount = isSource
         ? static_cast< int >( send.valueCount ) : 0;
     int receiveCount = 0;

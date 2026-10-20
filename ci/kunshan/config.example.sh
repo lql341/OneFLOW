@@ -26,6 +26,9 @@ KUNSHAN_MPI_TIMEOUT_SECONDS=180
 # four-rank CPU baseline. It must be a complete OneFLOW test case directory.
 KUNSHAN_MPI4_CASE_ROOT="/dedicated/oneflow-ci/fixtures/m6wingroe_sa_np4"
 KUNSHAN_MPI4_CASE_NAME="m6wingroe_sa_np4"
+# Optional topology manifest for the root 3D multi-zone runners. When set,
+# f2-main-solver-multizone-{trace,timing}.sh validates it before launching MPI.
+# KUNSHAN_MZ_FIXTURE_METADATA="/dedicated/oneflow-ci/fixtures/m6wingroe_sa_np4/fixture-metadata.json"
 
 kunshan_load_environment()
 {

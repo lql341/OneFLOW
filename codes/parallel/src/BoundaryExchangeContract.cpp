@@ -86,6 +86,97 @@ std::size_t BoundaryFieldExchangePlan::ValueCount() const
     return InterfaceCount() * static_cast< std::size_t >( nEquations );
 }
 
+void BoundaryExchangeContract::Validate() const
+{
+    if ( sourceZone < 0 || targetZone < 0
+         || sourceRank < 0 || targetRank < 0 )
+    {
+        throw std::invalid_argument(
+            "boundary exchange contract zone and rank ids must be non-negative" );
+    }
+    if ( sourceZone == targetZone )
+    {
+        throw std::invalid_argument(
+            "boundary exchange contract cannot connect a zone to itself" );
+    }
+    if ( nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "boundary exchange contract equation count must be positive" );
+    }
+    source.Validate();
+    target.Validate();
+    if ( source.role != BoundaryEndpointRole::OwnedCell
+         || target.role != BoundaryEndpointRole::GhostCell )
+    {
+        throw std::invalid_argument(
+            "boundary exchange contract requires owned source and ghost target" );
+    }
+    if ( source.cellIds.size() != target.cellIds.size() )
+    {
+        throw std::invalid_argument(
+            "boundary exchange contract endpoint lengths differ" );
+    }
+}
+
+std::size_t BoundaryExchangeContract::InterfaceCount() const
+{
+    return source.cellIds.size();
+}
+
+std::size_t BoundaryExchangeContract::ValueCount() const
+{
+    return InterfaceCount() * static_cast< std::size_t >( nEquations );
+}
+
+void ValidateBoundaryBuffer(
+    const BoundaryEndpointMap & endpoint,
+    int nEquations,
+    const BoundaryBufferView & buffer,
+    BoundaryTransferMode mode )
+{
+    endpoint.Validate();
+    if ( nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "boundary buffer equation count must be positive" );
+    }
+    const std::size_t expectedValueCount =
+        endpoint.cellIds.size() * static_cast< std::size_t >( nEquations );
+    if ( buffer.valueCount != expectedValueCount )
+    {
+        throw std::invalid_argument(
+            "boundary buffer value count is inconsistent with endpoint" );
+    }
+    if ( expectedValueCount != 0 && buffer.values == nullptr )
+    {
+        throw std::invalid_argument(
+            "non-empty boundary buffer has a null data pointer" );
+    }
+    const BoundaryMemorySpace expectedMemorySpace =
+        mode == BoundaryTransferMode::DeviceDirect
+            ? BoundaryMemorySpace::Device
+            : BoundaryMemorySpace::Host;
+    if ( buffer.memorySpace != expectedMemorySpace )
+    {
+        throw std::invalid_argument(
+            "boundary buffer memory space does not match transfer mode" );
+    }
+}
+
+void ValidateBoundaryExchangeBuffers(
+    const BoundaryExchangeContract & contract,
+    const BoundaryBufferView & send,
+    const BoundaryBufferView & receive,
+    BoundaryTransferMode mode )
+{
+    contract.Validate();
+    ValidateBoundaryBuffer(
+        contract.source, contract.nEquations, send, mode );
+    ValidateBoundaryBuffer(
+        contract.target, contract.nEquations, receive, mode );
+}
+
 void PackBoundaryHost(
     const BoundaryEndpointMap & endpoint,
     int nEquations,

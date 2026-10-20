@@ -31,11 +31,27 @@ test -x "$ONEFLOW_MZ_CPU_BINARY"
 test -x "$ONEFLOW_MZ_HIP_BINARY"
 test -r "$ONEFLOW_MZ_TRACE_VERIFIER"
 test -r "$ONEFLOW_MZ_RANK_VERIFIER"
+fixture_verifier="${ONEFLOW_MZ_FIXTURE_VERIFIER:-$(dirname "$0")/verify-multizone-fixture.py}"
+fixture_metadata="${ONEFLOW_MZ_FIXTURE_METADATA:-${KUNSHAN_MZ_FIXTURE_METADATA:-}}"
+fixture_summary="MULTIZONE_FIXTURE_UNCHECKED metadata=unset"
+if [ -n "$fixture_metadata" ]; then
+    test -r "$fixture_metadata"
+    test -r "$fixture_verifier"
+    fixture_summary="$(
+        python3 "$fixture_verifier" \
+            --metadata "$fixture_metadata" \
+            --expected-ranks "$ranks"
+    )"
+    printf '%s\n' "$fixture_summary"
+fi
 if [ -e "$ONEFLOW_MZ_RUN_ROOT" ]; then
     echo "refusing to overwrite $ONEFLOW_MZ_RUN_ROOT" >&2
     exit 2
 fi
 mkdir -p "$ONEFLOW_MZ_RUN_ROOT"
+printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
+    "${fixture_metadata:-unset}" "$fixture_summary" \
+    > "$ONEFLOW_MZ_RUN_ROOT/fixture-validation.txt"
 
 prepare_case() {
     local case_dir="$1"

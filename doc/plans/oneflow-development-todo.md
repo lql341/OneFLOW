@@ -60,6 +60,37 @@
   buffer 和 host/device memory space 写成明确 contract，再在该 contract 上接 HIP
   ghost synchronization；不能先恢复未经验证的 device gradient/reconstruction。
 
+## 2026-10-20 boundary exchange contract checkpoint
+
+- 在 `codes/parallel` 增加 backend-neutral `BoundaryExchangeContract`，统一描述
+  source/target zone 与 rank、方程数、owned source endpoint 和 ghost target
+  endpoint，并拒绝 self-zone、角色缺失、端点长度不一致等拓扑错误。
+- 增加 `ValidateBoundaryBuffer` 与
+  `ValidateBoundaryExchangeBuffers`：校验 equation-major value count、非空
+  buffer 的 data pointer，以及 `HostStaged`/`DeviceDirect` 对应的
+  host/device memory space。空 interface 允许以空 buffer 安全通过。
+- HIP interface path 在 MPI count exchange 前执行本地 buffer contract；同 rank
+  多 zone 交换额外执行完整 source/target contract。MPI 调度和默认
+  host-staged 行为未改变，parallel 层不依赖 HIP 类型。
+- 轻量 `BoundaryExchangeContractTest` 已覆盖 owned→ghost 合法交换、空接口、
+  错误 memory space 和错误 endpoint role。当前本机没有 `cmake`/CTest，已用
+  `g++ -std=c++20` 编译 parallel contract，并对 `InterfaceTask.cpp` 做语法检查；
+  尚未替代 Kunshan 的 CPU 8-zone ownership/synchronization、HIP contract、
+  3-step trace、50-step stability 或 paired timing 门禁。
+- 新增 `CpuOwnershipSynchronizationContractTest` 轻量 target，独立覆盖
+  `DistributedDomainPlan` 的 self-neighbor skip/empty topology、跨 rank 双向
+  endpoint role、owned→ghost host pack/unpack、空消息 ghost state 不变和非法
+  endpoint。新增 8-zone fixture metadata verifier 及其 Python checks；
+  trace/timing runner 在设置 `ONEFLOW_MZ_FIXTURE_METADATA` 时会在 MPI 启动前强制
+  校验 ranks、zone ownership、endpoint topology、reciprocal pair、equation-major
+  count 和 memory space，并写入 `fixture-validation.txt`。未设置时显式记录
+  `MULTIZONE_FIXTURE_UNCHECKED`，不把旧私有 fixture 误报为 ownership 验证。
+- 下一步：把 8-zone fixture 的 interface face/endpoint map 和 per-rank
+  send/receive buffer 元数据接入可复现 runner；先在 CPU 8-zone 上验证空消息、
+  self-neighbor skip、ordinary/interface/periodic/solid boundary 的 ghost
+  synchronization，再让 HIP path 消费同一 contract。未完成该门禁前继续保持所有
+  多 zone HIP gradient/reconstruction opt-in 关闭。
+
 ## 交接摘要（先读这一段）
 
 **2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`

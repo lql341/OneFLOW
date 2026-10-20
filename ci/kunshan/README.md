@@ -260,6 +260,23 @@ an already partitioned multi-zone fixture, then regenerate the
 `ownerRanks`/interface exchange plan for the requested rank count and verify
 that every rank owns a non-empty zone and writes solver work.
 
+The external fixture can carry a small JSON topology manifest without adding
+the partitioned mesh to Git. Set `ONEFLOW_MZ_FIXTURE_METADATA` when invoking
+`f2-main-solver-multizone-trace.sh` or
+`f2-main-solver-multizone-timing.sh`; once set, the runner requires
+`ci/kunshan/verify-multizone-fixture.py` to accept the manifest before
+launching MPI. The manifest schema is
+`oneflow.multizone.fixture/v1` and records one non-empty zone owner per rank,
+interface endpoints (`OwnedCell` to `GhostCell`), reciprocal neighbor pairs,
+equation-major send/receive counts, and `HostStaged` or `DeviceDirect` memory
+space. The run writes `fixture-validation.txt` alongside its timing/trace
+artifacts. The private config may provide the same path as
+`KUNSHAN_MZ_FIXTURE_METADATA`. Leaving both variables unset is allowed for legacy private fixtures,
+but records `MULTIZONE_FIXTURE_UNCHECKED` and must not be described as an
+ownership/topology validation. A copyable two-zone manifest template is kept
+in [`multizone-fixture-metadata.example.json`](multizone-fixture-metadata.example.json);
+the eight-zone fixture should expand the same fields to ranks `0..7`.
+
 `lifecycle_*_ms` sums over `repeats`; only datasets recorded with the same
 `repeats` value are comparable (see the erratum in
 `doc/reports/performance/oneflow-euler-performance-20260913.md`).
