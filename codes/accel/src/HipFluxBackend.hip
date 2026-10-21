@@ -22,6 +22,7 @@ License
 #include <vector>
 #include <cstdlib>
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 
 namespace ONEFLOW
@@ -1445,20 +1446,36 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     CheckHip( hipGetLastError(), "gradient kernel launch" );
     CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
     if ( ! view.downloadToHost ) return;
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    // One contiguous device->host transfer plus a host-side scatter instead of
+    // 3*neq small transfers with a synchronisation each.  The device layout is
+    // [equation][dimension][cell], so the staging buffer is a straight copy of
+    // the resident gradient block.
     {
-        const int base = equation * 3 * totalCells;
+        ScopedStageTimer timer( "gradient_download" );
+        static thread_local std::vector< Real > staging;
+        const std::size_t totalValues =
+            static_cast< std::size_t >( totalGradient );
+        if ( staging.size() < totalValues ) staging.resize( totalValues );
         AccelRuntime::Instance().Backend().Copy(
-            view.dqdx[ equation ], storage->cellGradient.Data() + base,
-            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
-        AccelRuntime::Instance().Backend().Copy(
-            view.dqdy[ equation ],
-            storage->cellGradient.Data() + base + totalCells,
-            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
-        AccelRuntime::Instance().Backend().Copy(
-            view.dqdz[ equation ],
-            storage->cellGradient.Data() + base + 2 * totalCells,
-            totalCells * sizeof( Real ), AccelCopyKind::DeviceToHost );
+            staging.data(), storage->cellGradient.Data(),
+            totalValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            const std::size_t base =
+                static_cast< std::size_t >( equation ) * 3 * totalCells;
+            std::copy(
+                staging.begin() + base,
+                staging.begin() + base + totalCells,
+                view.dqdx[ equation ] );
+            std::copy(
+                staging.begin() + base + totalCells,
+                staging.begin() + base + 2 * totalCells,
+                view.dqdy[ equation ] );
+            std::copy(
+                staging.begin() + base + 2 * totalCells,
+                staging.begin() + base + 3 * totalCells,
+                view.dqdz[ equation ] );
+        }
     }
 }
 

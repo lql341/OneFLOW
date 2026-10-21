@@ -52,8 +52,22 @@ void LimField::BindFieldsAndAllocFaces(
     limiter = GetFieldPointer< MRField >( grid, limiterName );
 
     this->nEqu = q->GetNEqu();
-    qf1 = std::make_unique< MRField >( this->nEqu, grid->nFaces );
-    qf2 = std::make_unique< MRField >( this->nEqu, grid->nFaces );
+    // Init() runs once per RK stage.  qf1/qf2 are fully overwritten by
+    // GetQlQr()/CalcFaceValue() before every read, so reuse them whenever the
+    // extent still matches instead of reallocating ~9 MB per stage.
+    const HXSize_t nFaces = grid->nFaces;
+    const bool needsAllocation =
+        qf1 == nullptr || qf2 == nullptr
+        || qf1->GetNEqu() != this->nEqu
+        || qf2->GetNEqu() != this->nEqu
+        || this->nEqu <= 0
+        || ( * qf1 )[ 0 ].size() != nFaces
+        || ( * qf2 )[ 0 ].size() != nFaces;
+    if ( needsAllocation )
+    {
+        qf1 = std::make_unique< MRField >( this->nEqu, nFaces );
+        qf2 = std::make_unique< MRField >( this->nEqu, nFaces );
+    }
 }
 
 

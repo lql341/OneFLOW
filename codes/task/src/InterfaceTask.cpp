@@ -246,6 +246,18 @@ void ExchangeHipInterfaceQ(
     const int previousZone = ZoneState::zid;
     const int tagBase =
         700000 + sourceZone * ZoneState::nZones + targetZone;
+    if ( ! ( sourceRank != targetRank
+             && GpuAwareMpiRequested()
+             && GpuAwareMpiConfirmed() ) )
+    {
+        // Host-staged halo: the standard host exchange above already moved the
+        // exchanged values into the host ghost mirror, and
+        // SyncLocalResidentGhostStates() refreshes the state-owned device ghost
+        // from that mirror once per round.  Running a second device
+        // pack/MPI/unpack here would duplicate the same transfer.
+        ZoneState::zid = previousZone;
+        return;
+    }
     UnsGrid * sourceGrid = nullptr;
     UnsGrid * targetGrid = nullptr;
     BoundaryEndpointMap sourceEndpoint;

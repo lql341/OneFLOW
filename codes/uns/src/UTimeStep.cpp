@@ -81,7 +81,10 @@ bool HipTimeStepSupported()
     return runtime.IsInitialized()
         && runtime.Backend().Kind() == AccelBackendKind::HIP
         && SolverState::solverType == NS_SOLVER
-        && ZoneState::nLocal == 1
+        // Multi-zone is supported: the spectral radius reads the resident q
+        // ghost, which the resident-state contract keeps equal to the host
+        // mirror, and the timestep stays device-resident for the following
+        // residual scaling.
         && GridState::gridLevel == 0
         && GridState::nGrids == 1
         && nscom.nEqu == 5
