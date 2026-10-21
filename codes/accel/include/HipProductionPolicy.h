@@ -41,11 +41,18 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
     if ( value != nullptr ) return value[ 0 ] == '1';
     if ( ! HipProductionBackendSelected() ) return false;
 
-    // The fused HIP flux and local boundary path are validated against the
-    // production solver oracle.  Gradient/reconstruction/state update and
-    // resident timestep still require an explicit opt-in until their
-    // multi-stage ordering has a matching CPU trace contract.
-    return std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BATCH" ) == 0;
+    // Stages re-opened by `ONEFLOW_ACCEL_BACKEND=HIP` alone, each with a
+    // target-node trace gate behind it:
+    //   * fused primitive flux/residual (validated single- and multi-zone),
+    //   * the state-owned interface/halo exchange, whose device q ghost
+    //     region is now bound by ResidentStateContract (device/host ghost
+    //     equality verified at 0 difference on the 8-zone fixture),
+    //   * device Green-Gauss gradient, which consumes that resident q.
+    // Everything else stays explicit until it has the same evidence:
+    // reconstruction, state update, boundary and resident timestep.
+    return std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_BATCH" ) == 0
+        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_GRADIENT" ) == 0
+        || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) == 0;
 }
 
 EndNameSpace

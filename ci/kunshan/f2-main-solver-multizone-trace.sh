@@ -122,9 +122,12 @@ run_mode() {
             ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE ONEFLOW_ENABLE_UNS_HIP_BOUNDARY \
             ONEFLOW_ENABLE_UNS_HIP_INTERFACE ONEFLOW_ENABLE_UNS_HIP_TIME_STEP || true
         if [ "$mode" = hip ]; then
+            # Only the backend selector is required: the production policy
+            # enables the stages that have a passing trace gate (fused flux,
+            # resident interface, device gradient).  The legacy stage
+            # variables below remain available to force one stage for
+            # bisection.
             export ONEFLOW_ACCEL_BACKEND=HIP
-            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
-            export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
             if [ "$hip_gradient" = "1" ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
             fi
@@ -151,6 +154,16 @@ run_mode() {
         --expected-ranks "$ranks" \
         --label "$mode" \
         --pattern "$ONEFLOW_MZ_RUN_ROOT/$mode-*.tsv"
+    if [ "$mode" = hip ]; then
+        # A CPU fallback must not be reported as HIP evidence: every rank has
+        # to show a non-zero fused HIP kernel stage.
+        for rank in $(seq 0 $((ranks - 1))); do
+            awk -F'\t' '$1 == "HIP kernel" { seen = 1; if ($2 + 0 > 0) ran = 1 }
+                END { exit !(seen && ran) }' \
+                "$ONEFLOW_MZ_RUN_ROOT/hip-${rank}.tsv" \
+                || { echo "HIP kernel stage missing or zero on rank $rank" >&2; exit 1; }
+        done
+    fi
 }
 
 run_mode cpu "$ONEFLOW_MZ_CPU_BINARY"
