@@ -12,6 +12,12 @@ ranks="${ONEFLOW_MZ_RANKS:-8}"
 steps="${ONEFLOW_MZ_STEPS:-3}"
 cfl="${ONEFLOW_MZ_CFL:-0.01}"
 timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-900}"
+# Stage opt-ins are explicit: the default trace only exercises the fused flux
+# and interface path.  ONEFLOW_MZ_HIP_GRADIENT=1 additionally re-opens the
+# device gradient, and ONEFLOW_MZ_RESIDENT_CONTRACT=1 verifies that the
+# state-owned device q still matches the host mirror before every gradient.
+hip_gradient="${ONEFLOW_MZ_HIP_GRADIENT:-0}"
+resident_contract="${ONEFLOW_MZ_RESIDENT_CONTRACT:-0}"
 
 for name in ranks steps timeout_seconds; do
     value="${!name}"
@@ -119,6 +125,12 @@ run_mode() {
             export ONEFLOW_ACCEL_BACKEND=HIP
             export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
             export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
+            if [ "$hip_gradient" = "1" ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
+            fi
+            if [ "$resident_contract" = "1" ]; then
+                export ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1
+            fi
             export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
             export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
         else
@@ -158,6 +170,26 @@ if [ -n "$fixture_export_dir" ] && [ -z "$fixture_metadata" ]; then
 fi
 run_mode hip "$ONEFLOW_MZ_HIP_BINARY"
 
+resident_summary="RESIDENT_STATE_CONTRACT_UNCHECKED"
+if [ "$resident_contract" = "1" ]; then
+    contract_log="$ONEFLOW_MZ_RUN_ROOT/hip.log"
+    contract_records="$(grep -c 'RESIDENT_STATE_CONTRACT ' "$contract_log" || true)"
+    contract_failures="$(
+        grep -c 'RESIDENT_STATE_CONTRACT .*status=FAIL' "$contract_log" || true
+    )"
+    contract_max_diff="$(
+        grep -o 'max_abs_diff=[^ ]*' "$contract_log" \
+            | cut -d= -f2 | sort -g | tail -1 || true
+    )"
+    resident_summary="RESIDENT_STATE_CONTRACT records=${contract_records} \
+failures=${contract_failures} max_abs_diff=${contract_max_diff:-unknown}"
+    printf '%s\n' "$resident_summary"
+    test "$contract_records" -gt 0
+    test "$contract_failures" -eq 0
+fi
+printf 'resident_contract=%s\n' "${resident_summary}" \
+    >> "$ONEFLOW_MZ_RUN_ROOT/fixture-validation.txt"
+
 trace_pids=()
 for rank in $(seq 0 $((ranks - 1))); do
     python3 "$ONEFLOW_MZ_TRACE_VERIFIER" \
@@ -177,5 +209,6 @@ for rank in $(seq 0 $((ranks - 1))); do
     grep -q '^STAGE_TRACE_PASS ' "$ONEFLOW_MZ_RUN_ROOT/trace-rank-${rank}.txt" || trace_failed=1
 done
 test "$trace_failed" -eq 0
-printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s\n' "$ranks" "$steps" "$cfl" \
+printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s hip_gradient=%s resident_contract=%s\n' \
+    "$ranks" "$steps" "$cfl" "$hip_gradient" "$resident_contract" \
     | tee "$ONEFLOW_MZ_RUN_ROOT/result.txt"

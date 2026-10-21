@@ -475,6 +475,43 @@ void ExchangeHipInterfaceQ(
     ZoneState::zid = previousZone;
     (void) context;
 }
+
+// The host interface exchange is the authoritative host-staged halo path.  A
+// target zone whose ghosts were rewritten there must publish that mutation to
+// the resident-state contract, because the paired HIP unpack is the only
+// device-side writer for those cells.
+void MarkLocalHostGhostsModified( int zone )
+{
+    Grid * gridBase = Zone::GetGrid( zone, GridState::gridLevel );
+    if ( gridBase == nullptr ) return;
+    HipFluxBackend::Shared().NotifyHostGhostStateModified( gridBase );
+}
+
+// Safety net: any ghost mutation the HIP interface path did not cover (for
+// example an exchange skipped by a readiness failure) is repaired here with a
+// single ghost-region upload per zone.  When the device already wrote the
+// exchanged cells this is a no-op.
+void SyncLocalResidentGhostStates()
+{
+    for ( int localZoneIndex = 0;
+          localZoneIndex < ZoneState::nLocal; ++ localZoneIndex )
+    {
+        const int zone = ZoneState::localZid[ localZoneIndex ];
+        Grid * gridBase = Zone::GetGrid( zone, GridState::gridLevel );
+        UnsGrid * grid = gridBase != nullptr && IsUnsGrid( gridBase->type )
+            ? UnsGridCast( gridBase ) : nullptr;
+        if ( grid == nullptr || grid->nBFaces <= 0 ) continue;
+        MRField * q = GetFieldPointer< MRField >( grid, "q" );
+        if ( q == nullptr ) continue;
+        const int nEquations = static_cast< int >( q->GetNEqu() );
+        if ( nEquations < 3 || nEquations > 5 ) continue;
+        const Real * components[ 5 ] = {};
+        for ( int equation = 0; equation < nEquations; ++ equation )
+            components[ equation ] = ( * q )[ equation ].data();
+        HipFluxBackend::Shared().SyncResidentGhostStateFromHost(
+            grid, grid->nCells, grid->nBFaces, nEquations, components );
+    }
+}
 #endif
 
 }
@@ -514,10 +551,27 @@ void CUpdateInterface::Run()
         ownerRanks,
         zoneNeighbors,
         Parallel::GetNProc() );
+#ifdef ONEFLOW_ENABLE_HIP
+    const bool trackResidentHalo = HipProductionBackendSelected();
+#endif
     for ( const BoundaryExchange & exchange : plan.BoundaryExchanges() )
     {
+#ifdef ONEFLOW_ENABLE_HIP
+        if ( trackResidentHalo
+             && Parallel::pid == plan.OwnerRank( exchange.targetZone ) )
+        {
+            // The host exchange below rewrites target ghost cells.  Mark the
+            // mutation per exchange so a successful device unpack clears
+            // exactly that exchange; a skipped exchange stays pending and is
+            // repaired by the safety-net sync at the end of the round.
+            MarkLocalHostGhostsModified( exchange.targetZone );
+        }
+#endif
         this->SwapInterfaceData( plan, exchange );
     }
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( trackResidentHalo ) SyncLocalResidentGhostStates();
+#endif
 }
 
 void CUpdateInterface::SwapInterfaceData(

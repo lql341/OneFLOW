@@ -113,10 +113,13 @@ cmake -S "$ONEFLOW_F2_BUILD_SOURCE_DIR" -B "$ONEFLOW_F2_BUILD_DIR" \
 
 cmake --build "$ONEFLOW_F2_BUILD_DIR" \
     --target OneFLOW OneFLOWHipSmoke oneflow_euler_backend_hip_test \
+             oneflow_hip_resident_state_contract_test \
     --parallel "${ONEFLOW_F2_BUILD_PARALLEL:-8}" 2>&1 | tee "$build_log"
 
 "$ONEFLOW_F2_BUILD_DIR/bin/OneFLOWHipSmoke"
 "$ONEFLOW_F2_BUILD_DIR/bin/oneflow_euler_backend_hip_test"
+# Backend-neutral resident-state generation contract (runs on the CPU).
+"$ONEFLOW_F2_BUILD_DIR/bin/oneflow_hip_resident_state_contract_test"
 
 "$ONEFLOW_F2_BUILD_SOURCE_DIR/ci/kunshan/ctest-nonempty.sh" \
     "$ONEFLOW_F2_BUILD_DIR" -L hardware -R HIP \

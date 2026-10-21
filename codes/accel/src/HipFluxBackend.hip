@@ -20,6 +20,9 @@ License
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <cmath>
+#include <iostream>
 
 namespace ONEFLOW
 {
@@ -1143,6 +1146,170 @@ void HipFluxBackend::UnbindState( const void * cacheKey ) noexcept
     if ( cacheKey != nullptr ) boundStates_.erase( cacheKey );
 }
 
+namespace
+{
+
+bool ResidentContractCheckRequested()
+{
+    const char * value =
+        std::getenv( "ONEFLOW_UNS_HIP_RESIDENT_CONTRACT" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
+int ResidentContractRank()
+{
+    const char * names[] = {
+        "OMPI_COMM_WORLD_RANK", "MV2_COMM_WORLD_RANK", "SLURM_PROCID" };
+    for ( const char * name : names )
+    {
+        const char * value = std::getenv( name );
+        if ( value != nullptr && value[ 0 ] != '\0' )
+            return std::atoi( value );
+    }
+    return 0;
+}
+
+// Consume the resident-state generation contract before a device kernel reads
+// the resident primitive state.  Owned-cell generation changes force a full
+// upload; ghost-only host mutations refresh just the ghost region.
+ResidentStateSync RefreshResidentPrimitiveState(
+    HipGradientStorage & storage,
+    Ns3DDeviceState * owner,
+    const void * ownerToken,
+    std::uint64_t topologyGeneration,
+    std::uint64_t fieldGeneration,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    const Real * const * hostComponents )
+{
+    const int totalCells = nCells + nGhostCells;
+    storage.residentContract.Bind(
+        ownerToken, topologyGeneration, nCells, nGhostCells, nEquations );
+    bool hostPointersChanged = false;
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( hostComponents[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "resident primitive state host component is null" );
+        }
+        if ( storage.cachedStateQ[ equation ] != hostComponents[ equation ] )
+            hostPointersChanged = true;
+    }
+    // Without an owning state there is no observable field generation, so the
+    // original "refresh from the host on every call" fallback is preserved.
+    ResidentStateSync sync = owner == nullptr
+        ? ResidentStateSync::FullField
+        : storage.residentContract.RequiredSync( fieldGeneration );
+    if ( hostPointersChanged ) sync = ResidentStateSync::FullField;
+    if ( sync == ResidentStateSync::FullField )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage.cellState.Data()
+                    + static_cast< std::size_t >( equation ) * totalCells,
+                hostComponents[ equation ],
+                static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+        storage.residentContract.NoteFullFieldSync( fieldGeneration );
+    }
+    else if ( sync == ResidentStateSync::GhostCells )
+    {
+        if ( nGhostCells > 0 )
+        {
+            for ( int equation = 0; equation < nEquations; ++ equation )
+            {
+                AccelRuntime::Instance().Backend().Copy(
+                    storage.cellState.Data()
+                        + static_cast< std::size_t >( equation ) * totalCells
+                        + nCells,
+                    hostComponents[ equation ] + nCells,
+                    static_cast< std::size_t >( nGhostCells ) * sizeof( Real ),
+                    AccelCopyKind::HostToDevice );
+            }
+        }
+        storage.residentContract.NoteGhostSync();
+    }
+    for ( int equation = 0; equation < nEquations; ++ equation )
+        storage.cachedStateQ[ equation ] = hostComponents[ equation ];
+    storage.cachedEquations = nEquations;
+    return sync;
+}
+
+void VerifyResidentPrimitiveState(
+    HipGradientStorage & storage,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    const Real * const * hostComponents,
+    Real tolerance,
+    Real * maxAbsoluteDifference,
+    long * mismatchedValues )
+{
+    const int totalCells = nCells + nGhostCells;
+    Real maximum = 0.0;
+    long mismatches = 0;
+    std::vector< Real > deviceValues(
+        static_cast< std::size_t >( totalCells ) );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        AccelRuntime::Instance().Backend().Copy(
+            deviceValues.data(),
+            storage.cellState.Data()
+                + static_cast< std::size_t >( equation ) * totalCells,
+            static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+            AccelCopyKind::DeviceToHost );
+        const Real * host = hostComponents[ equation ];
+        for ( int cell = 0; cell < totalCells; ++ cell )
+        {
+            const Real difference =
+                std::fabs( deviceValues[ cell ] - host[ cell ] );
+            if ( difference > maximum ) maximum = difference;
+            if ( difference > tolerance ) ++mismatches;
+        }
+    }
+    if ( maxAbsoluteDifference != nullptr )
+        *maxAbsoluteDifference = maximum;
+    if ( mismatchedValues != nullptr ) *mismatchedValues = mismatches;
+}
+
+void ReportResidentStateContract(
+    std::uint64_t topologyGeneration,
+    std::uint64_t fieldGeneration,
+    ResidentStateSync sync,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    long mismatches,
+    Real maximumDifference )
+{
+    static int printed = 0;
+    const bool passed = mismatches == 0;
+    if ( ! passed || printed < 3 )
+    {
+        const char * syncName =
+            sync == ResidentStateSync::FullField ? "full"
+            : sync == ResidentStateSync::GhostCells ? "ghost" : "none";
+        std::cout << "RESIDENT_STATE_CONTRACT rank=" << ResidentContractRank()
+                  << " status=" << ( passed ? "PASS" : "FAIL" )
+                  << " sync=" << syncName
+                  << " topology_generation=" << topologyGeneration
+                  << " field_generation=" << fieldGeneration
+                  << " cells=" << nCells
+                  << " ghost_cells=" << nGhostCells
+                  << " equations=" << nEquations
+                  << " mismatched_values=" << mismatches
+                  << " max_abs_diff=" << maximumDifference
+                  << std::endl;
+        ++printed;
+    }
+}
+
+}
+
 void HipFluxBackend::CalcGradient( const CellGradientView & view )
 {
     ValidateCellGradientView( view );
@@ -1162,47 +1329,29 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
         storage = &hipState->Gradient();
     }
     const int totalCells = view.nCells + view.nGhostCells;
-    const int totalState = view.nEquations * totalCells;
     const int totalGradient = view.nEquations * 3 * totalCells;
-    storage->cellState.Resize( totalState );
+    storage->cellState.Resize( view.nEquations * totalCells );
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
     const std::uint64_t fieldGeneration =
         owner != nullptr ? owner->FieldGeneration() : 0;
-    const bool residentStateMatches =
-        owner != nullptr
-        && storage->residentStateReady
-        && storage->cachedStateOwnerToken == ownerToken
-        && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells
-        && storage->cachedStateFieldGeneration == fieldGeneration;
-    bool residentStateUsable = residentStateMatches;
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
-    {
-        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
-            residentStateUsable = false;
-    }
-    if ( ! residentStateUsable )
-    {
-        for ( int equation = 0; equation < view.nEquations; ++ equation )
-        {
-            AccelRuntime::Instance().Backend().Copy(
-                storage->cellState.Data() + equation * totalCells,
-                view.q[ equation ], totalCells * sizeof( Real ),
-                AccelCopyKind::HostToDevice );
-            storage->cachedStateQ[ equation ] = view.q[ equation ];
-        }
-    }
-    storage->cachedStateOwnerToken = ownerToken;
-    storage->cachedStateCells = view.nCells;
-    storage->cachedStateGhostCells = view.nGhostCells;
-    storage->cachedStateFieldGeneration = fieldGeneration;
-    // Only an owned state has a generation contract that can detect host
-    // field changes between calls.  Preserve the original fallback behavior
-    // of forcing the next gradient call to refresh q from the host.
-    storage->residentStateReady = owner != nullptr;
     const std::uint64_t topologyGeneration =
         owner != nullptr ? owner->TopologyGeneration() : 0;
+    const ResidentStateSync sync = RefreshResidentPrimitiveState(
+        * storage, owner, ownerToken, topologyGeneration, fieldGeneration,
+        view.nCells, view.nGhostCells, view.nEquations, view.q );
+    if ( owner != nullptr && ResidentContractCheckRequested() )
+    {
+        Real maximumDifference = 0.0;
+        long mismatches = 0;
+        VerifyResidentPrimitiveState(
+            * storage, view.nCells, view.nGhostCells, view.nEquations,
+            view.q, 0.0, & maximumDifference, & mismatches );
+        ReportResidentStateContract(
+            topologyGeneration, fieldGeneration, sync, view.nCells,
+            view.nGhostCells, view.nEquations, mismatches,
+            maximumDifference );
+    }
     const bool cacheMatches = storage->geometryCacheValid
         && storage->cachedOwnerToken == ownerToken
         && storage->cachedTopologyGeneration == topologyGeneration
@@ -1339,38 +1488,37 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
     const std::uint64_t fieldGeneration =
         owner != nullptr ? owner->FieldGeneration() : 0;
-    bool residentStateUsable =
-        view.preferResidentState
-        && storage->residentStateReady
-        && storage->cachedStateOwnerToken == ownerToken
-        && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells
-        && storage->cachedStateFieldGeneration == fieldGeneration;
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    const std::uint64_t topologyGeneration =
+        owner != nullptr ? owner->TopologyGeneration() : 0;
+    // A resident timestep may only reuse q when the generation/ghost contract
+    // still matches; otherwise refresh through the same path as gradient so
+    // the device never fabricates a timestep from stale halo values.
+    if ( view.preferResidentState )
     {
-        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
-            residentStateUsable = false;
+        RefreshResidentPrimitiveState(
+            * storage, owner, ownerToken, topologyGeneration,
+            fieldGeneration, view.nCells, view.nGhostCells,
+            view.nEquations, view.q );
     }
-    if ( ! residentStateUsable )
+    else
     {
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
-                storage->cellState.Data() + equation * totalCells,
-                view.q[ equation ], totalCells * sizeof( Real ),
+                storage->cellState.Data()
+                    + static_cast< std::size_t >( equation ) * totalCells,
+                view.q[ equation ],
+                static_cast< std::size_t >( totalCells ) * sizeof( Real ),
                 AccelCopyKind::HostToDevice );
+            storage->cachedStateQ[ equation ] = view.q[ equation ];
         }
+        storage->residentContract.Bind(
+            ownerToken, topologyGeneration, view.nCells,
+            view.nGhostCells, view.nEquations );
+        storage->residentContract.NoteFullFieldSync( fieldGeneration );
+        storage->cachedEquations = view.nEquations;
     }
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
-        storage->cachedStateQ[ equation ] = view.q[ equation ];
-    storage->cachedStateOwnerToken = ownerToken;
-    storage->cachedStateCells = view.nCells;
-    storage->cachedStateGhostCells = view.nGhostCells;
-    storage->cachedStateFieldGeneration = fieldGeneration;
-    storage->residentStateReady = true;
 
-    const std::uint64_t topologyGeneration =
-        owner != nullptr ? owner->TopologyGeneration() : 0;
     const bool geometryMatches =
         storage->timeStepGeometryCacheValid
         && storage->cachedOwnerToken == ownerToken
@@ -1507,39 +1655,36 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
     const std::uint64_t fieldGeneration =
         owner != nullptr ? owner->FieldGeneration() : 0;
-    bool residentStateUsable =
-        view.preferResidentState
-        && storage->residentStateReady
-        && storage->cachedStateOwnerToken == ownerToken
-        && storage->cachedStateCells == view.nCells
-        && storage->cachedStateGhostCells == view.nGhostCells
-        && storage->cachedStateFieldGeneration == fieldGeneration;
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    const std::uint64_t topologyGeneration =
+        owner != nullptr ? owner->TopologyGeneration() : 0;
+    // The device boundary model rewrites ghost cells itself.  It may reuse the
+    // resident q only while the generation/ghost contract says it is current.
+    if ( view.preferResidentState )
     {
-        if ( storage->cachedStateQ[ equation ] != view.q[ equation ] )
-            residentStateUsable = false;
+        RefreshResidentPrimitiveState(
+            * storage, owner, ownerToken, topologyGeneration,
+            fieldGeneration, view.nCells, view.nGhostCells,
+            view.nEquations, view.q );
     }
-    if ( ! residentStateUsable )
+    else
     {
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             AccelRuntime::Instance().Backend().Copy(
-                storage->cellState.Data() + equation * totalCells,
-                view.q[ equation ], totalCells * sizeof( Real ),
+                storage->cellState.Data()
+                    + static_cast< std::size_t >( equation ) * totalCells,
+                view.q[ equation ],
+                static_cast< std::size_t >( totalCells ) * sizeof( Real ),
                 AccelCopyKind::HostToDevice );
+            storage->cachedStateQ[ equation ] = view.q[ equation ];
         }
+        storage->residentContract.Bind(
+            ownerToken, topologyGeneration, view.nCells,
+            view.nGhostCells, view.nEquations );
+        storage->residentContract.NoteFullFieldSync( fieldGeneration );
+        storage->cachedEquations = view.nEquations;
     }
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
-    {
-        storage->cachedStateQ[ equation ] = view.q[ equation ];
-    }
-    storage->cachedStateOwnerToken = ownerToken;
-    storage->cachedStateCells = view.nCells;
-    storage->cachedStateGhostCells = view.nGhostCells;
-    storage->cachedStateFieldGeneration = fieldGeneration;
 
-    const std::uint64_t topologyGeneration = owner != nullptr
-        ? owner->TopologyGeneration() : 0;
     const bool boundaryGeometryMatches =
         storage->boundaryGeometryCacheValid
         && storage->cachedBoundaryOwnerToken == ownerToken
@@ -1624,7 +1769,9 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
                 AccelCopyKind::DeviceToHost );
         }
     }
-    storage->residentStateReady = true;
+    // The device boundary kernel wrote the ghost cells and they were mirrored
+    // to the host, so both sides now reflect the same ghost epoch.
+    storage->residentContract.NoteDeviceGhostUpdate();
 }
 
 
@@ -2008,9 +2155,19 @@ void HipFluxBackend::UpdatePrimitiveState(
         }
     }
     owner->MarkFieldChanged();
-    storage.cachedStateFieldGeneration = owner->FieldGeneration();
     storage.residualValid = false;
-    storage.residentStateReady = view.retainResidentState;
+    // The contract may only claim "device matches host" when the owned-cell
+    // mirror was actually refreshed and the solver is not about to write the
+    // host state itself.  Otherwise force a full refresh on the next read.
+    if ( view.retainResidentState && downloadToHost )
+    {
+        storage.residentContract.NoteDeviceFieldUpdate(
+            owner->FieldGeneration() );
+    }
+    else
+    {
+        storage.residentContract.Invalidate();
+    }
 }
 
 BoundaryBufferView HipFluxBackend::PackBoundary(
@@ -2063,8 +2220,9 @@ BoundaryBufferView HipFluxBackend::PackBoundary(
             "bound HIP boundary pack state is not HIP-owned" );
     }
     HipGradientStorage & storage = hipState->Gradient();
-    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
-    if ( ! storage.residentStateReady
+    const int cellCount = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( ! storage.residentContract.Resident()
          || cellCount != endpoint.cellCount
          || binding->second->problem.nEquations != nEquations )
     {
@@ -2168,16 +2326,22 @@ void HipFluxBackend::UploadBoundaryState(
     }
     HipGradientStorage & storage = hipState->Gradient();
     const int totalCells = nCells + nGhostCells;
-    bool sameResidentState =
-        storage.residentStateReady
-        && storage.cachedStateOwnerToken == binding->second->OwnerToken()
-        && storage.cachedCells == nCells
-        && storage.cachedGhostCells == nGhostCells
-        && storage.cachedEquations == nEquations
-        && storage.cachedStateFieldGeneration
-            == binding->second->FieldGeneration();
     storage.cellState.Resize(
         static_cast< std::size_t >( nEquations ) * totalCells );
+    const void * ownerToken = binding->second->OwnerToken();
+    const std::uint64_t fieldGeneration =
+        binding->second->FieldGeneration();
+    const std::uint64_t topologyGeneration =
+        binding->second->TopologyGeneration();
+    // Packing only reads owned cells, so a pending ghost-only refresh does not
+    // force a full upload here.  A changed owned-cell generation or a new
+    // binding does.
+    bool sameResidentState =
+        storage.residentContract.Matches(
+            ownerToken, topologyGeneration, nCells, nGhostCells,
+            nEquations )
+        && storage.residentContract.Resident()
+        && storage.residentContract.FieldGeneration() == fieldGeneration;
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         if ( components[ equation ] == nullptr )
@@ -2205,14 +2369,12 @@ void HipFluxBackend::UploadBoundaryState(
             AccelCopyKind::HostToDevice );
         storage.cachedStateQ[ equation ] = components[ equation ];
     }
+    storage.residentContract.Bind(
+        ownerToken, topologyGeneration, nCells, nGhostCells, nEquations );
+    storage.residentContract.NoteFullFieldSync( fieldGeneration );
     storage.cachedCells = nCells;
     storage.cachedGhostCells = nGhostCells;
     storage.cachedEquations = nEquations;
-    storage.cachedStateCells = nCells;
-    storage.cachedStateGhostCells = nGhostCells;
-    storage.cachedStateOwnerToken = binding->second->OwnerToken();
-    storage.cachedStateFieldGeneration = binding->second->FieldGeneration();
-    storage.residentStateReady = true;
 }
 
 BoundaryBufferView HipFluxBackend::PrepareBoundaryReceive(
@@ -2265,8 +2427,9 @@ BoundaryBufferView HipFluxBackend::PrepareBoundaryReceive(
             "bound HIP boundary receive state is not HIP-owned" );
     }
     HipGradientStorage & storage = hipState->Gradient();
-    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
-    if ( ! storage.residentStateReady
+    const int cellCount = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( ! storage.residentContract.Resident()
          || cellCount != endpoint.cellCount
          || binding->second->problem.nEquations != nEquations )
     {
@@ -2370,7 +2533,8 @@ void HipFluxBackend::UnpackBoundary(
             "bound HIP boundary unpack state is not HIP-owned" );
     }
     HipGradientStorage & storage = hipState->Gradient();
-    const int cellCount = storage.cachedCells + storage.cachedGhostCells;
+    const int cellCount = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
     const std::size_t valueCount =
         endpoint.cellIds.size() * static_cast< std::size_t >( nEquations );
     const auto boundaryIter =
@@ -2381,7 +2545,7 @@ void HipFluxBackend::UnpackBoundary(
             "HIP boundary unpack has no persistent receive endpoint" );
     }
     HipBoundaryEndpointStorage & boundary = boundaryIter->second;
-    if ( ! storage.residentStateReady
+    if ( ! storage.residentContract.Resident()
          || cellCount != endpoint.cellCount
          || binding->second->problem.nEquations != nEquations
          || boundary.topologyGeneration
@@ -2427,6 +2591,125 @@ void HipFluxBackend::UnpackBoundary(
             hipDeviceSynchronize(),
             "boundary unpack kernel synchronize" );
     }
+    // The paired host exchange wrote the same ghost cells, and those values
+    // were just received into the state-owned device q.  The ghost epoch is now
+    // current for this endpoint; any host mutation that was not covered by a
+    // paired exchange leaves the pending flag set and is repaired by the next
+    // contract sync.
+    storage.residentContract.NoteDeviceGhostUpdate();
+}
+
+void HipFluxBackend::NotifyHostFieldStateModified( const void * cacheKey )
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return;
+    // Owned cells changed outside the device path: bump the owner generation
+    // so the next device consumer performs a full upload.
+    binding->second->MarkFieldChanged();
+}
+
+void HipFluxBackend::NotifyHostGhostStateModified( const void * cacheKey )
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return;
+    hipState->Gradient().residentContract.NoteHostGhostMutation();
+}
+
+bool HipFluxBackend::SyncResidentGhostStateFromHost(
+    const void * cacheKey,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    const Real * const * components )
+{
+    if ( cacheKey == nullptr || nCells <= 0 || nGhostCells < 0
+         || nEquations <= 0 || components == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid HIP resident ghost sync request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return false;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return false;
+    HipGradientStorage & storage = hipState->Gradient();
+    ResidentStateContract & contract = storage.residentContract;
+    if ( ! contract.Matches(
+             binding->second->OwnerToken(),
+             binding->second->TopologyGeneration(),
+             nCells, nGhostCells, nEquations ) )
+    {
+        return false;
+    }
+    if ( ! contract.HostGhostPending() ) return true;
+    if ( nGhostCells == 0 )
+    {
+        contract.NoteGhostSync();
+        return true;
+    }
+
+    const int totalCells = nCells + nGhostCells;
+    if ( storage.cellState.Size()
+         < static_cast< std::size_t >( nEquations ) * totalCells )
+    {
+        return false;
+    }
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( components[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "HIP resident ghost sync component is null" );
+        }
+        AccelRuntime::Instance().Backend().Copy(
+            storage.cellState.Data()
+                + static_cast< std::size_t >( equation ) * totalCells
+                + nCells,
+            components[ equation ] + nCells,
+            static_cast< std::size_t >( nGhostCells ) * sizeof( Real ),
+            AccelCopyKind::HostToDevice );
+        storage.cachedStateQ[ equation ] = components[ equation ];
+    }
+    contract.NoteGhostSync();
+    return true;
+}
+
+bool HipFluxBackend::VerifyResidentStateAgainstHost(
+    const void * cacheKey,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    const Real * const * components,
+    Real tolerance,
+    Real * maxAbsoluteDifference,
+    long * mismatchedValues )
+{
+    if ( maxAbsoluteDifference != nullptr ) *maxAbsoluteDifference = 0.0;
+    if ( mismatchedValues != nullptr ) *mismatchedValues = 0;
+    if ( cacheKey == nullptr || nCells <= 0 || nGhostCells < 0
+         || nEquations <= 0 || components == nullptr )
+    {
+        return false;
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return false;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return false;
+    HipGradientStorage & storage = hipState->Gradient();
+    if ( storage.cellState.Size()
+         < static_cast< std::size_t >( nCells + nGhostCells ) * nEquations )
+    {
+        return false;
+    }
+    VerifyResidentPrimitiveState(
+        storage, nCells, nGhostCells, nEquations, components, tolerance,
+        maxAbsoluteDifference, mismatchedValues );
+    return true;
 }
 
 HipFluxBackend & HipFluxBackend::Shared()

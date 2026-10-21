@@ -33,7 +33,10 @@ public:
     ~UNsGrad();
 public:
     void Init() override;
-    void CalcGradHip();
+    // downloadToHost is a capability decision, not an environment guess:
+    // the caller knows whether a device reconstruction consumer will read the
+    // resident gradient or the host MRField mirror.
+    void CalcGradHip( bool downloadToHost );
 };
 
 class UTGrad : public Grad

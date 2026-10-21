@@ -237,7 +237,7 @@ void UNsInvFlux::CalcInvFace()
     { ScopedStageTimer timer( "gradient" );
         uns_grad.Init();
         if ( this->UseHipGradient() )
-            uns_grad.CalcGradHip();
+            uns_grad.CalcGradHip( ! this->UseHipDeviceReconstruction() );
         else
             uns_grad.CalcGrad();
     }
@@ -478,12 +478,21 @@ bool UNsInvFlux::UseHipGradient() const
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires inviscid mode" );
     }
-    // Cross-zone gradient ownership still needs the resident halo map.  Keep
-    // the production auto policy on the verified single-zone path until the
-    // device halo exchange is enabled for this stage.
-    if ( ZoneState::nZones > 1
-         && ! HipProductionFeatureExplicitlyEnabled( feature ) )
-        return false;
+    // Cross-zone gradient needs the resident halo contract: the interface
+    // exchange must publish neighbor owned-cell values into the state-owned
+    // device q ghost region, and the resident state generation contract must
+    // keep host/device ghosts identical.  Without that interface path the
+    // device gradient would read stale halo values.
+    if ( ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 )
+         && ! HipProductionFeatureEnabled(
+                "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) )
+    {
+        if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
+            return false;
+        throw std::runtime_error(
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 in a multi-zone domain "
+            "requires ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1" );
+    }
     return true;
 }
 

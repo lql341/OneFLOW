@@ -168,6 +168,20 @@ gtest_discover_tests(oneflow_euler_runge_kutta_capability_test DISCOVERY_MODE PR
 # node, configure with CMAKE_HIP_COMPILER and CMAKE_HIP_ARCHITECTURES, then the
 # same target is discovered by the root CTest tree with the `HIP.` prefix and
 # `hip`/`dcu` labels.
+# The resident-state generation/ownership contract is backend-neutral and
+# runs without a DCU.  It gates the HIP production path's device/host ghost
+# epoch bookkeeping, so it stays in the CPU test set.
+add_executable(oneflow_hip_resident_state_contract_test
+  ${CMAKE_SOURCE_DIR}/tests/hip_resident_state_contract_test.cpp)
+target_include_directories(oneflow_hip_resident_state_contract_test PRIVATE
+  ${CMAKE_SOURCE_DIR}/codes/accel/include
+  ${CMAKE_SOURCE_DIR}/codes/basic/include
+  ${CMAKE_SOURCE_DIR}/codes/project/include)
+target_link_libraries(oneflow_hip_resident_state_contract_test PRIVATE
+  GTest::gtest_main)
+gtest_discover_tests(oneflow_hip_resident_state_contract_test
+  DISCOVERY_MODE PRE_TEST)
+
 if (ONEFLOW_ENABLE_HIP_TESTS)
   if (NOT CMAKE_HIP_ARCHITECTURES)
     if (ONEFLOW_HIP_ARCHITECTURES)

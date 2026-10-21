@@ -244,6 +244,17 @@ void UNsUpdate::UpdateFlowField( int solverType )
         this->UpdateFlowFieldValue();
     }
 
+    // The host RK update rewrote owned cells of the host q mirror.  Publish
+    // that mutation through the resident-state generation contract so the next
+    // device consumer cannot reuse a stale resident primitive state.
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( HipProductionBackendSelected() )
+    {
+        HipFluxBackend::Shared().NotifyHostFieldStateModified(
+            Zone::GetUnsGrid() );
+    }
+#endif
+
     this->DumpUpdatedStateTrace();
 }
 

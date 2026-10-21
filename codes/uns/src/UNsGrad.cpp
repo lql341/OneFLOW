@@ -80,7 +80,7 @@ void UNsGrad::Init()
     this->istore = 1;
 }
 
-void UNsGrad::CalcGradHip()
+void UNsGrad::CalcGradHip( bool downloadToHost )
 {
 #ifdef ONEFLOW_ENABLE_HIP
     if ( q == nullptr || dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
@@ -108,9 +108,7 @@ void UNsGrad::CalcGradHip()
     view.leftCell = ug.lcf->data();
     view.rightCell = ug.rcf->data();
     view.cacheKey = grid;
-    view.downloadToHost =
-        ! HipProductionFeatureEnabled(
-            "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
+    view.downloadToHost = downloadToHost;
     for ( int equation = 0; equation < nEqu; ++ equation )
     {
         view.q[ equation ] = ( * q )[ equation ].data();

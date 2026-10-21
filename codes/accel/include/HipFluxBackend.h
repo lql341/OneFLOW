@@ -12,6 +12,7 @@ License
 #include "BoundaryExchangeContract.h"
 #include "DeviceBuffer.h"
 #include "EulerDomain.h"
+#include "ResidentStateContract.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -169,17 +170,13 @@ struct HipGradientStorage
     bool residentTimeStepReady = false;
     // Generation of the reconstruction metadata/field view.
     std::uint64_t cachedFieldGeneration = 0;
-    // Generation of the resident primitive state in cellState.  This is
-    // separate because a state update changes q without changing topology or
-    // the host view addresses.
-    std::uint64_t cachedStateFieldGeneration = 0;
+    // Single source of truth for "is the resident q current, and for which
+    // owner/generation".  Ghost-only host mutations are tracked separately so
+    // an interface round trip does not force a full field upload.
+    ResidentStateContract residentContract;
     bool boundaryMaskValid = false;
     bool residualValid = false;
-    bool residentStateReady = false;
-    const void * cachedStateOwnerToken = nullptr;
     const Real * cachedStateQ[ 5 ] = {};
-    int cachedStateCells = 0;
-    int cachedStateGhostCells = -1;
     // Cache metadata for the bound-state host-staged primitive path. The
     // unbound direct/smoke path keeps using HipFluxBackend's fallback cache.
     const void * cachedFluxOwnerToken = nullptr;
@@ -325,6 +322,37 @@ public:
 
     void BindState( const void * cacheKey, Ns3DDeviceState & state );
     void UnbindState( const void * cacheKey ) noexcept;
+
+    // --- Resident state ownership contract -------------------------------
+    // The solver calls these when it writes the host mirror outside the
+    // device path.  Owned-cell writes invalidate the whole resident field;
+    // ghost writes only invalidate the ghost region.
+    void NotifyHostFieldStateModified( const void * cacheKey );
+    void NotifyHostGhostStateModified( const void * cacheKey );
+
+    // Refresh the ghost region of the state-owned device q from the host
+    // mirror when (and only when) the contract says it is stale.  This is the
+    // host-staged halo binding: the exchanged host ghost remains the transfer
+    // source of truth, while the device state owns the resident copy.
+    bool SyncResidentGhostStateFromHost(
+        const void * cacheKey,
+        int nCells,
+        int nGhostCells,
+        int nEquations,
+        const Real * const * components );
+
+    // Diagnostic contract check: compare the complete resident primitive
+    // state (owned + ghost cells) against the host mirror.  Returns false when
+    // the grid has no bound resident state.
+    bool VerifyResidentStateAgainstHost(
+        const void * cacheKey,
+        int nCells,
+        int nGhostCells,
+        int nEquations,
+        const Real * const * components,
+        Real tolerance,
+        Real * maxAbsoluteDifference,
+        long * mismatchedValues );
 
 private:
     DeviceBuffer< Real > qLeft_;

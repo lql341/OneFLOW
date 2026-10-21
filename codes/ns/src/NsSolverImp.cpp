@@ -39,6 +39,7 @@ License
 #include "TurbPlate.h"
 #include "SolverRegister.h"
 #include "DataBase.h"
+#include "FieldWrap.h"
 #include "StageProfiler.h"
 #include "AccelRuntime.h"
 #include "SolverState.h"
@@ -112,6 +113,32 @@ bool HipBoundarySupported()
     return true;
 #endif
 }
+
+#ifdef ONEFLOW_ENABLE_HIP
+void SyncHipBoundaryGhostFromHost()
+{
+    UnsGrid * grid = Zone::GetUnsGrid();
+    if ( grid == nullptr ) return;
+    MRField * q = GetFieldPointer< MRField >( grid, "q" );
+    if ( q == nullptr ) return;
+    const int nEquations = static_cast< int >( q->GetNEqu() );
+    if ( nEquations < 3 || nEquations > 5 ) return;
+    const int nGhostCells = grid->nBFaces;
+    if ( nGhostCells <= 0 ) return;
+    const Real * components[ 5 ] = {};
+    for ( int equation = 0; equation < nEquations; ++ equation )
+        components[ equation ] = ( * q )[ equation ].data();
+
+    HipFluxBackend & backend = HipFluxBackend::Shared();
+    // The host boundary model owns the physical ghost update.  Publish the
+    // mutation and, when the resident ghost epoch is stale, refresh only the
+    // ghost region of the state-owned device q.  This keeps the device ghost
+    // bit-identical to the host ghost without re-uploading the whole field.
+    backend.NotifyHostGhostStateModified( grid );
+    backend.SyncResidentGhostStateFromHost(
+        grid, grid->nCells, nGhostCells, nEquations, components );
+}
+#endif
 
 void CalcHipBoundary()
 {
@@ -233,6 +260,9 @@ void NsCalcBoundary( StringField & data )
     {
         ScopedStageTimer timer( "boundary_bc" );
         NsCalcBc();
+#ifdef ONEFLOW_ENABLE_HIP
+        if ( HipBackendSelected() ) SyncHipBoundaryGhostFromHost();
+#endif
     }
     {
         ScopedStageTimer timer( "boundary_gamma_ghost" );
