@@ -88,8 +88,10 @@ bool HipBoundarySupported()
     if ( ! runtime.IsInitialized()
          || runtime.Backend().Kind() != AccelBackendKind::HIP )
         return false;
-    if ( ZoneState::nZones != 1 || ZoneState::nLocal != 1 )
-        return false;
+    // Multi-zone is allowed: the device boundary kernel skips the BC types
+    // that an external halo exchange owns (INTERFACE -1, PERIODIC 99,
+    // OVERSET 1000), so interface ghosts stay owned by the interface contract
+    // while physical boundary ghosts are evaluated on the device.
     if ( SolverState::solverType != NS_SOLVER || nscom.nEqu != 5
          || vis_model.vismodel != 0 || ctrl.ilim != 0 )
         return false;

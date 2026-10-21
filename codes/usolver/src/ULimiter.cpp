@@ -33,6 +33,8 @@ License
 #include "BcRecord.h"
 #include "Iteration.h"
 
+#include <algorithm>
+
 BeginNameSpace( ONEFLOW )
 
 void LimField::BindFieldsAndAllocFaces(
@@ -355,6 +357,21 @@ void Limiter::CalcLimiter()
 {
     ug.Init();
     limf->Init();
+
+    if ( limflag == ILMT_NO )
+    {
+        // No-limiter mode must leave phi == 1 for every cell and equation, and
+        // CalcLimiterScalar() performs no face traversal in that mode anyway.
+        // Fill the field directly instead of allocating and releasing the
+        // min/max scratch pair once per equation; the values are identical
+        // (exactly one, no arithmetic), so the CPU oracle is unchanged.
+        for ( int iEqu = 0; iEqu < limf->nEqu; ++ iEqu )
+        {
+            RealField & limiterField = ( * limf->limiter )[ iEqu ];
+            std::fill( limiterField.begin(), limiterField.end(), one );
+        }
+        return;
+    }
 
     // Allocate limiter state (owned).
     lim->minvf = std::make_unique<RealField>( ug.nTCell );
