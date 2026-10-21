@@ -336,8 +336,6 @@ void UNsInvFlux::CalcInvFace()
         view.densityComponent = 0;
         view.pressureComponent = nEquations == 5 ? 4 : 2;
         view.hasSolidBoundary = hipBoundaryHasSolid;
-        view.syncGradientGhostsFromHost =
-            ZoneState::nZones > 1 || ZoneState::nLocal > 1;
         view.ownerToken = grid;
         view.cacheKey = grid;
         view.topologyGeneration = 1;
@@ -505,11 +503,13 @@ bool UNsInvFlux::UseHipDeviceReconstruction() const
         return false;
     if ( ! this->UseHipGradient() ) return false;
     // A partitioned multi-zone grid also has cross-rank interface ghosts. The
-    // resident q ghost is supplied by the interface exchange contract, but the
-    // ghost *gradient* at Preserve faces comes from the neighbor zone and is
-    // exchanged by Grad::SwapBcGrad on the host.  The reconstruction view
-    // therefore refreshes the device ghost gradient from the host mirror in
-    // that case, and the interface contract must be active.
+    // resident q ghost is supplied by the interface exchange contract
+    // (ResidentStateContract guarantees device == host).  The ghost gradient
+    // used for Preserve faces is the one the state-owned gradient kernel
+    // produced, which copies the owner-cell gradient into the ghost exactly
+    // like CalcGradGGCellWeight.  The host MRField gradient mirror is not
+    // refreshed while the gradient stays resident, so it must never be
+    // uploaded into the device ghost; the device path is self-consistent.
     if ( ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 )
          && ! HipProductionFeatureEnabled(
                 "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) )

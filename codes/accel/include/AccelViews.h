@@ -411,13 +411,6 @@ struct CellFaceReconstructionView
     int densityComponent = 0;
     int pressureComponent = 4;
     bool hasSolidBoundary = false;
-    // A cross-zone gradient halo is owned by the interface exchange, which
-    // runs on the host for the host-staged path.  When the solver has already
-    // applied that exchange to the host gradient mirror, the backend must
-    // refresh the device ghost gradient before it reconstructs interface
-    // faces; otherwise the ghost side of a Preserve face would use the local
-    // owner gradient instead of the neighbor's.
-    bool syncGradientGhostsFromHost = false;
     const void * ownerToken = nullptr;
     std::uint64_t topologyGeneration = 0;
     std::uint64_t fieldGeneration = 0;
