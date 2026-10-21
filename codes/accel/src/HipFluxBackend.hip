@@ -1821,6 +1821,32 @@ void HipFluxBackend::ReconstructFaceValues(
     const int totalCells = view.nCells + view.nGhostCells;
     const int totalFaces = view.nFaces;
     const int totalValues = view.nEquations * totalFaces;
+    if ( view.syncGradientGhostsFromHost && view.nGhostCells > 0 )
+    {
+        // Cross-zone interface ghosts: the host mirror holds the exchanged
+        // neighbor gradient after Grad::SwapBcGrad.  Refresh only the ghost
+        // slice of the state-owned device gradient (three components per
+        // equation) before reconstructing interface faces.
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            const std::size_t base =
+                static_cast< std::size_t >( equation ) * 3 * totalCells;
+            const Real * hostGradient[ 3 ] = {
+                view.dqdx[ equation ], view.dqdy[ equation ],
+                view.dqdz[ equation ] };
+            for ( int component = 0; component < 3; ++ component )
+            {
+                AccelRuntime::Instance().Backend().Copy(
+                    storage->cellGradient.Data() + base
+                        + static_cast< std::size_t >( component ) * totalCells
+                        + view.nCells,
+                    hostGradient[ component ] + view.nCells,
+                    static_cast< std::size_t >( view.nGhostCells )
+                        * sizeof( Real ),
+                    AccelCopyKind::HostToDevice );
+            }
+        }
+    }
     storage->qf1.Resize( totalValues );
     storage->qf2.Resize( totalValues );
     const bool operationChanged =

@@ -336,6 +336,8 @@ void UNsInvFlux::CalcInvFace()
         view.densityComponent = 0;
         view.pressureComponent = nEquations == 5 ? 4 : 2;
         view.hasSolidBoundary = hipBoundaryHasSolid;
+        view.syncGradientGhostsFromHost =
+            ZoneState::nZones > 1 || ZoneState::nLocal > 1;
         view.ownerToken = grid;
         view.cacheKey = grid;
         view.topologyGeneration = 1;
@@ -502,14 +504,18 @@ bool UNsInvFlux::UseHipDeviceReconstruction() const
              "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" ) )
         return false;
     if ( ! this->UseHipGradient() ) return false;
-    // The device reconstruction contract currently assumes that every
-    // boundary ghost is covered by the local boundary kernel.  A partitioned
-    // multi-zone grid also has cross-rank interface ghosts; until the
-    // boundary/interface exchange path supplies an explicit ghost map, keep
-    // reconstruction on the host so HIP cannot silently consume stale
-    // interface or physical-boundary values.
-    if ( ZoneState::nZones > 1 )
+    // A partitioned multi-zone grid also has cross-rank interface ghosts. The
+    // resident q ghost is supplied by the interface exchange contract, but the
+    // ghost *gradient* at Preserve faces comes from the neighbor zone and is
+    // exchanged by Grad::SwapBcGrad on the host.  The reconstruction view
+    // therefore refreshes the device ghost gradient from the host mirror in
+    // that case, and the interface contract must be active.
+    if ( ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 )
+         && ! HipProductionFeatureEnabled(
+                "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" ) )
+    {
         return false;
+    }
     return true;
 }
 

@@ -16,7 +16,9 @@ timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-900}"
 # and interface path.  ONEFLOW_MZ_HIP_GRADIENT=1 additionally re-opens the
 # device gradient, and ONEFLOW_MZ_RESIDENT_CONTRACT=1 verifies that the
 # state-owned device q still matches the host mirror before every gradient.
-hip_gradient="${ONEFLOW_MZ_HIP_GRADIENT:-0}"
+hip_gradient="${ONEFLOW_MZ_HIP_GRADIENT:-}"
+hip_reconstruction="${ONEFLOW_MZ_HIP_RECONSTRUCTION:-}"
+hip_state_update="${ONEFLOW_MZ_HIP_STATE_UPDATE:-}"
 resident_contract="${ONEFLOW_MZ_RESIDENT_CONTRACT:-0}"
 
 for name in ranks steps timeout_seconds; do
@@ -131,6 +133,12 @@ run_mode() {
             if [ "$hip_gradient" = "1" ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1
             fi
+            if [ "$hip_reconstruction" = "1" ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1
+            fi
+            if [ "$hip_state_update" = "1" ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
+            fi
             if [ "$resident_contract" = "1" ]; then
                 export ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1
             fi
@@ -222,6 +230,8 @@ for rank in $(seq 0 $((ranks - 1))); do
     grep -q '^STAGE_TRACE_PASS ' "$ONEFLOW_MZ_RUN_ROOT/trace-rank-${rank}.txt" || trace_failed=1
 done
 test "$trace_failed" -eq 0
-printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s hip_gradient=%s resident_contract=%s\n' \
-    "$ranks" "$steps" "$cfl" "$hip_gradient" "$resident_contract" \
+printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s hip_gradient=%s hip_reconstruction=%s hip_state_update=%s resident_contract=%s\n' \
+    "$ranks" "$steps" "$cfl" "${hip_gradient:-default}" \
+    "${hip_reconstruction:-default}" "${hip_state_update:-default}" \
+    "$resident_contract" \
     | tee "$ONEFLOW_MZ_RUN_ROOT/result.txt"
