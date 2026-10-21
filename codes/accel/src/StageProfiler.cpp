@@ -31,7 +31,7 @@ struct CategoryTotal
     double elapsedMs;
 };
 
-std::array< CategoryTotal, 32 > & Totals()
+std::array< CategoryTotal, 36 > & Totals()
 {
     static std::array< CategoryTotal, 36 > totals = {{
         { "initialization", 0.0 },
