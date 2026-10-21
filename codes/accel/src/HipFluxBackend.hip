@@ -1248,11 +1248,23 @@ void VerifyResidentPrimitiveState(
     const Real * const * hostComponents,
     Real tolerance,
     Real * maxAbsoluteDifference,
-    long * mismatchedValues )
+    long * mismatchedValues,
+    long * ownedMismatches = nullptr,
+    long * ghostMismatches = nullptr,
+    int * firstEquation = nullptr,
+    int * firstCell = nullptr,
+    Real * firstDeviceValue = nullptr,
+    Real * firstHostValue = nullptr )
 {
     const int totalCells = nCells + nGhostCells;
     Real maximum = 0.0;
     long mismatches = 0;
+    long owned = 0;
+    long ghost = 0;
+    int firstEq = -1;
+    int firstCellIndex = -1;
+    Real firstDevice = 0.0;
+    Real firstHost = 0.0;
     std::vector< Real > deviceValues(
         static_cast< std::size_t >( totalCells ) );
     for ( int equation = 0; equation < nEquations; ++ equation )
@@ -1269,12 +1281,29 @@ void VerifyResidentPrimitiveState(
             const Real difference =
                 std::fabs( deviceValues[ cell ] - host[ cell ] );
             if ( difference > maximum ) maximum = difference;
-            if ( difference > tolerance ) ++mismatches;
+            if ( difference > tolerance )
+            {
+                ++mismatches;
+                if ( cell < nCells ) ++owned; else ++ghost;
+                if ( firstEq < 0 )
+                {
+                    firstEq = equation;
+                    firstCellIndex = cell;
+                    firstDevice = deviceValues[ cell ];
+                    firstHost = host[ cell ];
+                }
+            }
         }
     }
     if ( maxAbsoluteDifference != nullptr )
         *maxAbsoluteDifference = maximum;
     if ( mismatchedValues != nullptr ) *mismatchedValues = mismatches;
+    if ( ownedMismatches != nullptr ) *ownedMismatches = owned;
+    if ( ghostMismatches != nullptr ) *ghostMismatches = ghost;
+    if ( firstEquation != nullptr ) *firstEquation = firstEq;
+    if ( firstCell != nullptr ) *firstCell = firstCellIndex;
+    if ( firstDeviceValue != nullptr ) *firstDeviceValue = firstDevice;
+    if ( firstHostValue != nullptr ) *firstHostValue = firstHost;
 }
 
 void ReportResidentStateContract(
@@ -1285,7 +1314,13 @@ void ReportResidentStateContract(
     int nGhostCells,
     int nEquations,
     long mismatches,
-    Real maximumDifference )
+    Real maximumDifference,
+    long ownedMismatches = 0,
+    long ghostMismatches = 0,
+    int firstEquation = -1,
+    int firstCell = -1,
+    Real firstDeviceValue = 0.0,
+    Real firstHostValue = 0.0 )
 {
     static int printed = 0;
     const bool passed = mismatches == 0;
@@ -1303,6 +1338,12 @@ void ReportResidentStateContract(
                   << " ghost_cells=" << nGhostCells
                   << " equations=" << nEquations
                   << " mismatched_values=" << mismatches
+                  << " owned_mismatches=" << ownedMismatches
+                  << " ghost_mismatches=" << ghostMismatches
+                  << " first_equation=" << firstEquation
+                  << " first_cell=" << firstCell
+                  << " first_device=" << firstDeviceValue
+                  << " first_host=" << firstHostValue
                   << " max_abs_diff=" << maximumDifference
                   << std::endl;
         ++printed;
@@ -1345,13 +1386,22 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     {
         Real maximumDifference = 0.0;
         long mismatches = 0;
+        long ownedMismatches = 0;
+        long ghostMismatches = 0;
+        int firstEquation = -1;
+        int firstCell = -1;
+        Real firstDevice = 0.0;
+        Real firstHost = 0.0;
         VerifyResidentPrimitiveState(
             * storage, view.nCells, view.nGhostCells, view.nEquations,
-            view.q, 0.0, & maximumDifference, & mismatches );
+            view.q, 0.0, & maximumDifference, & mismatches,
+            & ownedMismatches, & ghostMismatches, & firstEquation,
+            & firstCell, & firstDevice, & firstHost );
         ReportResidentStateContract(
             topologyGeneration, fieldGeneration, sync, view.nCells,
             view.nGhostCells, view.nEquations, mismatches,
-            maximumDifference );
+            maximumDifference, ownedMismatches, ghostMismatches,
+            firstEquation, firstCell, firstDevice, firstHost );
     }
     const bool cacheMatches = storage->geometryCacheValid
         && storage->cachedOwnerToken == ownerToken
