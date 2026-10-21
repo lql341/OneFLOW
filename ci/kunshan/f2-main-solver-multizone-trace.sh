@@ -19,6 +19,8 @@ timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-900}"
 hip_gradient="${ONEFLOW_MZ_HIP_GRADIENT:-}"
 hip_reconstruction="${ONEFLOW_MZ_HIP_RECONSTRUCTION:-}"
 hip_state_update="${ONEFLOW_MZ_HIP_STATE_UPDATE:-}"
+hip_boundary="${ONEFLOW_MZ_HIP_BOUNDARY:-}"
+hip_time_step="${ONEFLOW_MZ_HIP_TIME_STEP:-}"
 resident_contract="${ONEFLOW_MZ_RESIDENT_CONTRACT:-0}"
 
 for name in ranks steps timeout_seconds; do
@@ -139,6 +141,12 @@ run_mode() {
             if [ "$hip_state_update" = "1" ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1
             fi
+            if [ "$hip_boundary" = "1" ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1
+            fi
+            if [ "$hip_time_step" = "1" ]; then
+                export ONEFLOW_ENABLE_UNS_HIP_TIME_STEP=1
+            fi
             if [ "$resident_contract" = "1" ]; then
                 export ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1
             fi
@@ -230,8 +238,9 @@ for rank in $(seq 0 $((ranks - 1))); do
     grep -q '^STAGE_TRACE_PASS ' "$ONEFLOW_MZ_RUN_ROOT/trace-rank-${rank}.txt" || trace_failed=1
 done
 test "$trace_failed" -eq 0
-printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s hip_gradient=%s hip_reconstruction=%s hip_state_update=%s resident_contract=%s\n' \
+printf 'MULTIZONE_TRACE_PASS ranks=%s steps=%s cfl=%s hip_gradient=%s hip_reconstruction=%s hip_state_update=%s hip_boundary=%s hip_time_step=%s resident_contract=%s\n' \
     "$ranks" "$steps" "$cfl" "${hip_gradient:-default}" \
     "${hip_reconstruction:-default}" "${hip_state_update:-default}" \
+    "${hip_boundary:-default}" "${hip_time_step:-default}" \
     "$resident_contract" \
     | tee "$ONEFLOW_MZ_RUN_ROOT/result.txt"
