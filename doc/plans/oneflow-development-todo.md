@@ -66,6 +66,56 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-21 loop 优化：measurement basis、limiter、device time-step、pinned mirror
+
+**先纠正口径**：`steps=10` 时每次 mpirun 有约 3.8–4.1 s 固定开销（MPI/设备初始化、
+8-zone 网格读入、写盘），HIP 的 loop 只有 ~0.8 s，所以 10-step 的“端到端比值”
+主要测的是启动。改按 100 steps + 逐 stage 求和两种口径同时报。
+
+**revision `743bc421`（Kunshan，8 zones / 8 ranks / 1 DCU，fixed CFL 0.01）**
+
+| 口径 | CPU 8 cores | HIP 1 DCU | 比值 |
+|---|---:|---:|---:|
+| 100-step wall（`steps=100,warmup=1,repeats=2`） | 28534.8 ms | 11166.7 ms | **2.556x** |
+| 同 revision 的 loop 求和（rank 0，per step） | ~253 ms/step | ~62 ms/step | ~4.1x |
+
+**本轮实际改动**
+
+- `LimField::Init` 复用 `qf1/qf2`（原每 stage 重新分配 ~9 MB）：limiter
+  1147→135 ms/100 steps。
+- 多 zone device local time-step 打开（读 resident q，结果留在 device 供 CALC_LHS）：
+  `calc_time_step` 581→82 ms/100 steps。
+- 跨 zone 梯度镜像改走 pinned staging（`hipHostMalloc`，一次大拷贝 + host scatter）：
+  `gradient_download` 2734→1078 ms/100 steps（~200 MB/s → ~500 MB/s）。
+- 新增 `gradient_download`/`gradient_kernel`/`halo_ghost_sync`/`state_update` 分项计时。
+- 尝试过“HostStaged 下去掉重复 halo 传输”，但 contract 检查显示
+  `owned_mismatches=0, ghost_mismatches>0`（最大 1.6e-2），说明配对的 device
+  unpack 才是让 device ghost 与 host 一致的那一步；已回退，去重需要真正的
+  device-side halo（双缓冲 + 保持 legacy 一轮滞后语义）。
+
+**当前 100-step、rank 0 的分项（ms/step）**
+
+| 项 | ms/step | 说明 |
+|---|---:|---|
+| gradient（含 download 10.8 + kernel 3.7） | 27.9 | 跨 zone ghost 梯度需整场 D2H |
+| mpi_interface | 15.6 | host exchange + device pack/unpack |
+| reconstruction | 9.1 | device kernel + ghost 梯度上传 |
+| update_flowfield | 2.5 | host `tempr` 重算 |
+| state_update | 2.1 | device kernel + host mirror |
+| calc_boundary | 2.0 | device kernel + host gamma |
+| load_residuals / load_q / calc_lhs | 3.1 | host 桥接 |
+| limiter | 1.3 | 只剩 5×nTCell 填充 |
+| HIP kernel（flux） | 1.0 | — |
+| 固定开销（wall − loop） | ~3.8 s/run | MPI/grid/HIP init + 写盘 |
+
+**下一步最有价值的两个方向**
+
+1. 把跨 zone 梯度从“整场 D2H”改成“只交换 interface 值”：device 端 pack
+   interface-left 梯度（~0.5 MB）→ host MPI → unpack 到 device ghost，并用双缓冲
+   复现 legacy 的一轮滞后语义。预计 gradient 27.9 → ~6 ms/step。
+2. 去掉 host exchange 与 device pack/unpack 的重复（15.6 ms/step），前提是 1 完成，
+   让 device halo 成为唯一权威。
+
 ## 2026-10-21 多 zone device state-update / boundary 打开与扩展性矩阵
 
 **代码（revision `6759383e`）**
