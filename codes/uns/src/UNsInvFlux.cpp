@@ -234,10 +234,28 @@ void UNsInvFlux::CalcLimiter()
 
 void UNsInvFlux::CalcInvFace()
 {
-    { ScopedStageTimer timer( "gradient" );
+    {
+        ScopedStageTimer timer( "gradient" );
         uns_grad.Init();
-        if ( this->UseHipGradient() )
-            uns_grad.CalcGradHip( ! this->UseHipDeviceReconstruction() );
+        const bool hipGradient = this->UseHipGradient();
+        const bool hipReconstruction = this->UseHipDeviceReconstruction();
+        if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
+        {
+            static int printed = 0;
+            if ( printed < 4 )
+            {
+                std::cout << "HIP_STAGE_DIAGNOSTIC hip_gradient=" << hipGradient
+                          << " hip_reconstruction=" << hipReconstruction
+                          << " download_gradient="
+                          << ( hipGradient && ! hipReconstruction )
+                          << " zones=" << ZoneState::nZones
+                          << " local_zones=" << ZoneState::nLocal
+                          << std::endl;
+                ++printed;
+            }
+        }
+        if ( hipGradient )
+            uns_grad.CalcGradHip( ! hipReconstruction );
         else
             uns_grad.CalcGrad();
     }
