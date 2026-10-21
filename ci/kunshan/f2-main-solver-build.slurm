@@ -116,6 +116,16 @@ cmake --build "$ONEFLOW_F2_BUILD_DIR" \
              oneflow_hip_resident_state_contract_test \
     --parallel "${ONEFLOW_F2_BUILD_PARALLEL:-8}" 2>&1 | tee "$build_log"
 
+# The solver resolves its runtime "system" directory relative to the
+# executable. A targeted build does not install it, so place it explicitly
+# instead of leaving a build that cannot start a case.
+install -d "$ONEFLOW_F2_BUILD_DIR/bin"
+if [ ! -r "$ONEFLOW_F2_BUILD_DIR/bin/system/action/actionFileList.txt" ]; then
+    cp -a "$ONEFLOW_F2_BUILD_SOURCE_DIR/system" \
+        "$ONEFLOW_F2_BUILD_DIR/bin/system"
+fi
+test -r "$ONEFLOW_F2_BUILD_DIR/bin/system/action/actionFileList.txt"
+
 "$ONEFLOW_F2_BUILD_DIR/bin/OneFLOWHipSmoke"
 "$ONEFLOW_F2_BUILD_DIR/bin/oneflow_euler_backend_hip_test"
 # Backend-neutral resident-state generation contract (runs on the CPU).
