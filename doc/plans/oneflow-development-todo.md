@@ -66,6 +66,88 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-21 多 zone device state-update / boundary 打开与扩展性矩阵
+
+**代码（revision `6759383e`）**
+
+- `NsCalcBoundary` 允许 device boundary 进入分区算例：kernel 本来就跳过
+  `INTERFACE(-1)`、`PERIODIC(99)`、`OVERSET(1000)`，因此 interface ghost 仍归
+  interface contract，物理边界 ghost 在 device 上算。修掉 gate 里的 stale
+  `ug`（`NsCalcBoundary` 每 zone 调用，缓存的 unstructured view 可能仍指向上一个
+  zone），并新增 `HIP_BOUNDARY_DIAGNOSTIC` 一次性拒绝原因，不再静默 false。
+- `Limiter::CalcLimiter` 在 `ILMT_NO`（`ilim=0`）下直接填充 `phi=1` 并返回，
+  不再每个方程 allocate/free `minvf/maxvf`。数值完全一致（无算术），CPU normal/
+  strict 五算例各 5/5 复验通过。
+- 新增 `ci/kunshan/f2-main-solver-multizone-matrix.sh`：同一 8-zone case 上按
+  CPU ranks × visible DCUs 跑配对 timing，逐腿检查 exit code，输出
+  `matrix.tsv` / `matrix-ratio.tsv`。
+- multi-zone trace runner 增加 `ONEFLOW_MZ_HIP_BOUNDARY`/`ONEFLOW_MZ_HIP_TIME_STEP`
+  开关，便于逐阶段二分。
+
+**阶段门禁（`6759383e`，8 ranks，3 steps trace + 50 steps stability）**
+
+| 阶段组合 | 3-step trace | 50-step stability |
+|---|---|---|
+| recon | PASS（36 records） | legacy/cpu/hip 全 PASS，hits 0 |
+| recon + state update | PASS | 全 PASS，hits 0 |
+| recon + boundary | PASS | 全 PASS，hits 0 |
+| recon + state update + boundary | PASS | 全 PASS，hits 0 |
+
+resident contract 在每次 gradient 前比较 owned+ghost，全部 `failures=0`、
+`max_abs_diff=0`。
+
+**同 basis 扩展性矩阵（`steps=10,warmup=1,repeats=3`，8-zone、8 ranks、fixed CFL 0.01）**
+
+| ranks | DCUs | ranks/DCU | CPU mean ms | HIP mean ms | CPU/HIP |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 1 | 8 | 3458.459 | 2566.409 | 1.3476x |
+| 8 | 4 | 2 | 3458.459 | 2347.003 | 1.4736x |
+
+- 4 DCU leg 的 solver 日志报告 `OneFLOW HIP device: 0/4`，rank→device 绑定是
+  `localRank % deviceCount`，即 2 ranks/DCU。
+- 同一份 8-zone fixture 只能配 8 个 rank（zone→rank 映射固化在 fixture 里），
+  因此本轮不能给出 4 ranks（2 zones/rank）或 16/32 CPU cores 的对照；需要新的
+  分区 fixture 或重新生成 ownerRanks 才能扩 CPU 侧口径。
+- 与 `f0af059f` 的 `1.51153x` 不是同一节点，CPU leg 本身从 4419 ms 变到
+  3458 ms，两个比值不能混算。
+
+**50-step 阶段级变化（rank 0，`ms`；recon-only → +state+update+boundary）**
+
+| stage | legacy | recon-only | 全开 |
+|---|---:|---:|---:|
+| gradient | 4408.8 | 1545.0 | ~790（10-step 口径 158） |
+| limiter | 601.8 | 683.7 | ~284（fast path） |
+| reconstruction | 2845.8 | 564.1 | ~357 |
+| update_residuals | 10354.2 | 3044.8 | ~1560 |
+| mpi_interface | 888.2 | 555.6 | ~503 |
+| calc_boundary | ~520 | 522.8 | ~100 |
+| calc_lhs | — | 73.9 | ~31 |
+| H2D/D2H | 0 | 0 | 0 |
+
+> 注：上表“全开”列由 10-step 正式 repeat 的 rank-0 分项按比例给出量级，只用于
+> 说明方向；精确的 50-step 全开分项要在下一次 stability 作业里重新汇总。
+
+**GPU-aware MPI / DeviceDirect（重要负面结论）**
+
+- 2 节点设备指针 probe 通过：`GPU_AWARE_MPI_TWO_NODE_PROBE_PASS`，
+  `gfx906`，device pointer `MPI_Sendrecv` 收发的数值正确。
+- 但同一 revision、同一 basis 打开 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI=1`
+  + `ONEFLOW_GPU_AWARE_MPI_CONFIRMED=1`（DeviceDirect）后：HostStaged 三次
+  正式 repeat 为 `2688.9/2682.7/2736.1 ms`，DeviceDirect 为
+  `3991.5/4410.3/4500.8 ms`，即 **DeviceDirect 慢约 1.59x**。
+- 结论：probe PASS 只证明“设备指针能正确传输”，不证明零拷贝。当前
+  DTK/OpenMPI 组合下 MPI 实际仍走 host staging，DeviceDirect 必须保持关闭；
+  gate 需要追加“DeviceDirect 不得慢于 HostStaged”的 timing 判据。
+
+**仍未闭合**
+
+- reconstruction / state update / boundary 仍为显式 opt-in，尚未进入默认 policy；
+  resident time-step 仍只支持单 zone。
+- DeviceDirect 在当前工具链下不可用（见上），halo 仍是 host-staged。
+- 8 ranks / 1–4 DCU 已测；16/32 CPU cores、4 ranks（2 zones/rank）、跨节点
+  与多节点 correctness 仍需要新的分区 fixture。
+- 正式性能报告未更新。
+
 **仍未闭合**
 
 - reconstruction 仍为显式 opt-in（`ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1`），
