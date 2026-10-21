@@ -1934,24 +1934,44 @@ void HipFluxBackend::ReconstructFaceValues(
         // Cross-zone interface ghosts: the host mirror holds the exchanged
         // neighbor gradient after Grad::SwapBcGrad.  Refresh only the ghost
         // slice of the state-owned device gradient (three components per
-        // equation) before reconstructing interface faces.
+        // equation) before reconstructing interface faces.  The source is a
+        // pinned staging copy so the upload does not go through the driver's
+        // pageable staging buffer.
+        ScopedStageTimer syncTimer( "halo_ghost_sync" );
+        const int nGhostCells = view.nGhostCells;
+        const std::size_t ghostValues =
+            static_cast< std::size_t >( view.nEquations ) * 3 * nGhostCells;
+        Real * pinned = LocalPinnedStaging().Get( ghostValues );
+        std::size_t offset = 0;
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            const Real * hostGradient[ 3 ] = {
+                view.dqdx[ equation ], view.dqdy[ equation ],
+                view.dqdz[ equation ] };
+            for ( int component = 0; component < 3; ++ component )
+            {
+                std::copy(
+                    hostGradient[ component ] + view.nCells,
+                    hostGradient[ component ] + view.nCells + nGhostCells,
+                    pinned + offset );
+                offset += static_cast< std::size_t >( nGhostCells );
+            }
+        }
+        offset = 0;
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             const std::size_t base =
                 static_cast< std::size_t >( equation ) * 3 * totalCells;
-            const Real * hostGradient[ 3 ] = {
-                view.dqdx[ equation ], view.dqdy[ equation ],
-                view.dqdz[ equation ] };
             for ( int component = 0; component < 3; ++ component )
             {
                 AccelRuntime::Instance().Backend().Copy(
                     storage->cellGradient.Data() + base
                         + static_cast< std::size_t >( component ) * totalCells
                         + view.nCells,
-                    hostGradient[ component ] + view.nCells,
-                    static_cast< std::size_t >( view.nGhostCells )
-                        * sizeof( Real ),
+                    pinned + offset,
+                    static_cast< std::size_t >( nGhostCells ) * sizeof( Real ),
                     AccelCopyKind::HostToDevice );
+                offset += static_cast< std::size_t >( nGhostCells );
             }
         }
     }
