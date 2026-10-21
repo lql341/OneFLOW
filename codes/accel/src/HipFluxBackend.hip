@@ -1150,6 +1150,46 @@ void HipFluxBackend::UnbindState( const void * cacheKey ) noexcept
 namespace
 {
 
+// Pinned host staging for the production gradient mirror.  hipMemcpy to or
+// from pageable memory stages through a driver buffer and measured at roughly
+// 200 MB/s on this platform, which made the per-stage gradient mirror the
+// single largest remaining loop cost.  The buffer is allocated once per thread
+// and grown on demand; it is intentionally not freed during static teardown,
+// when the runtime may already be gone.
+class PinnedStagingBuffer
+{
+public:
+    Real * Get( std::size_t count )
+    {
+        if ( count > capacity_ )
+        {
+            if ( data_ != nullptr )
+            {
+                CheckHip( hipHostFree( data_ ), "pinned staging free" );
+            }
+            void * allocated = nullptr;
+            CheckHip(
+                hipHostMalloc(
+                    & allocated, count * sizeof( Real ),
+                    hipHostMallocDefault ),
+                "pinned staging allocate" );
+            data_ = static_cast< Real * >( allocated );
+            capacity_ = count;
+        }
+        return data_;
+    }
+
+private:
+    Real * data_ = nullptr;
+    std::size_t capacity_ = 0;
+};
+
+PinnedStagingBuffer & LocalPinnedStaging()
+{
+    static thread_local PinnedStagingBuffer buffer;
+    return buffer;
+}
+
 bool ResidentContractCheckRequested()
 {
     const char * value =
@@ -1504,28 +1544,27 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     // the resident gradient block.
     {
         ScopedStageTimer timer( "gradient_download" );
-        static thread_local std::vector< Real > staging;
         const std::size_t totalValues =
             static_cast< std::size_t >( totalGradient );
-        if ( staging.size() < totalValues ) staging.resize( totalValues );
+        const Real * staging =
+            LocalPinnedStaging().Get( totalValues );
         AccelRuntime::Instance().Backend().Copy(
-            staging.data(), storage->cellGradient.Data(),
+            const_cast< Real * >( staging ), storage->cellGradient.Data(),
             totalValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             const std::size_t base =
                 static_cast< std::size_t >( equation ) * 3 * totalCells;
             std::copy(
-                staging.begin() + base,
-                staging.begin() + base + totalCells,
+                staging + base, staging + base + totalCells,
                 view.dqdx[ equation ] );
             std::copy(
-                staging.begin() + base + totalCells,
-                staging.begin() + base + 2 * totalCells,
+                staging + base + totalCells,
+                staging + base + 2 * totalCells,
                 view.dqdy[ equation ] );
             std::copy(
-                staging.begin() + base + 2 * totalCells,
-                staging.begin() + base + 3 * totalCells,
+                staging + base + 2 * totalCells,
+                staging + base + 3 * totalCells,
                 view.dqdz[ equation ] );
         }
     }
