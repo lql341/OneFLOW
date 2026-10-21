@@ -2025,6 +2025,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         deviceBoundaryMask = boundaryMask_.Data();
     }
     const int blockSize = 256;
+    { ScopedStageTimer kernelTimer( "HIP kernel" );
     hipLaunchKernelGGL(
         CalcAndScatterPrimitiveEulerKernel,
         dim3( ( nFaces + blockSize - 1 ) / blockSize ),
@@ -2041,6 +2042,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
               "reconstructed primitive flux kernel launch" );
     CheckHip( hipDeviceSynchronize(),
               "reconstructed primitive flux kernel synchronize" );
+    }
     if ( downloadResidual && residual.values != nullptr )
     {
         storage->residual.CopyToHost( residual.values, totalResidual );
