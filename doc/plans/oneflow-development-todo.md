@@ -1,5 +1,80 @@
 # OneFLOW 开发待办与衔接（living document）
 
+## 2026-10-21 resident q generation contract, multi-zone device gradient + reconstruction
+
+**目标**：把多 zone HIP 从“只验证 fused flux/interface”推进到“device gradient 与
+device reconstruction 消费 state-owned device q”，并且用可验证的 generation
+contract 替代隐式假设。没有新增 standalone port，也没有放宽 tolerance。
+
+**根因（P0）**：device `cellState` 与 host `q` 镜像没有任何同步契约。host RK
+state update、host `NsCalcBc`、host interface exchange 都会改写 host `q`，device
+完全看不到；而 device gradient 的 resident 判定只看 owner generation，所以多 zone
+HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradient 时 qf/state
+出现 ~9e-3、boundary 自动路径出现 ~4.6e-3 的来源，而不是 kernel 精度问题。
+
+**本轮实现**
+
+- 新增 backend-neutral `codes/accel/include/ResidentStateContract.h`（header-only,
+  可在无 DCU 的 CPU 上测试）：绑定 owner token/topology generation/extents/方程数，
+  区分“owned cell 整场 generation”与“ghost epoch”，提供
+  `RequiredSync()`/`NoteFullFieldSync()`/`NoteGhostSync()`/`NoteHostGhostMutation()`/
+  `NoteDeviceFieldUpdate()`/`NoteDeviceGhostUpdate()`/`Invalidate()`。
+- `HipGradientStorage` 以该 contract 作为 resident q 的唯一语义来源，删除
+  `residentStateReady`/`cachedStateOwnerToken`/`cachedStateCell*` 一套平行状态。
+  gradient、local timestep、boundary、primitive update、boundary pack/unpack 全部
+  走同一套 sync 决策。
+- solver 侧显式发布 host 写入：`UNsUpdate` 的 host RK 更新
+  (`NotifyHostFieldStateModified` → owner generation +1)、`NsCalcBoundary` 的 host
+  ghost 写入（只刷新 ghost，`O(nGhostCells)` H2D）、interface target ghost 写入
+  （每个 exchange 配对一次 device unpack 清除，未覆盖的由轮末安全网补齐）。
+- 多 zone device gradient 重新打开的条件从“必须显式 opt-in”改为“必须存在 resident
+  halo contract（HIP interface）”，并新增 trace 可验证输出
+  `RESIDENT_STATE_CONTRACT ... mismatched_values/max_abs_diff`。
+- 多 zone device reconstruction：`CellFaceReconstructionView` 增加
+  `syncGradientGhostsFromHost`；跨 zone 时 gradient 仍做 D2H + `Grad::SwapBcGrad`
+  （把 interface ghost gradient 的权威来源显式化），只把 ghost 切片（3 分量/方程）
+  上传回 device，然后 reconstruction/flux/residual 全程 device。
+- `UNsGrad::CalcGradHip` 的下载决策改成 capability 参数，
+  `UseHipDeviceReconstruction()/UseHipGradient()` 对多 zone 统一要求 interface
+  contract，不再用环境变量猜测。
+- 新增 `tests/hip_resident_state_contract_test.cpp`（12 例）与
+  `oneflow_hip_resident_state_contract_test` target；root HIP build 现在会补装
+  `bin/system`，避免 fresh build 无法启动 case；multi-zone trace runner 只为 HIP
+  腿设置 `ONEFLOW_ACCEL_BACKEND=HIP`，并断言每个 rank 有非零 `HIP kernel` 阶段，
+  防止 CPU fallback 被当作 HIP 证据。
+
+**Kunshan 证据（revision `f0af059f`，DTK 26.04 / gfx906 / dcu:1）**
+
+- root HIP build + DCU preflight 通过；硬件 CTest `16/16`；HIP GoogleTest `15/15`；
+  `oneflow_hip_resident_state_contract_test` `12/12`。
+- 8-zone fixture gate：`MULTIZONE_FIXTURE_PASS ranks=8 zones=8 interfaces=35624`。
+- 3-step trace（8 ranks，`ONEFLOW_ACCEL_BACKEND=HIP` + reconstruction opt-in）：
+  `MULTIZONE_TRACE_PASS`，每 rank `STAGE_TRACE_PASS records=36`，
+  HIP vs legacy 最大绝对差 `2.2726265314076954e-13`（cpu_batch 为 0）。
+- resident contract 检查：`records=24 failures=0 max_abs_diff=0`（8 ranks × 3 steps，
+  owned+ghost 全量逐值比较）。
+- fixed-CFL `0.01`、50-step stability：legacy / cpu_batch / hip_batch 三路
+  `exit_code=0`、`diagnostic_hits=0`、`PASS`；每路 8 ranks 均有 solver work。
+- 同 basis paired timing（`steps=10,warmup=1,repeats=3`，8 zones、8 CPU ranks vs
+  1 DCU/8 ranks，fixed CFL `0.01`）：CPU mean `4419.345 ms`，HIP mean
+  `2924.047 ms`，`CPU/HIP = 1.51153x`。同 revision 的 50-step stability solver
+  时间（每 rank，含影响口径差异）为 legacy `20.2–22.4 s`、HIP `7.3–8.4 s`。
+- 50-step stage breakdown（rank 0，HIP vs legacy，ms）：gradient `1545.0 / 4408.8`、
+  reconstruction `564.1 / 2845.8`、update_residuals `3044.8 / 10354.2`、
+  mpi_interface `555.6 / 888.2`、HIP kernel `46.0 / 0`。
+- 与之前记录的 `553a9cc5b`（`steps=10,warmup=1,repeats=3`，CPU `4275.308` /
+  HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
+  两次数据混算，但方向从“持平”变为“HIP 明显更快”。
+
+**仍未闭合**
+
+- reconstruction 仍为显式 opt-in（`ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1`），
+  尚未加入默认 policy；state update / boundary / resident time-step 仍未在多 zone
+  打开，gradient D2H + ghost 上传与 host RK update 的整场 q H2D 仍是每步成本。
+- `mpi_interface` 在 HIP 腿包含一次与 host exchange 并行的 device endpoint
+  pack/unpack；DeviceDirect 仍要求 GPU-aware MPI probe，未默认启用。
+- 跨节点/多 DCU correctness、H100 之外的多卡扩展、正式性能报告均未更新。
+
 ## 2026-10-20 runtime ownership exporter
 
 - `8de93bbe` 增加 `ONEFLOW_MZ_FIXTURE_EXPORT_DIR` runtime exporter。每个 MPI
