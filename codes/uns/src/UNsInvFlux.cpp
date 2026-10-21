@@ -239,6 +239,16 @@ void UNsInvFlux::CalcInvFace()
         uns_grad.Init();
         const bool hipGradient = this->UseHipGradient();
         const bool hipReconstruction = this->UseHipDeviceReconstruction();
+        // A cross-zone device reconstruction consumes ghost gradients that the
+        // interface exchange owns.  The exchange is host-staged, so the host
+        // mirror stays the authoritative source for that ghost slice: download
+        // the gradient, let Grad::SwapBcGrad apply the interface exchange, and
+        // upload only the ghost slice back (see
+        // CellFaceReconstructionView::syncGradientGhostsFromHost).
+        const bool crossZoneGhostGradient = hipReconstruction
+            && ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 );
+        const bool downloadGradient =
+            hipGradient && ( ! hipReconstruction || crossZoneGhostGradient );
         if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
         {
             static int printed = 0;
@@ -246,8 +256,7 @@ void UNsInvFlux::CalcInvFace()
             {
                 std::cout << "HIP_STAGE_DIAGNOSTIC hip_gradient=" << hipGradient
                           << " hip_reconstruction=" << hipReconstruction
-                          << " download_gradient="
-                          << ( hipGradient && ! hipReconstruction )
+                          << " download_gradient=" << downloadGradient
                           << " zones=" << ZoneState::nZones
                           << " local_zones=" << ZoneState::nLocal
                           << std::endl;
@@ -255,7 +264,7 @@ void UNsInvFlux::CalcInvFace()
             }
         }
         if ( hipGradient )
-            uns_grad.CalcGradHip( ! hipReconstruction );
+            uns_grad.CalcGradHip( downloadGradient );
         else
             uns_grad.CalcGrad();
     }
