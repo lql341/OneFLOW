@@ -50,6 +50,7 @@ License
 #include "HipFluxBackend.h"
 #endif
 #include <cstdlib>
+#include <iostream>
 #include <string>
 #include <iomanip>
 #include <memory>
@@ -84,22 +85,47 @@ bool HipBoundarySupported()
 #ifndef ONEFLOW_ENABLE_HIP
     return false;
 #else
+    // One-shot rejection reason, enabled by the same diagnostic switch as the
+    // gradient/reconstruction decision line. A silent false would otherwise be
+    // indistinguishable from "the user did not ask for the device path".
+    auto reject = []( const char * reason )
+    {
+        if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) == nullptr )
+            return false;
+        static std::string reported;
+        if ( reported.find( reason ) == std::string::npos )
+        {
+            reported += reason;
+            reported += ';';
+            std::cout << "HIP_BOUNDARY_DIAGNOSTIC unsupported=" << reason
+                      << std::endl;
+        }
+        return false;
+    };
+
     AccelRuntime & runtime = AccelRuntime::Instance();
     if ( ! runtime.IsInitialized()
          || runtime.Backend().Kind() != AccelBackendKind::HIP )
-        return false;
+        return reject( "runtime" );
     // Multi-zone is allowed: the device boundary kernel skips the BC types
     // that an external halo exchange owns (INTERFACE -1, PERIODIC 99,
     // OVERSET 1000), so interface ghosts stay owned by the interface contract
     // while physical boundary ghosts are evaluated on the device.
-    if ( SolverState::solverType != NS_SOLVER || nscom.nEqu != 5
-         || vis_model.vismodel != 0 || ctrl.ilim != 0 )
-        return false;
+    if ( SolverState::solverType != NS_SOLVER )
+        return reject( "solver" );
+    if ( nscom.nEqu != 5 ) return reject( "equations" );
+    if ( vis_model.vismodel != 0 ) return reject( "viscous" );
+    if ( ctrl.ilim != 0 ) return reject( "limiter" );
     UnsGrid * grid = Zone::GetUnsGrid();
-    if ( grid == nullptr || ug.nBFaces <= 0
-         || ug.nTCell - ug.nCells != ug.nBFaces
-         || ug.bcRecord == nullptr )
-        return false;
+    if ( grid == nullptr ) return reject( "grid" );
+    // NsCalcBoundary runs per local zone; in a partitioned run the cached
+    // unstructured view may still point at the previous zone, so re-bind it
+    // before validating the boundary set.
+    ug.Init();
+    if ( ug.nBFaces <= 0 ) return reject( "no_boundary_faces" );
+    if ( ug.nTCell - ug.nCells != ug.nBFaces )
+        return reject( "ghost_extent" );
+    if ( ug.bcRecord == nullptr ) return reject( "bc_record" );
     for ( int face = 0; face < ug.nBFaces; ++ face )
     {
         const int type = ug.bcRecord->bcType[ face ];
@@ -110,7 +136,10 @@ bool HipBoundarySupported()
              || type == BC::POLE || type == BC::POLE1
              || type == BC::POLE2 || type == BC::POLE3 )
             continue;
-        return false;
+        static std::string bcReason;
+        if ( bcReason.empty() )
+            bcReason = "bc_type_" + std::to_string( type );
+        return reject( bcReason.c_str() );
     }
     return true;
 #endif
