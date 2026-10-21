@@ -33,7 +33,7 @@ struct CategoryTotal
 
 std::array< CategoryTotal, 32 > & Totals()
 {
-    static std::array< CategoryTotal, 32 > totals = {{
+    static std::array< CategoryTotal, 36 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -66,6 +66,10 @@ std::array< CategoryTotal, 32 > & Totals()
         { "boundary_prepare_data", 0.0 },
         { "boundary_calc_face_bc", 0.0 },
         { "boundary_update_bc", 0.0 },
+        { "gradient_download", 0.0 },
+        { "gradient_kernel", 0.0 },
+        { "halo_ghost_sync", 0.0 },
+        { "state_update", 0.0 },
     }};
     return totals;
 }

@@ -1461,6 +1461,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     }
     storage->cellGradient.Resize( totalGradient );
     const int blockSize = 256;
+    { ScopedStageTimer kernelTimer( "gradient_kernel" );
     hipLaunchKernelGGL(
         GradientZeroKernel,
         dim3( ( totalGradient + blockSize - 1 ) / blockSize ),
@@ -1495,6 +1496,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
     }
     CheckHip( hipGetLastError(), "gradient kernel launch" );
     CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
+    }
     if ( ! view.downloadToHost ) return;
     // One contiguous device->host transfer plus a host-side scatter instead of
     // 3*neq small transfers with a synchronisation each.  The device layout is
@@ -2223,6 +2225,7 @@ void HipFluxBackend::UpdatePrimitiveState(
     int status = 0;
     storage.stateUpdateStatus.CopyFromHost( & status, 1 );
     const int blockSize = 256;
+    { ScopedStageTimer updateTimer( "state_update" );
     hipLaunchKernelGGL(
         UpdatePrimitiveStateKernel,
         dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
@@ -2248,6 +2251,7 @@ void HipFluxBackend::UpdatePrimitiveState(
                 view.nCells * sizeof( Real ),
                 AccelCopyKind::DeviceToHost );
         }
+    }
     }
     owner->MarkFieldChanged();
     storage.residualValid = false;
@@ -2753,6 +2757,7 @@ bool HipFluxBackend::SyncResidentGhostStateFromHost(
     {
         return false;
     }
+    { ScopedStageTimer syncTimer( "halo_ghost_sync" );
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         if ( components[ equation ] == nullptr )
@@ -2768,6 +2773,7 @@ bool HipFluxBackend::SyncResidentGhostStateFromHost(
             static_cast< std::size_t >( nGhostCells ) * sizeof( Real ),
             AccelCopyKind::HostToDevice );
         storage.cachedStateQ[ equation ] = components[ equation ];
+    }
     }
     contract.NoteGhostSync();
     return true;
