@@ -1,12 +1,17 @@
 #!/bin/bash
 # Multi-zone HIP scalability matrix.
 #
-# Runs the same partitioned 8-zone case through the paired-timing runner for
-# several (rank, DCU) tuples so the CPU/DCU ratio is always reported on a
-# matching basis: the CPU leg is `ranks` cores / `ranks` MPI processes, the HIP
-# leg is `ranks` MPI processes on `dcus` visible DCUs (`ranks/dcus` ranks per
-# DCU).  Every leg writes its own timing.tsv; this script only aggregates and
-# refuses to hide a non-zero workload exit code.
+# Runs the same partitioned case through the paired-timing runner for several
+# (rank, DCU) tuples.  Resource bookkeeping follows the Kunshan DCU node shape:
+# 32 cores and 4 DCUs per node, i.e. one DCU slot is paired with 8 cores
+# (`max_dcus_per_node=4`, `max_cpus_per_node=32`; verify with
+# `scnet.py queues --details`).  A leg is "spec-compliant" only when
+#   cores_per_dcu == 8, i.e. cores == 8 * dcus,
+# and the CPU baseline must come from the CPU-only partition (`kshcnormal`),
+# not from an allocation that also holds a DCU.  Set
+# `ONEFLOW_MZ_MATRIX_CPU_BASELINE=.../timing.tsv` to compare against a baseline
+# measured that way; otherwise the in-allocation CPU leg is used and labelled
+# as such.
 set -euo pipefail
 
 : "${ONEFLOW_MZ_MATRIX_SOURCE_CASE:?Set ONEFLOW_MZ_MATRIX_SOURCE_CASE}"
@@ -26,6 +31,9 @@ fixture_metadata="${ONEFLOW_MZ_MATRIX_FIXTURE_METADATA:-${ONEFLOW_MZ_FIXTURE_MET
 # Optional extra HIP stage opt-ins for the HIP leg, for example
 # "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1 ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1".
 hip_stage_env="${ONEFLOW_MZ_MATRIX_HIP_STAGE_ENV:-}"
+cores_per_task="${ONEFLOW_MZ_MATRIX_CORES_PER_TASK:-1}"
+external_cpu_baseline="${ONEFLOW_MZ_MATRIX_CPU_BASELINE:-}"
+allow_nonstandard="${ONEFLOW_MZ_MATRIX_ALLOW_NONSTANDARD:-0}"
 
 test -d "$ONEFLOW_MZ_MATRIX_SOURCE_CASE"
 test -x "$ONEFLOW_MZ_MATRIX_BINARY"
@@ -47,6 +55,9 @@ mkdir -p "$ONEFLOW_MZ_MATRIX_RUN_ROOT"
     echo "repeats=$repeats"
     echo "cfl=$cfl"
     echo "hip_stage_env=${hip_stage_env:-default-policy}"
+    echo "cores_per_task=$cores_per_task"
+    echo "slot_rule=one_dcu_slot_equals_8_cores"
+    echo "external_cpu_baseline=${external_cpu_baseline:-in-allocation}"
     echo "fixture_metadata=${fixture_metadata:-unset}"
     echo "nodes=${SLURM_JOB_NUM_NODES:-1}"
     echo "hostlist=${SLURM_JOB_NODELIST:-unknown}"
@@ -86,6 +97,12 @@ run_leg() {
             export ONEFLOW_MZ_FIXTURE_METADATA="$fixture_metadata"
         fi
         if [ "$mode" = hip ]; then
+            local cores=$(( ranks * cores_per_task ))
+            local cores_per_dcu=$(( cores / dcus ))
+            if [ "$cores_per_dcu" -ne 8 ] && [ "$allow_nonstandard" != 1 ]; then
+                echo "non-standard slot: cores=$cores dcus=$dcus cores_per_dcu=$cores_per_dcu (expected 8); set ONEFLOW_MZ_MATRIX_ALLOW_NONSTANDARD=1 to record it as a card-scaling experiment" >&2
+                exit 3
+            fi
             local devices
             devices="$(visible_devices "$dcus")"
             export HIP_VISIBLE_DEVICES="$devices"
@@ -155,7 +172,7 @@ for row in rows:
     aggregate.setdefault((row["case"], row["mode"], row["ranks"]), []).append(row)
 
 lines = [
-    "case\tmode\tranks\tdcus\tranks_per_dcu\trepeats\tmean_ms\tmin_ms\tmax_ms\texit_code"
+    "case\tmode\tranks\tdcus\tranks_per_dcu\tcores\tcores_per_dcu\trepeats\tmean_ms\tmin_ms\tmax_ms\texit_code"
 ]
 summary = {}
 for (case, mode, ranks), values in sorted(aggregate.items()):
@@ -172,6 +189,7 @@ for (case, mode, ranks), values in sorted(aggregate.items()):
     elapsed = [value["elapsed_ms"] for value in values]
     mean = statistics.fmean(elapsed)
     summary[(mode, ranks, dcus)] = mean
+    cores = ranks
     lines.append(
         "\t".join(
             [
@@ -180,6 +198,8 @@ for (case, mode, ranks), values in sorted(aggregate.items()):
                 str(ranks),
                 str(dcus),
                 "-" if mode == "cpu" else f"{ranks / dcus:g}",
+                str(cores),
+                "-" if mode == "cpu" else f"{cores / dcus:g}",
                 str(len(elapsed)),
                 f"{mean:.6f}",
                 f"{min(elapsed):.6f}",
@@ -189,7 +209,9 @@ for (case, mode, ranks), values in sorted(aggregate.items()):
         )
     )
 
-ratio_lines = ["ranks\tdcus\tranks_per_dcu\tcpu_mean_ms\thip_mean_ms\tcpu_over_hip"]
+ratio_lines = [
+    "ranks\tdcus\ttranks_per_dcu\tcores_per_dcu\tcpu_mean_ms\thip_mean_ms\tcpu_over_hip"
+]
 rank_values = sorted({key[1] for key in summary if key[0] == "cpu"})
 dcu_values = sorted({key[2] for key in summary if key[0] == "hip" and key[2] > 0})
 for ranks in rank_values:
@@ -205,6 +227,7 @@ for ranks in rank_values:
                 [
                     str(ranks),
                     str(dcus),
+                    f"{ranks / dcus:g}",
                     f"{ranks / dcus:g}",
                     f"{cpu_mean:.6f}",
                     f"{hip_mean:.6f}",
