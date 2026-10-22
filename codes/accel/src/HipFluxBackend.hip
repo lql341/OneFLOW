@@ -2848,6 +2848,7 @@ __global__ void ResidualMetricsKernel(
     const Real * residual,
     const Real * q,
     int nCells,
+    int totalCells,
     int nEquations,
     int chunkCells,
     Real * chunkSum,
@@ -2883,12 +2884,14 @@ __global__ void ResidualMetricsKernel(
         chunkIndex[ equation * chunks + chunk ] = index;
     }
     // Primitive positivity extremes (rho = component 0, p = last component).
+    // Primitive state is [equation][owned + ghost cell]; only the owned cells
+    // participate in the positivity report.
     Real minDensity = q[ begin ];
-    Real minPressure = q[ ( nEquations - 1 ) * nCells + begin ];
+    Real minPressure = q[ ( nEquations - 1 ) * totalCells + begin ];
     for ( int cell = begin + 1; cell < end; ++ cell )
     {
         const Real density = q[ cell ];
-        const Real pressure = q[ ( nEquations - 1 ) * nCells + cell ];
+        const Real pressure = q[ ( nEquations - 1 ) * totalCells + cell ];
         if ( density < minDensity ) minDensity = density;
         if ( pressure < minPressure ) minPressure = pressure;
     }
@@ -2939,6 +2942,7 @@ bool HipFluxBackend::ComputeResidualMetrics(
     hipLaunchKernelGGL(
         ResidualMetricsKernel, dim3( chunks ), dim3( 1 ), 0, 0,
         storage.residual.Data(), storage.cellState.Data(), nCells,
+        storage.residentContract.Cells() + storage.residentContract.GhostCells(),
         nEquations, chunkCells, storage.residualMetricChunkSum.Data(),
         storage.residualMetricChunkMax.Data(),
         storage.residualMetricChunkIndex.Data(),
