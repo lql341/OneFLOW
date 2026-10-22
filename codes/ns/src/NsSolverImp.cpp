@@ -64,9 +64,8 @@ namespace
 
 bool HipBoundaryExplicitlyRequested()
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
-    return enabled != nullptr && enabled[ 0 ] == '1';
+    return HipProductionFeatureExplicitlyEnabled(
+        "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" );
 }
 
 bool HipBackendSelected()
@@ -263,9 +262,11 @@ void NsCalcBoundary( StringField & data )
             "nTModel > 0" );
     }
     const bool explicitRequest = HipBoundaryExplicitlyRequested();
-    // Boundary device execution remains an explicit diagnostic opt-in until
-    // its multi-stage ordering is covered by the production trace oracle.
-    const bool requested = explicitRequest
+    // The boundary stage follows the backend policy; the capability check
+    // still decides, and an explicit request that is unsupported fails fast
+    // instead of silently running the host model.
+    const bool requested =
+        HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY" )
         && HipBackendSelected() && HipBoundarySupported();
     if ( explicitRequest && ! requested )
     {

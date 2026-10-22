@@ -83,9 +83,10 @@ bool UseHipDeviceStateUpdate( int solverType )
 
 bool UseResidentHipTimeStep()
 {
-    const char * enabled =
-        std::getenv( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
-    return enabled != nullptr && enabled[ 0 ] == '1';
+    // Follow the backend policy: the device timestep is not mirrored back to
+    // the host, so CALC_LHS must consume the resident one whenever the
+    // resident timestep stage is active.
+    return HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" );
 }
 
 }
