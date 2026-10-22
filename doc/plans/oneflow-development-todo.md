@@ -66,6 +66,41 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 资源口径纠正：1 DCU 槽 = 8 核，CPU 基线必须在 CPU 队列
+
+昆山活配置（`scnet.py queues --details`）：`kshdnormal` 32 cores/node、**4 DCUs/node**
+→ **一个 DCU 槽 = 8 核**；`kshcnormal` 32 cores/node、**0 DCUs**。之前几处口径不严谨：
+
+1. HIP 腿写“1 DCU”，实际是 **8 核 + 1 DCU**（8 ranks × 1 core，8 ranks/DCU）。
+   按 8:1 槽约定，1 DCU 配 8 核是对的，但必须写成“8C+1DCU”，不能只写“1 DCU”。
+2. CPU 基线之前跑在 **DCU 节点**（同一 allocation 里挂着空闲卡），不是 CPU 队列。
+   实测同样 8 核：`kshcnormal` **20854.4 ms** vs `kshdnormal` **28558.5 ms**（+37%）。
+   按规范 CPU-only 作业必须用 `kshcnormal`。
+3. 之前报告的 4 DCU 点（8 ranks / 4 DCUs）= **2 核/DCU**，不是 8:1 槽，
+   只能算“增卡实验”，不能用于核卡比或加速比。矩阵脚本现在会拒绝非 8 核/DCU
+   的腿（除非显式 `ONEFLOW_MZ_MATRIX_ALLOW_NONSTANDARD=1`），并记录
+   `cores`、`cores_per_dcu`、`ranks_per_dcu`。
+
+**100-step、全开阶段、修正后的两组数（revision `7ab873b8`）**
+
+| 对照 | 资源（CPU 侧是真实活跃核） | CPU mean | HIP mean | 比值 | 备注 |
+|---|---|---:|---:|---:|---|
+| 规范资源口径 | 8C（`kshcnormal`，无卡） vs 8C+1DCU（`kshdnormal`，8 ranks/DCU） | 20854.4 ms | 9521.9 ms | **2.19x** | CPU 基线在 CPU 队列，跨节点型 |
+| 同节点隔离 | 8C（DCU 节点，卡空闲） vs 8C+1DCU | 28558.5 ms | 9521.9 ms | **3.00x** | 同节点，隔离“加卡”效果 |
+| 参考（无效比值） | 8C vs 8C+4DCU | 28558.5 ms | 2347.0 ms（10-step 旧点） | — | 2 核/DCU，非 8:1，不可用于核卡比 |
+
+HIP 4 个正式 sample：9536.8 / 9425.7 / 9729.6 / 9395.4 ms（同节点两次作业）。
+
+结论：
+
+- **规范口径下 1 个 DCU 槽（8 核）对 8 核是 2.19x**；同节点隔离“加卡”是 **3.00x**。
+  两者都要报，且必须写清 CPU 腿在哪个队列/节点。
+- CPU 腿对节点类型敏感（37%），这个量级和部分“加速比”同阶，所以任何跨队列
+  比值都必须标注节点差异，不能与同节点比值混用。
+- 多卡 8:1 槽要求 `cores = 8 × dcus`：8 卡需要 64 核 + 至少 8 个 zone 的 fixture。
+  当前 8-zone fixture 只有 8 个 rank，做不到 8 卡 × 8 核的规范配置，需要新的
+  分区 fixture；在那之前不声明多卡核卡比。
+
 ## 2026-10-22 交换值评估、mirror-only 梯度、固定开销与跨节点阻塞
 
 ### 交换值评估（并行正确性）
