@@ -47,6 +47,7 @@ License
 #include "BcRecord.h"
 #include "UNsCom.h"
 #ifdef ONEFLOW_ENABLE_HIP
+#include "HipProductionPolicy.h"
 #include "HipFluxBackend.h"
 #endif
 #include <cstdlib>
