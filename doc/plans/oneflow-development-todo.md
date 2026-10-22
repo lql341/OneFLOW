@@ -66,6 +66,71 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 交换值评估、mirror-only 梯度、固定开销与跨节点阻塞
+
+### 交换值评估（并行正确性）
+
+跨 zone 的 ghost 梯度必须与 CPU oracle 逐位对齐，所以先确认“交换什么、什么时候交换”：
+
+- **交换的值**：每个 interface face 上，发送侧 *owned (left) cell* 的 3 个梯度分量
+  × 5 方程。接收侧写入对应的 *ghost (right) cell*。这与
+  `UploadInterfaceValue` 的 `GetSId(iFace, ghostId+1)` / `DownloadInterfaceValue`
+  的 `GetTId(...)` 完全一致，也和 q halo 用同一套 endpoint cell id。
+- **时机（关键）**：legacy 的 `Grad::SwapBcGrad` 只把 owned 值写进 send storage，
+  真正的收发发生在之后的 `CUpdateInterface::Run()`；因此第 k 步重建用的 ghost
+  梯度其实是邻居第 k−1 轮交换的值（**一轮滞后**）。同一 stage 内的“pack→MPI→unpack”
+  会变成同轮值，qf2 会偏离 oracle（量级 1e-2），trace 必然失败。
+- **物理边界**：`GradientCopyBoundaryKernel` 的 left→ghost 拷贝对应
+  `CalcGradGGCellWeight` 的同一拷贝，不能被 halo 覆盖。
+
+结论：**不改交换值和时序**。只把 host 侧的“整场镜像”缩小到 host 交换真正读的那一小块：
+interface send 用的 boundary-adjacent owned cell（`dqdx[leftCell]`，`StoreBcGrad`
+用的也是同一组），数量 ≤ `nBFaces`。host mirror 仍然喂给未改动的
+`Grad::SwapBcGrad`（保留一轮滞后），ghost 切片仍然回传 device 供重建使用。
+
+实测（`743bc421` → `7ab873b8`，100 steps，rank 0）：
+
+| 项 | 之前 | 之后 |
+|---|---:|---:|
+| gradient 总计 | 2789.8 ms | **1647.7 ms** |
+| 其中整场下载 / mirror | 1078.0 | **290.6**（mirror，含 pack） |
+| gradient kernel | 365.5 | 383.1 |
+
+门禁：3-step trace `MULTIZONE_TRACE_PASS`（36 records/rank，HIP vs legacy
+2.27e-13），contract `records=24 failures=0 max_abs_diff=0`，50-step stability
+三路 `exit_code=0 / diagnostic_hits=0 / PASS`。
+
+### 端到端（100 steps，单节点 8 核 vs 1 DCU，8 zones / 8 ranks）
+
+| 腿 | formal 1 | formal 2 | mean |
+|---|---:|---:|---:|
+| CPU 8 cores | 28083.6 | 27630.7 | **27857.2 ms** |
+| HIP 1 DCU | 9444.4 | 9574.1 | **9509.3 ms** |
+| 比值 | | | **2.930x** |
+
+（同一 revision 之前为 2.556x；本轮 mirror 改动带来约 +15%。）
+
+### 固定开销 profile（同一节点，cases=1/2/100 steps，HIP）
+
+| steps | wall（warm） |
+|---:|---:|
+| 1 | 1940.7 ms |
+| 2 | 1993.6 ms |
+| 100 | 9275.3 ms |
+
+线性拟合：**固定开销 ≈ 1.87 s/run，稳态 ≈ 74 ms/step**（100-step 时固定部分占
+wall 的 20%）。逐 stage 求和约 55 ms/step，说明还有约 19 ms/step 未被现有计时覆盖
+（task 调度、postprocess、残差/CFL 输出、收尾写盘）。
+
+### 跨节点：当前阻塞在一个与 HIP 无关的 setup 崩溃
+
+`--nodes 2 --cpus 8 --dcus 2`（实际分布 7+1 ranks）下，**legacy CPU 腿**在
+`SimuContext::SetupCaseEnvironment()` 段错误（rank 6，`addr2line` 确认：
+`SetupCaseEnvironment → SimuImp::RunCase → Simulation::RunImpl → main`）。
+它发生在任何 halo/HIP 代码之前，说明 3D fixture 的多节点 case 准备本身还没打通；
+`--scheduler-option=--ntasks-per-node=4` 未能改变 7+1 的分布。跨节点 correctness
+和跨节点加速比因此仍未取得证据，不能声明。
+
 ## 2026-10-21 loop 优化：measurement basis、limiter、device time-step、pinned mirror
 
 **先纠正口径**：`steps=10` 时每次 mpirun 有约 3.8–4.1 s 固定开销（MPI/设备初始化、
