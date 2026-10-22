@@ -12,6 +12,11 @@ ranks="${ONEFLOW_MZ_RANKS:-8}"
 steps="${ONEFLOW_MZ_STEPS:-3}"
 cfl="${ONEFLOW_MZ_CFL:-0.01}"
 timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-900}"
+# MPI placement: `slot` fills nodes in order (fine on one node).  A multi-node
+# allocation must pin the per-node rank count, otherwise the scheduler can
+# hand out an uneven split (7+1 was observed, which then crashed OpenMPI's
+# coll/han communicator setup).
+map_by="${ONEFLOW_MZ_MAP_BY:-slot}"
 # Stage opt-ins are explicit: the default trace only exercises the fused flux
 # and interface path.  ONEFLOW_MZ_HIP_GRADIENT=1 additionally re-opens the
 # device gradient, and ONEFLOW_MZ_RESIDENT_CONTRACT=1 verifies that the
@@ -163,7 +168,7 @@ run_mode() {
             unset ONEFLOW_MZ_FIXTURE_EXPORT_DIR || true
         fi
         timeout --foreground --signal=TERM --kill-after=15s "$timeout_seconds" \
-            mpirun --bind-to core --map-by slot --report-bindings -np "$ranks" \
+            mpirun --bind-to core --map-by $map_by --report-bindings -np "$ranks" \
             env ONEFLOW_FAIL_ON_NONPHYSICAL=1 "$binary" 0 "$case_dir"
     ) > "$log" 2>&1
     python3 "$ONEFLOW_MZ_RANK_VERIFIER" \

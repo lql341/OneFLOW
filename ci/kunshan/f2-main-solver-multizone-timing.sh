@@ -78,6 +78,11 @@ printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
     echo "hostlist=${SLURM_JOB_NODELIST:-unknown}"
     echo "mpirun=$(command -v mpirun)"
     echo "mpi=$(mpirun --version | head -1)"
+    echo "map_by=$map_by"
+    echo "OMPI_MCA_coll=${OMPI_MCA_coll:-unset}"
+    echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
+    echo "SLURM_JOB_CPUS_PER_NODE=${SLURM_JOB_CPUS_PER_NODE:-unknown}"
+    echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-unset}"
 } > "$ONEFLOW_MZ_RUN_ROOT/environment.txt"
 
 timing="$ONEFLOW_MZ_RUN_ROOT/timing.tsv"
@@ -141,7 +146,7 @@ run_once() {
         fi
         export ONEFLOW_STAGE_BREAKDOWN_FILE="$breakdown"
         timeout --foreground --signal=TERM --kill-after=15s "$timeout_seconds" \
-            mpirun --bind-to core --map-by slot --report-bindings -np "$ranks" \
+            mpirun --bind-to core --map-by $map_by --report-bindings -np "$ranks" \
             env ONEFLOW_FAIL_ON_NONPHYSICAL=1 "$ONEFLOW_MZ_BINARY" 0 "$case_dir"
     ) > "$log" 2>&1
     rc=$?
