@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Grad.h"
+#include "StageProfiler.h"
 #include "UGrad.h"
 #include "UCom.h"
 #include "FieldManager.h"
@@ -100,13 +101,19 @@ void Grad::SwapBcGrad()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
 
+    {
+        ScopedStageTimer timer( "swap_upload" );
     UploadInterfaceValue( grid, dqdx, namex, nEqu );
     UploadInterfaceValue( grid, dqdy, namey, nEqu );
     UploadInterfaceValue( grid, dqdz, namez, nEqu );
+    }
 
+    {
+        ScopedStageTimer timer( "swap_download" );
     DownloadInterfaceValue( grid, dqdx, namex, nEqu );
     DownloadInterfaceValue( grid, dqdy, namey, nEqu );
     DownloadInterfaceValue( grid, dqdz, namez, nEqu );
+    }
 
     if ( ctrl.debugFieldDump != 0 )
     {
@@ -126,6 +133,7 @@ void Grad::SwapBcGrad()
     }
     if ( istore == 1 )
     {
+        ScopedStageTimer timer( "swap_store" );
         this->StoreBcGrad();
     }
 }
