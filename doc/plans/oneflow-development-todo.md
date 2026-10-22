@@ -66,6 +66,51 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 性能切片：接口 pack 去重 + aero 力直接读 cell gradient
+
+**热点确认（100-step，8 ranks 全 rank 聚合，非只看 rank 0）**
+
+`update_residuals` 31.4 ms/step（父项）、`mpi_interface` 11.7、`gradient` 19.2
+（子项：kernel 4.1、mirror 3.7、其余 ~11.4 = `SwapBcGrad`）。细分后
+`swap_store`（`Grad::StoreBcGrad`）**4.1 ms/step** 是最大单块，`swap_upload`
+2.3、`swap_download` 1.6。
+
+**切片 1（保留，`c15324dc`）**：`UploadInterfaceValue`/`DownloadInterfaceValue`
+每次都新建 endpoint 向量 + `nEqu×nIFaces` packed 缓冲，再二次拷贝进/出接口
+storage，并单独做一遍 endpoint 校验。接口 storage 本身就是 equation-major 的
+逐面布局，改为直接 copy/scatter，endpoint id 每 ghost level 建一次（thread-local
+scratch），范围检查并入 id 遍历。值、面序、交换时序不变。
+
+- 交错配对（同节点、100 steps、3 对）：old `9770.9 ms` → new `9436.9 ms`，
+  mean 比值 **1.0354x**，3/3 对为正。
+- 正确性：CPU normal/strict 各 5/5；3-step trace PASS；50-step stability 3/3；
+  NoTrace 200-step residual 相对差 1.094e-14。
+
+**切片 2（保留，`95830d9b`）**：`StoreBcGrad` 每个 RK stage 用随机 gather 把
+`dqdx/dqdy/dqdz` 在边界面左单元的值抄到 `bcdqdx/y/z`（3×neq×nBFaces），
+唯一消费者是 `AeroForceTask`。改为让 force task 直接读 `dqdx/y/z[eq][leftCell]`
+（同一数组、同一单元、数值逐位相同），并默认关闭这次拷贝（
+`ONEFLOW_ENABLE_BC_GRADIENT_STORE=1` 可恢复）。
+
+- **中间失败**：只关拷贝、不改消费者时，CPU 五算例 normal/strict 各 **0/5**
+  （`aero.dat`/`wallaero.dat` 变化）——说明 `bcdq*` 确实是 force 的输入，
+  直接删除是错的。改消费者后恢复。
+- 最终交错配对（`500ba688` → `95830d9b`，同节点、100 steps、3 对、每对 2 样本）：
+  - old 原始样本：10348.98 / 9568.04 / 9808.82 / 9621.76 / 9694.39 / 9672.34 ms
+  - new 原始样本：9038.43 / 8976.67 / 8901.26 / 9207.59 / 9106.78 / 9484.20 ms
+  - mean `9785.7 → 9119.2 ms`（**1.0731x**）、median `9683.4 → 9072.6 ms`（1.0673x）
+  - 配对均值比值：1.1056 / 1.0730 / 1.0417，3/3 对为正
+  - 同作业 rank 0/4/7 的 loop 求和：`57.95 → 52.44 ms/step`（**−9.5%**）；
+    `gradient 18.38 → 12.68`，其中 `swap_store 4.12 → 0`
+- 正确性（`95830d9b`）：CPU normal/strict 各 5/5；8-zone 3-step trace PASS +
+  resident contract `24/0/0`；8-zone 50-step stability 3/3 PASS；
+  NoTrace 200-step residual 相对差 **1.094e-14**。
+
+**下一最大机会**：`swap_upload + swap_download` 仍约 4.3 ms/step，是
+`SwapBcGrad` 为接口 storage 做的一次随机 gather/scatter；若要继续压缩，需要让
+接口交换直接消费 endpoint 紧凑布局（而不是逐面 `MRField`），属于通信布局改动，
+需单独立项。`gradient_mirror 3.5` 与 `reconstruction 9.0` 次之。
+
 ## 2026-10-22 闭环审计与残差/正性诊断切片
 
 ### 审计结论（当前受限路径：inviscid / Lax-Friedrichs / limiter-off / 显式 RK）
