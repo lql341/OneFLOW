@@ -13,6 +13,11 @@ warmup="${ONEFLOW_MZ_WARMUP:-1}"
 repeats="${ONEFLOW_MZ_REPEATS:-5}"
 cfl="${ONEFLOW_MZ_CFL:-0.01}"
 timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-600}"
+# MPI placement: `slot` fills nodes in order (fine on one node).  A multi-node
+# allocation must pin the per-node rank count, otherwise the scheduler can
+# hand out an uneven split (7+1 was observed, which crashed OpenMPI's
+# coll/han communicator setup during case setup).
+map_by="${ONEFLOW_MZ_MAP_BY:-slot}"
 
 case "$mode" in
     cpu|hip) ;;
