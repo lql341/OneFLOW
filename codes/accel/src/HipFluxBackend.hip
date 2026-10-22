@@ -2838,6 +2838,88 @@ bool HipFluxBackend::SyncResidentGhostStateFromHost(
     return true;
 }
 
+void HipFluxBackend::MirrorGradientCellsToHost(
+    const void * cacheKey,
+    int nEquations,
+    const std::vector< int > & cellIds,
+    Real * const * dqdx,
+    Real * const * dqdy,
+    Real * const * dqdz )
+{
+    if ( cacheKey == nullptr || nEquations <= 0 || dqdx == nullptr
+         || dqdy == nullptr || dqdz == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid HIP gradient mirror request" );
+    }
+    if ( cellIds.empty() ) return;
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP gradient mirror requires a bound Ns3D state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP gradient mirror state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( totalCells <= 0
+         || storage.cellGradient.Size()
+             < static_cast< std::size_t >( totalCells ) * 3 * nEquations )
+    {
+        throw std::logic_error(
+            "HIP gradient mirror requires a resident gradient" );
+    }
+    {
+        ScopedStageTimer timer( "gradient_mirror" );
+        const int cellCount = static_cast< int >( cellIds.size() );
+        if ( storage.cachedGradientMirrorCellIds != cellIds
+             || storage.cachedGradientMirrorEquations != nEquations )
+        {
+            storage.gradientMirrorCellIds.CopyFromHost(
+                cellIds.data(), cellIds.size() );
+            storage.cachedGradientMirrorCellIds = cellIds;
+            storage.cachedGradientMirrorEquations = nEquations;
+        }
+        const int planes = 3 * nEquations;
+        const std::size_t valueCount =
+            static_cast< std::size_t >( planes ) * cellCount;
+        storage.gradientMirrorValues.Resize( valueCount );
+        const int blockSize = 256;
+        hipLaunchKernelGGL(
+            PackBoundaryKernel,
+            dim3( ( static_cast< int >( valueCount ) + blockSize - 1 )
+                  / blockSize ),
+            dim3( blockSize ), 0, 0,
+            storage.cellGradient.Data(),
+            storage.gradientMirrorCellIds.Data(),
+            totalCells, cellCount, planes,
+            storage.gradientMirrorValues.Data() );
+        CheckHip( hipGetLastError(), "gradient mirror pack kernel launch" );
+        Real * pinned = LocalPinnedStaging().Get( valueCount );
+        storage.gradientMirrorValues.CopyToHost( pinned, valueCount );
+        for ( int plane = 0; plane < planes; ++ plane )
+        {
+            const int equation = plane / 3;
+            Real * destination = plane % 3 == 0
+                ? dqdx[ equation ]
+                : ( plane % 3 == 1 ? dqdy[ equation ] : dqdz[ equation ] );
+            const Real * source =
+                pinned + static_cast< std::size_t >( plane ) * cellCount;
+            for ( int index = 0; index < cellCount; ++ index )
+            {
+                destination[ cellIds[ index ] ] = source[ index ];
+            }
+        }
+    }
+}
+
 bool HipFluxBackend::VerifyResidentStateAgainstHost(
     const void * cacheKey,
     int nCells,

@@ -177,6 +177,12 @@ struct HipGradientStorage
     bool boundaryMaskValid = false;
     bool residualValid = false;
     const Real * cachedStateQ[ 5 ] = {};
+    // Cells whose gradient is mirrored to the host for the host-side interface
+    // exchange.  Kept resident so the mirror does not re-upload ids per stage.
+    DeviceBuffer< int > gradientMirrorCellIds;
+    std::vector< int > cachedGradientMirrorCellIds;
+    DeviceBuffer< Real > gradientMirrorValues;
+    int cachedGradientMirrorEquations = 0;
     // Cache metadata for the bound-state host-staged primitive path. The
     // unbound direct/smoke path keeps using HipFluxBackend's fallback cache.
     const void * cachedFluxOwnerToken = nullptr;
@@ -340,6 +346,20 @@ public:
         int nGhostCells,
         int nEquations,
         const Real * const * components );
+
+    // Mirror the resident gradient at the given cells into the solver-owned
+    // host components.  A device reconstruction only needs the host mirror at
+    // the boundary-adjacent owned cells (the interface send values and the
+    // face-indexed boundary gradient), not the whole field: the interface
+    // exchange, including its one-round lag, still runs through
+    // Grad::SwapBcGrad on that mirror.
+    void MirrorGradientCellsToHost(
+        const void * cacheKey,
+        int nEquations,
+        const std::vector< int > & cellIds,
+        Real * const * dqdx,
+        Real * const * dqdy,
+        Real * const * dqdz );
 
     // Diagnostic contract check: compare the complete resident primitive
     // state (owned + ghost cells) against the host mirror.  Returns false when

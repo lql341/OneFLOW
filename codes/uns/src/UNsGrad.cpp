@@ -40,6 +40,8 @@ License
 #include <cstdlib>
 #endif
 #include <stdexcept>
+#include <algorithm>
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -80,7 +82,7 @@ void UNsGrad::Init()
     this->istore = 1;
 }
 
-void UNsGrad::CalcGradHip( bool downloadToHost )
+void UNsGrad::CalcGradHip( bool downloadToHost, bool mirrorBoundaryGradient )
 {
 #ifdef ONEFLOW_ENABLE_HIP
     if ( q == nullptr || dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
@@ -117,7 +119,41 @@ void UNsGrad::CalcGradHip( bool downloadToHost )
         view.dqdz[ equation ] = ( * dqdz )[ equation ].data();
     }
     HipFluxBackend::Shared().CalcGradient( view );
-    if ( view.downloadToHost ) this->SwapBcGrad();
+    if ( mirrorBoundaryGradient && ! view.downloadToHost )
+    {
+        // The host mirror is consumed by Grad::SwapBcGrad only at the
+        // boundary-adjacent owned cells: UploadInterfaceValue packs
+        // dqdx[leftCell] for interface faces and StoreBcGrad stores the same
+        // value for every boundary face.  Mirror exactly that set, then run the
+        // unchanged host swap so the receive buffer (and therefore the
+        // one-round lag) keeps the CPU oracle semantics.
+        if ( ug.bcRecord == nullptr )
+        {
+            throw std::runtime_error(
+                "UNs HIP gradient mirror requires a boundary record" );
+        }
+        std::vector< int > cells( static_cast< std::size_t >( ug.nBFaces ) );
+        for ( int face = 0; face < ug.nBFaces; ++ face )
+            cells[ face ] = ( * ug.lcf )[ face ];
+        std::sort( cells.begin(), cells.end() );
+        cells.erase( std::unique( cells.begin(), cells.end() ), cells.end() );
+        Real * dx[ 5 ] = {};
+        Real * dy[ 5 ] = {};
+        Real * dz[ 5 ] = {};
+        for ( int equation = 0; equation < nEqu; ++ equation )
+        {
+            dx[ equation ] = ( * dqdx )[ equation ].data();
+            dy[ equation ] = ( * dqdy )[ equation ].data();
+            dz[ equation ] = ( * dqdz )[ equation ].data();
+        }
+        HipFluxBackend::Shared().MirrorGradientCellsToHost(
+            grid, nEqu, cells, dx, dy, dz );
+        this->SwapBcGrad();
+    }
+    else if ( view.downloadToHost )
+    {
+        this->SwapBcGrad();
+    }
 #else
     throw std::runtime_error(
         "UNs HIP gradient was called without HIP support" );

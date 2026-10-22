@@ -249,6 +249,11 @@ void UNsInvFlux::CalcInvFace()
             && ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 );
         const bool downloadGradient =
             hipGradient && ( ! hipReconstruction || crossZoneGhostGradient );
+        // With a cross-zone device reconstruction the host mirror is only used
+        // by the host interface exchange, so mirror just the boundary-adjacent
+        // owned gradient instead of downloading the whole field.
+        const bool mirrorBoundaryGradient =
+            hipGradient && hipReconstruction && crossZoneGhostGradient;
         if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
         {
             static int printed = 0;
@@ -257,6 +262,8 @@ void UNsInvFlux::CalcInvFace()
                 std::cout << "HIP_STAGE_DIAGNOSTIC hip_gradient=" << hipGradient
                           << " hip_reconstruction=" << hipReconstruction
                           << " download_gradient=" << downloadGradient
+                          << " mirror_boundary_gradient="
+                          << mirrorBoundaryGradient
                           << " zones=" << ZoneState::nZones
                           << " local_zones=" << ZoneState::nLocal
                           << std::endl;
@@ -264,7 +271,9 @@ void UNsInvFlux::CalcInvFace()
             }
         }
         if ( hipGradient )
-            uns_grad.CalcGradHip( downloadGradient );
+            uns_grad.CalcGradHip(
+                downloadGradient && ! mirrorBoundaryGradient,
+                mirrorBoundaryGradient );
         else
             uns_grad.CalcGrad();
     }

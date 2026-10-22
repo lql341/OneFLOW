@@ -31,9 +31,9 @@ struct CategoryTotal
     double elapsedMs;
 };
 
-std::array< CategoryTotal, 36 > & Totals()
+std::array< CategoryTotal, 37 > & Totals()
 {
-    static std::array< CategoryTotal, 36 > totals = {{
+    static std::array< CategoryTotal, 37 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -70,6 +70,7 @@ std::array< CategoryTotal, 36 > & Totals()
         { "gradient_kernel", 0.0 },
         { "halo_ghost_sync", 0.0 },
         { "state_update", 0.0 },
+        { "gradient_mirror", 0.0 },
     }};
     return totals;
 }
