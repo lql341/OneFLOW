@@ -66,6 +66,56 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 闭环审计与残差/正性诊断切片
+
+### 审计结论（当前受限路径：inviscid / Lax-Friedrichs / limiter-off / 显式 RK）
+
+| 字段 | 权威位置 | host 镜像 | 谁在写 | 谁在读 |
+|---|---|---|---|---|
+| `q`（owned+ghost） | device `cellState` | 每 stage D2H（state update 回写）→ **当前** | `UpdatePrimitiveState` + `UpdateBoundaryState` + ghost sync | 输出/气动力/restart 写盘 |
+| gradient | device `cellGradient` | 仅 boundary-adjacent owned + ghost（`SwapBcGrad` 需要） | `CalcGradient` + `MirrorGradientCellsToHost` | 仅 host 梯度交换 |
+| residual | device `storage.residual` | **不再每步镜像**；trace/输出/restart dump 时才下传 | `CalcAndAddReconstructedFaceFlux` / `ScaleCurrentResidual` | 本轮改为 device 归约标量 → `ResidualTask` |
+| timeStep / invsr | device | 无（`downloadToHost=false`） | `CalcLocalInviscidTimeStep` | `ScaleCurrentResidual`（`preferResidentTimeStep`） |
+| `bc_q`、boundary ghost | device | 每 stage D2H（ghost + bcQ） | `UpdateBoundaryState` | `NsCalcGamaT`/输出 |
+
+- 真正必要的 host 读取：输出、restart、气动力（`wallaero`/`aero`）、残差报表。
+- 旧 task 接口造成的整场镜像：residual 每步整场（本轮删除，改标量）、gradient 整场（上一轮删除，改 boundary 邻域 + ghost）。
+- 同步点：`RefreshResidentPrimitiveState`（full/ghost/None，由 generation+ghost epoch 决定）、`NoteHostGhostMutation`（host 边界/交换后）、`NoteDeviceFieldUpdate`（state update 后）、`NoteDeviceGhostUpdate`（device 边界/unpack 后）。
+- state owner / generation / halo contract 可以直接复用，无需新建。
+
+**主要缺口（按对“可用求解模式”的影响排序）**
+
+1. **残差诊断曾是假的**：device 路径不回写 host residual，`res.dat` 每步都是 0，收敛历史、restart 里的 residual history、host 正性守门全部失效（trace 门禁看不出来，因为 trace 会把 residual 下传）。
+2. restart 等价性没有端到端证据（q 是当前的，理论应等价，但没有 100 步 = 50+restart+50 的实测）。
+3. 6 个 `boundary_*` 子项与 `update_residuals`（父项）存在嵌套；`boundary_device` 之前没注册。
+4. 多卡/跨节点 8:1 仍需 ≥64-zone fixture。
+
+### 本轮切片（已实施，`80b0dec3` → `500ba688`）
+
+`ComputeResidualMetrics`：在 device 上把**已缩放** residual 归约成 host task 需要的标量
+（每方程 Σres²、max|res| 及 cell、primitive 最小 rho/p），复用原 `ResData`/MPI 平均
+路径，只回传约 12 KB/zone；residual 整场只在 trace / 输出 / restart dump 时下传。
+同一归约顺带让 `ONEFLOW_FAIL_ON_NONPHYSICAL` 对 device 路径真正生效（以前依赖被跳过的
+host cell loop）。期间该守门抓到自己一个 bug：q 分量 stride 应用 owned+ghost
+（`500ba688` 修正），否则假报非物理。
+
+**验收（`500ba688`，8-zone / 8 ranks / 1 DCU，backend-only）**
+
+| 项 | 结果 |
+|---|---|
+| 200-step residual history vs CPU（高精度输出） | `max_rel_diff = 1.068e-14`（200×5 全部行） |
+| 200-step `aero.dat` vs CPU | 5 位有效数字内完全一致 |
+| 3-step trace + contract | PASS，36 records/rank，`failures=0 max_abs_diff=0` |
+| 8-zone / 单 zone 50-step stability | 三路全 PASS，`hits=0` |
+| `residual_metrics` 成本 | 0.77 ms/step（整场 D2H 约 10 ms/step 的 1/13） |
+| 100-step HIP | 9321 / 10156 ms，与上一轮持平（无回归） |
+
+**下一片（已明确，未实施）**：restart 等价性。步骤：`nFieldSave=50` 跑 50 步产生
+restart → 用 `startStrategy` 重启再跑 50 步 → 与连续的 100 步run 比较最终
+`res.dat`/`aero.dat`/restart 内容；CPU 与 HIP 各一组。判据：residual 相对差
+≤1e-12、aero ≤1e-10、`exit_code=0`。同时清理 stability/timing runner 的继承环境
+污染（本轮已改为 backend-only 并记录 auto/1/0）。
+
 ## 2026-10-22 默认 policy 收口：只设 `ONEFLOW_ACCEL_BACKEND=HIP`
 
 目标要求“通过 `ONEFLOW_ACCEL_BACKEND=HIP` 切换 GPU 后段”，而此前 reconstruction /
