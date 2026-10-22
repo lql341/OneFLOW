@@ -27,6 +27,8 @@ License
 #include "Fatal.h"
 #include "Parallel.h"
 #include "SolverState.h"
+#include "SolverDef.h"
+#include "NsCom.h"
 #include "SolverInfo.h"
 #include "DataBase.h"
 #include "UnsGrid.h"
