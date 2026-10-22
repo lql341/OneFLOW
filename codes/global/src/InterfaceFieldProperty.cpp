@@ -33,9 +33,25 @@ along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 #include "FaceTopo.h"
 #include "BoundaryExchangeContract.h"
 
+#include <stdexcept>
 #include <vector>
 
 BeginNameSpace( ONEFLOW )
+
+namespace
+{
+
+// Reused endpoint scratch for the interface pack/unpack helpers.  The host
+// field path is single threaded, and the ids are rebuilt per ghost level, so a
+// thread-local buffer removes the per-call allocation without caching any
+// topology that could go stale.
+std::vector< int > & LocalInterfaceCellIds()
+{
+    static thread_local std::vector< int > cellIds;
+    return cellIds;
+}
+
+}
 
 void InterfaceFieldProperty::AddField(
     const std::string & fieldName,
@@ -100,31 +116,32 @@ void UploadInterfaceValue( UnsGrid * grid, MRField * field2D, const std::string 
                 + name );
         }
 
-        BoundaryEndpointMap endpoint;
-        endpoint.cellCount =
+        // The send storage is already equation-major with one entry per
+        // interface face, i.e. exactly the packed layout.  Copy straight into
+        // it instead of packing into a temporary vector and copying again;
+        // the endpoint range check is fused into the single id pass.
+        const int cellCount =
             static_cast< int >( ( * field2D )[ 0 ].size() );
-        endpoint.cellIds.resize( nIFaces );
+        std::vector< int > & cellIds = LocalInterfaceCellIds();
+        cellIds.resize( static_cast< std::size_t >( nIFaces ) );
         for ( int iFace = 0; iFace < nIFaces; ++ iFace )
         {
-            int iCell;
+            int iCell = -1;
             grid->GetFaceTopo().GetSId(iFace, ghostId + 1, iCell);
-            endpoint.cellIds[ iFace ] = iCell;
+            if ( iCell < 0 || iCell >= cellCount )
+            {
+                throw std::out_of_range(
+                    "boundary endpoint cell is out of range" );
+            }
+            cellIds[ iFace ] = iCell;
         }
-
-        std::vector< const Real * > components;
-        components.reserve( nEqu );
         for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
         {
-            components.push_back( ( * field2D )[ iEqu ].data() );
-        }
-        std::vector< Real > packed;
-        PackBoundaryHost( endpoint, nEqu, components, packed );
-        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
-        {
+            const Real * source = ( * field2D )[ iEqu ].data();
+            Real * target = ( * fieldStorage )[ iEqu ].data();
             for ( int iFace = 0; iFace < nIFaces; ++ iFace )
             {
-                ( * fieldStorage )[ iEqu ][ iFace ] =
-                    packed[ iEqu * nIFaces + iFace ];
+                target[ iFace ] = source[ cellIds[ iFace ] ];
             }
         }
     }
@@ -151,40 +168,34 @@ void DownloadInterfaceValue( UnsGrid * grid, MRField * field2D, const std::strin
                 + name );
         }
 
+        // Mirror of UploadInterfaceValue: the receive storage already has the
+        // packed per-face layout, so scatter it straight into the ghost cells
+        // of the target field without an intermediate packed copy.
         const int nIFaces = interFace->nIFaces;
-        std::vector< Real > packed(
-            static_cast< std::size_t >( nEqu ) * nIFaces );
-        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
-        {
-            for ( int iFace = 0; iFace < nIFaces; ++ iFace )
-            {
-                packed[ iEqu * nIFaces + iFace ] =
-                    ( * fieldStorage )[ iEqu ][ iFace ];
-            }
-        }
-
-        BoundaryEndpointMap endpoint;
-        endpoint.cellCount =
+        const int cellCount =
             static_cast< int >( ( * field2D )[ 0 ].size() );
-        endpoint.cellIds.resize( nIFaces );
+        std::vector< int > & cellIds = LocalInterfaceCellIds();
+        cellIds.resize( static_cast< std::size_t >( nIFaces ) );
         for ( int iFace = 0; iFace < nIFaces; ++ iFace )
         {
-            int iCell;
+            int iCell = -1;
             grid->GetFaceTopo().GetTId(iFace, ghostId + 1, iCell);
-            endpoint.cellIds[ iFace ] = iCell;
+            if ( iCell < 0 || iCell >= cellCount )
+            {
+                throw std::out_of_range(
+                    "boundary endpoint cell is out of range" );
+            }
+            cellIds[ iFace ] = iCell;
         }
-
-        std::vector< Real * > components;
-        components.reserve( nEqu );
         for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
         {
-            components.push_back( ( * field2D )[ iEqu ].data() );
+            const Real * source = ( * fieldStorage )[ iEqu ].data();
+            Real * target = ( * field2D )[ iEqu ].data();
+            for ( int iFace = 0; iFace < nIFaces; ++ iFace )
+            {
+                target[ cellIds[ iFace ] ] = source[ iFace ];
+            }
         }
-        UnpackBoundaryHost(
-            endpoint,
-            nEqu,
-            packed,
-            components );
     }
 }
 
