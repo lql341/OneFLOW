@@ -39,6 +39,7 @@ License
 #include "NsCtrl.h"
 #include "Stress.h"
 #include "VisGrad.h"
+#include "FieldWrap.h"
 #include "NsCom.h"
 #include "Parallel.h"
 #include "Iteration.h"
