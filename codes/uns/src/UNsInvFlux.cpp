@@ -684,10 +684,19 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
             hostFluxPointer = & hostFlux;
         }
         HipFluxBackend & backend = HipFluxBackend::Shared();
+        // The residual field itself only has to reach the host when a
+        // diagnostic trace, a field/visualization dump or the final restart
+        // dump needs it. Everything else consumes the device reduction.
+        const bool dumpDue =
+            ( Iteration::nFieldSave > 0
+              && Iteration::outerSteps % Iteration::nFieldSave == 0 )
+            || ( Iteration::nVisualSave > 0
+                 && Iteration::outerSteps % Iteration::nVisualSave == 0 )
+            || Iteration::outerSteps >= Iteration::maxSteps;
         backend.CalcAndAddReconstructedFaceFlux(
             connectivity, residual, 1, nscom.gama_ref,
             hostFluxPointer, Zone::GetUnsGrid(),
-            ! this->UseHipDeviceStateUpdate() || needFlux );
+            ! this->UseHipDeviceStateUpdate() || needFlux || dumpDue );
         if ( needFlux )
         {
             for ( int equation = 0; equation < nEquations; ++ equation )

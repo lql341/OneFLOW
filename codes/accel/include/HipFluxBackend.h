@@ -26,6 +26,22 @@ namespace ONEFLOW
 
 struct PrimitiveFaceStateView;
 
+// Per-zone residual diagnostics computed from the state-owned device residual.
+// The solver consumes the same quantities the host residual task used to
+// derive by looping the MRField: sum of squares, max |residual| with its cell
+// index, and the primitive positivity extremes.  Only these values cross the
+// PCIe boundary; the residual field itself stays on the device.
+struct HipResidualMetrics
+{
+    std::vector< Real > sumOfSquares;
+    std::vector< Real > maxAbsolute;
+    std::vector< int > argmaxCell;
+    Real minDensity = 0.0;
+    Real minPressure = 0.0;
+    int nonPhysicalCells = 0;
+    bool valid = false;
+};
+
 struct HipBoundaryEndpointKey
 {
     int localZone = -1;
@@ -176,6 +192,10 @@ struct HipGradientStorage
     ResidentStateContract residentContract;
     bool boundaryMaskValid = false;
     bool residualValid = false;
+    // True between CALC_LHS (device residual scaling) and the next flux write.
+    // The state update consumes residualValid, but the diagnostics still need
+    // the scaled residual, so the two flags are tracked separately.
+    bool residualMetricsValid = false;
     const Real * cachedStateQ[ 5 ] = {};
     // Cells whose gradient is mirrored to the host for the host-side interface
     // exchange.  Kept resident so the mirror does not re-upload ids per stage.
@@ -183,6 +203,13 @@ struct HipGradientStorage
     std::vector< int > cachedGradientMirrorCellIds;
     DeviceBuffer< Real > gradientMirrorValues;
     int cachedGradientMirrorEquations = 0;
+    // Residual diagnostic reduction buffers (small, reused every outer step).
+    DeviceBuffer< Real > residualMetricChunkSum;
+    DeviceBuffer< Real > residualMetricChunkMax;
+    DeviceBuffer< int > residualMetricChunkIndex;
+    DeviceBuffer< Real > residualMetricChunkMin;
+    int residualMetricChunks = 0;
+    int residualMetricEquations = 0;
     // Cache metadata for the bound-state host-staged primitive path. The
     // unbound direct/smoke path keeps using HipFluxBackend's fallback cache.
     const void * cachedFluxOwnerToken = nullptr;
@@ -360,6 +387,17 @@ public:
         Real * const * dqdx,
         Real * const * dqdy,
         Real * const * dqdz );
+
+    // Reduce the resident (already LHS-scaled) device residual into the
+    // per-zone diagnostic scalars the solver's residual task reports.  Returns
+    // false when the grid has no resident residual, so callers keep the host
+    // loop as the fallback.
+    bool ComputeResidualMetrics(
+        const void * cacheKey,
+        int nCells,
+        int nEquations,
+        Real gamma,
+        HipResidualMetrics & metrics );
 
     // Diagnostic contract check: compare the complete resident primitive
     // state (owned + ghost cells) against the host mirror.  Returns false when

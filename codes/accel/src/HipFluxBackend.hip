@@ -2143,6 +2143,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     storage->residualCells = nCells;
     storage->residualEquations = nEq;
     storage->residualValid = true;
+    storage->residualMetricsValid = false;
     if ( hostFlux != nullptr ) storage->faceFlux.Resize( nFaces * nEq );
 
     const unsigned char * deviceBoundaryMask = nullptr;
@@ -2247,6 +2248,7 @@ void HipFluxBackend::ScaleCurrentResidual(
     CheckHip(
         hipDeviceSynchronize(),
         "state residual scale kernel synchronize" );
+    storage.residualMetricsValid = true;
 }
 
 void HipFluxBackend::UpdatePrimitiveState(
@@ -2835,6 +2837,162 @@ bool HipFluxBackend::SyncResidentGhostStateFromHost(
     }
     }
     contract.NoteGhostSync();
+    return true;
+}
+
+
+// Residual diagnostics: one block per contiguous cell chunk, serial inside the
+// chunk so the summation order is fixed for a given chunking.  Only scalars
+// leave the device; the residual field itself stays resident.
+__global__ void ResidualMetricsKernel(
+    const Real * residual,
+    const Real * q,
+    int nCells,
+    int nEquations,
+    int chunkCells,
+    Real * chunkSum,
+    Real * chunkMax,
+    int * chunkIndex,
+    Real * chunkMin )
+{
+    const int chunk = blockIdx.x;
+    const int chunks = gridDim.x;
+    if ( threadIdx.x != 0 ) return;
+    const int begin = chunk * chunkCells;
+    const int end = min( begin + chunkCells, nCells );
+    if ( begin >= end ) return;
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        Real sum = 0.0;
+        Real maximum = 0.0;
+        int index = begin;
+        const Real * values = residual + equation * nCells;
+        for ( int cell = begin; cell < end; ++ cell )
+        {
+            const Real value = values[ cell ];
+            sum += value * value;
+            const Real magnitude = fabs( value );
+            if ( magnitude > maximum )
+            {
+                maximum = magnitude;
+                index = cell;
+            }
+        }
+        chunkSum[ equation * chunks + chunk ] = sum;
+        chunkMax[ equation * chunks + chunk ] = maximum;
+        chunkIndex[ equation * chunks + chunk ] = index;
+    }
+    // Primitive positivity extremes (rho = component 0, p = last component).
+    Real minDensity = q[ begin ];
+    Real minPressure = q[ ( nEquations - 1 ) * nCells + begin ];
+    for ( int cell = begin + 1; cell < end; ++ cell )
+    {
+        const Real density = q[ cell ];
+        const Real pressure = q[ ( nEquations - 1 ) * nCells + cell ];
+        if ( density < minDensity ) minDensity = density;
+        if ( pressure < minPressure ) minPressure = pressure;
+    }
+    chunkMin[ chunk ] = minDensity;
+    chunkMin[ chunks + chunk ] = minPressure;
+}
+
+bool HipFluxBackend::ComputeResidualMetrics(
+    const void * cacheKey,
+    int nCells,
+    int nEquations,
+    Real gamma,
+    HipResidualMetrics & metrics )
+{
+    ( void ) gamma;
+    metrics.valid = false;
+    if ( cacheKey == nullptr || nCells <= 0 || nEquations <= 0 ) return false;
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return false;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return false;
+    HipGradientStorage & storage = hipState->Gradient();
+    if ( ! storage.residualMetricsValid || storage.residualCells != nCells
+         || storage.residualEquations != nEquations
+         || storage.residual.Size()
+             < static_cast< std::size_t >( nCells ) * nEquations )
+    {
+        return false;
+    }
+    ScopedStageTimer timer( "residual_metrics" );
+    const int chunkCells = 256;
+    const int chunks = ( nCells + chunkCells - 1 ) / chunkCells;
+    if ( storage.residualMetricChunks != chunks
+         || storage.residualMetricEquations != nEquations )
+    {
+        storage.residualMetricChunkSum.Resize(
+            static_cast< std::size_t >( chunks ) * nEquations );
+        storage.residualMetricChunkMax.Resize(
+            static_cast< std::size_t >( chunks ) * nEquations );
+        storage.residualMetricChunkIndex.Resize(
+            static_cast< std::size_t >( chunks ) * nEquations );
+        storage.residualMetricChunkMin.Resize(
+            static_cast< std::size_t >( 2 ) * chunks );
+        storage.residualMetricChunks = chunks;
+        storage.residualMetricEquations = nEquations;
+    }
+    hipLaunchKernelGGL(
+        ResidualMetricsKernel, dim3( chunks ), dim3( 1 ), 0, 0,
+        storage.residual.Data(), storage.cellState.Data(), nCells,
+        nEquations, chunkCells, storage.residualMetricChunkSum.Data(),
+        storage.residualMetricChunkMax.Data(),
+        storage.residualMetricChunkIndex.Data(),
+        storage.residualMetricChunkMin.Data() );
+    CheckHip( hipGetLastError(), "residual metrics kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "residual metrics kernel synchronize" );
+
+    std::vector< Real > chunkSum(
+        static_cast< std::size_t >( chunks ) * nEquations );
+    std::vector< Real > chunkMax( chunkSum.size() );
+    std::vector< int > chunkIndex( chunkSum.size() );
+    std::vector< Real > chunkMin( static_cast< std::size_t >( 2 ) * chunks );
+    storage.residualMetricChunkSum.CopyToHost( chunkSum.data(), chunkSum.size() );
+    storage.residualMetricChunkMax.CopyToHost( chunkMax.data(), chunkMax.size() );
+    storage.residualMetricChunkIndex.CopyToHost(
+        chunkIndex.data(), chunkIndex.size() );
+    storage.residualMetricChunkMin.CopyToHost( chunkMin.data(), chunkMin.size() );
+
+    metrics.sumOfSquares.assign( static_cast< std::size_t >( nEquations ), 0.0 );
+    metrics.maxAbsolute.assign( static_cast< std::size_t >( nEquations ), 0.0 );
+    metrics.argmaxCell.assign( static_cast< std::size_t >( nEquations ), 0 );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        Real sum = 0.0;
+        Real maximum = 0.0;
+        int index = 0;
+        for ( int chunk = 0; chunk < chunks; ++ chunk )
+        {
+            const std::size_t at =
+                static_cast< std::size_t >( equation ) * chunks + chunk;
+            sum += chunkSum[ at ];
+            if ( chunkMax[ at ] > maximum )
+            {
+                maximum = chunkMax[ at ];
+                index = chunkIndex[ at ];
+            }
+        }
+        metrics.sumOfSquares[ equation ] = sum;
+        metrics.maxAbsolute[ equation ] = maximum;
+        metrics.argmaxCell[ equation ] = index;
+    }
+    metrics.minDensity = chunkMin[ 0 ];
+    metrics.minPressure = chunkMin[ chunks ];
+    for ( int chunk = 1; chunk < chunks; ++ chunk )
+    {
+        if ( chunkMin[ chunk ] < metrics.minDensity )
+            metrics.minDensity = chunkMin[ chunk ];
+        if ( chunkMin[ chunks + chunk ] < metrics.minPressure )
+            metrics.minPressure = chunkMin[ chunks + chunk ];
+    }
+    metrics.nonPhysicalCells = 0;
+    if ( ! ( metrics.minDensity > 0.0 ) || ! ( metrics.minPressure > 0.0 ) )
+        metrics.nonPhysicalCells = 1;
+    metrics.valid = true;
     return true;
 }
 

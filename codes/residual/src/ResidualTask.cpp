@@ -38,7 +38,13 @@ License
 #include "TextFileParser.h"
 #include "StringUtils.h"
 #include "UNsCom.h"
+#include "AccelRuntime.h"
+#include "HipProductionPolicy.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 #include <cstdlib>
+#include <stdexcept>
 #include <limits>
 #include <sstream>
 #include <iomanip>
@@ -52,6 +58,12 @@ namespace
 // The CI-only switch selects canonical max_digits10 serialization for the
 // existing residual file. It does not change solver arithmetic or backend
 // selection.
+bool FailOnNonPhysicalState()
+{
+    const char * value = std::getenv( "ONEFLOW_FAIL_ON_NONPHYSICAL" );
+    return value != nullptr && value[ 0 ] == '1' && value[ 1 ] == '\0';
+}
+
 bool HighPrecisionResidualOutputEnabled()
 {
     const char * value = std::getenv( "ONEFLOW_RESIDUAL_TEST_OUTPUT" );
@@ -141,6 +153,51 @@ void ResidualTask::CalcRes( int solverType, ResData & data )
 
     data.resmax.index = 0;
     data.resmax.resmax = 0;
+
+#ifdef ONEFLOW_ENABLE_HIP
+    // When the production HIP path owns the residual, the host MRField is not
+    // mirrored every step. Reduce the resident residual on the device and feed
+    // the same ResData the host loop would have produced, so the convergence
+    // log and restart history read the authoritative state at scalar cost.
+    if ( HipProductionBackendSelected() && solverType == NS_SOLVER
+         && grid != nullptr && nEqu > 0 )
+    {
+        HipResidualMetrics metrics;
+        if ( HipFluxBackend::Shared().ComputeResidualMetrics(
+                 grid, grid->nCells, nEqu, nscom.gama_ref, metrics ) )
+        {
+            const CellMesh & cellMesh = grid->GetCellMesh();
+            for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+            {
+                data.resave.res[ iEqu ] = metrics.sumOfSquares[ iEqu ];
+                data.resmax.resmax[ iEqu ] = metrics.maxAbsolute[ iEqu ];
+                const int cell = metrics.argmaxCell[ iEqu ];
+                data.resmax.index[ iEqu ] = cell;
+                data.resmax.xcc[ iEqu ] = cellMesh.xcc[ cell ];
+                data.resmax.ycc[ iEqu ] = cellMesh.ycc[ cell ];
+                data.resmax.zcc[ iEqu ] = cellMesh.zcc[ cell ];
+                data.resmax.vol[ iEqu ] = cellMesh.vol[ cell ];
+            }
+            data.resmax.zid = grid->id;
+            if ( metrics.nonPhysicalCells > 0 )
+            {
+                std::cout << "Warning : non-physical device state"
+                          << " step = " << Iteration::outerSteps
+                          << ", zid = " << grid->id
+                          << ", min_density = " << metrics.minDensity
+                          << ", min_pressure = " << metrics.minPressure
+                          << std::endl;
+                if ( FailOnNonPhysicalState() )
+                {
+                    throw std::runtime_error(
+                        "non-physical Euler state on device" );
+                }
+            }
+            data.resave.nCells = grid->nCells;
+            return;
+        }
+    }
+#endif
 
     for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
     {
