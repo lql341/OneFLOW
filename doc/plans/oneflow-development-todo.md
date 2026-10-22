@@ -66,6 +66,44 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 跨节点打通与 fixture 扩展评估
+
+### 跨节点阻塞已定位并修复
+
+之前 2 节点作业的段错误不在 OneFLOW：backtrace 是
+`mca_coll_han_comm_create → mca_coll_han_bcast_intra → MPI_Bcast`，即 OpenMPI 的
+`coll/han` 分层集合通信在 **7+1 的不均匀分布**（`-N 2 -n 8` 默认 block 分布）上
+初始化崩溃，发生在 `SimuContext::SetupCaseEnvironment()` 的 Bcast 里。
+
+- 修复：`OMPI_MCA_coll='^hcoll,han'`（CPU 队列 2 节点 8+8 分布下 `han` 本来能跑，
+  所以这是“不均匀分布 + han”的组合问题；直接排除该组件最稳）。
+- 证据记录：timing runner 现在把 `map_by`、`OMPI_MCA_coll`、
+  `SLURM_CPUS_PER_TASK`、`SLURM_JOB_CPUS_PER_NODE` 写进 `environment.txt`；
+  `ONEFLOW_MZ_MAP_BY` 可指定 `ppr:N:node`（本例 Slurm 实际分布仍是 7+1，
+  portal 不接受 `--ntasks-per-node`，所以最终按 7+1 跑，仍是真实跨节点 halo）。
+
+**跨节点结果（revision `ed1e7d1e` 脚本 + `7ab873b8` 二进制，2 nodes，8 ranks，2 DCUs=1/节点）**
+
+- 3-step trace：`MULTIZONE_TRACE_PASS`，8/8 rank 有 solver work，
+  contract `records=24 failures=0 max_abs_diff=0`。
+- 100-step：CPU `27970.2/28661.8 ms`（mean 28316.0），HIP `11106.2/11122.0 ms`
+  （mean 11114.1）→ 2.548x。
+- **资源标注**：8 核 / 2 DCUs = **4 核/DCU**，不是 8:1 槽；加上 7+1 分布，
+  这条只能记为“跨节点正确性 + 跨节点可用性”，**不能用于核卡比**。
+
+### fixture 扩展评估：仓库内做不了
+
+`simutask=Partition` 在当前构建里是 `throw "Task \"Partition\" is registered but
+not implemented in this build."`（`codes/main/src/SimuTaskReg.cpp`）。现成 fixture
+只有 `m6wing-4.ofl` / `m6wing-8.ofl`。因此：
+
+- 8:1 规范的多卡配置（N DCUs × 8 核、1 rank/zone）需要 ≥N 个 zone；要 8 卡就要
+  ≥8 zone（有）**但** CPU 参照需要 ≥64 ranks，即 ≥64 zones；
+- 64-zone 分区必须由外部 METIS 分区流程或 fixture owner 提供，当前 build 无法生成。
+
+结论：多卡核卡比在拿到 ≥64-zone fixture 之前无法按规范给出；跨节点正确性已闭合，
+跨节点 8:1 核卡比同样需要该 fixture（或让 7+1 分布变成 4+4 并给 2 卡配 16 核）。
+
 ## 2026-10-22 资源口径纠正：1 DCU 槽 = 8 核，CPU 基线必须在 CPU 队列
 
 昆山活配置（`scnet.py queues --details`）：`kshdnormal` 32 cores/node、**4 DCUs/node**
