@@ -196,24 +196,21 @@ void CalcAeroForce(int idump_pres)
 	MRField * q = GetFieldPointer< MRField >(grid, "q");
 	MRField * visl = GetFieldPointer< MRField >(grid, "visl");
 
-	// Literal NS BC face grads (aero is NS-only; not GetBcGradField).
-	MRField * bcdqdx = GetFieldPointer< MRField >(grid, "bcdqdx");
-	MRField * bcdqdy = GetFieldPointer< MRField >(grid, "bcdqdy");
-	MRField * bcdqdz = GetFieldPointer< MRField >(grid, "bcdqdz");
+	// Literal NS cell gradients. The aero force used to read the face-indexed
+	// copy bcdqdx/y/z, which Grad::StoreBcGrad filled every RK stage by
+	// gathering dqdx/y/z at the left cell of each boundary face. Read that same
+	// cell value directly instead: identical numbers, no per-stage face-sized
+	// copy, and the HIP path already mirrors exactly these boundary-adjacent
+	// cells to the host.
+	MRField * dqdx = FieldHome::GetGradField( grid, NS_SOLVER, 1 );
+	MRField * dqdy = FieldHome::GetGradField( grid, NS_SOLVER, 2 );
+	MRField * dqdz = FieldHome::GetGradField( grid, NS_SOLVER, 3 );
+	if ( dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
+	{
+		Fatal( "aero force requires the NS cell gradient fields" );
+	}
 
 	int startStrategy = ctrl.startStrategy;
-	if ( startStrategy == 2 )
-	{
-		RealField & dpdx = (*bcdqdx)[IIDX::IIP];
-		RealField & dpdy = (*bcdqdy)[IIDX::IIP];
-		RealField & dpdz = (*bcdqdz)[IIDX::IIP];
-	}
-	else
-	{
-		RealField & dpdx = (*bcdqdx)[IDX::IP];
-		RealField & dpdy = (*bcdqdy)[IDX::IP];
-		RealField & dpdz = (*bcdqdz)[IDX::IP];
-	}
 
 	stress.rey = GetDataValue< Real >("reynolds");
 	stress.orey = 1.0 / stress.rey;
@@ -269,7 +266,7 @@ void CalcAeroForce(int idump_pres)
 			//pressure drag
 			if (startStrategy == 2)
 			{
-				Real wp = (*q)[IIDX::IIP][lc] + (*bcdqdx)[IIDX::IIP][fId] * dx + (*bcdqdy)[IIDX::IIP][fId] * dy + (*bcdqdz)[IIDX::IIP][fId] * dz;
+				Real wp = (*q)[IIDX::IIP][lc] + (*dqdx)[IIDX::IIP][lc] * dx + (*dqdy)[IIDX::IIP][lc] * dy + (*dqdz)[IIDX::IIP][lc] * dz;
 				if (wp < 0.0) wp = (*q)[IIDX::IIP][lc];
 				Real pref = nscom.inflow[IIDX::IIP];
 				Real cp = two * (wp - pref);
@@ -284,17 +281,17 @@ void CalcAeroForce(int idump_pres)
 
 				if (vis_model.vismodel > 0)
 				{
-					stress.dudx = (*bcdqdx)[IIDX::IIU][fId];
-					stress.dudy = (*bcdqdy)[IIDX::IIU][fId];
-					stress.dudz = (*bcdqdz)[IIDX::IIU][fId];
+					stress.dudx = (*dqdx)[IIDX::IIU][lc];
+					stress.dudy = (*dqdy)[IIDX::IIU][lc];
+					stress.dudz = (*dqdz)[IIDX::IIU][lc];
 
-					stress.dvdx = (*bcdqdx)[IIDX::IIV][fId];
-					stress.dvdy = (*bcdqdy)[IIDX::IIV][fId];
-					stress.dvdz = (*bcdqdz)[IIDX::IIV][fId];
+					stress.dvdx = (*dqdx)[IIDX::IIV][lc];
+					stress.dvdy = (*dqdy)[IIDX::IIV][lc];
+					stress.dvdz = (*dqdz)[IIDX::IIV][lc];
 
-					stress.dwdx = (*bcdqdx)[IIDX::IIW][fId];
-					stress.dwdy = (*bcdqdy)[IIDX::IIW][fId];
-					stress.dwdz = (*bcdqdz)[IIDX::IIW][fId];
+					stress.dwdx = (*dqdx)[IIDX::IIW][lc];
+					stress.dwdy = (*dqdy)[IIDX::IIW][lc];
+					stress.dwdz = (*dqdz)[IIDX::IIW][lc];
 
 					//gradient correction
 					dx = xcc[rc] - xcc[lc];
@@ -348,7 +345,7 @@ void CalcAeroForce(int idump_pres)
 			}
 			else
 			{
-				Real wp = (*q)[IDX::IP][lc] + (*bcdqdx)[IDX::IP][fId] * dx + (*bcdqdy)[IDX::IP][fId] * dy + (*bcdqdz)[IDX::IP][fId] * dz;
+				Real wp = (*q)[IDX::IP][lc] + (*dqdx)[IDX::IP][lc] * dx + (*dqdy)[IDX::IP][lc] * dy + (*dqdz)[IDX::IP][lc] * dz;
 				if (wp < 0.0) wp = (*q)[IDX::IP][lc];
 				Real pref = nscom.inflow[IDX::IP];
 				Real cp = two * (wp - pref);
@@ -363,17 +360,17 @@ void CalcAeroForce(int idump_pres)
 
 				if (vis_model.vismodel > 0)
 				{
-					stress.dudx = (*bcdqdx)[IDX::IU][fId];
-					stress.dudy = (*bcdqdy)[IDX::IU][fId];
-					stress.dudz = (*bcdqdz)[IDX::IU][fId];
+					stress.dudx = (*dqdx)[IDX::IU][lc];
+					stress.dudy = (*dqdy)[IDX::IU][lc];
+					stress.dudz = (*dqdz)[IDX::IU][lc];
 
-					stress.dvdx = (*bcdqdx)[IDX::IV][fId];
-					stress.dvdy = (*bcdqdy)[IDX::IV][fId];
-					stress.dvdz = (*bcdqdz)[IDX::IV][fId];
+					stress.dvdx = (*dqdx)[IDX::IV][lc];
+					stress.dvdy = (*dqdy)[IDX::IV][lc];
+					stress.dvdz = (*dqdz)[IDX::IV][lc];
 
-					stress.dwdx = (*bcdqdx)[IDX::IW][fId];
-					stress.dwdy = (*bcdqdy)[IDX::IW][fId];
-					stress.dwdz = (*bcdqdz)[IDX::IW][fId];
+					stress.dwdx = (*dqdx)[IDX::IW][lc];
+					stress.dwdy = (*dqdy)[IDX::IW][lc];
+					stress.dwdz = (*dqdz)[IDX::IW][lc];
 
 					//gradient correction
 					dx = xcc[rc] - xcc[lc];
