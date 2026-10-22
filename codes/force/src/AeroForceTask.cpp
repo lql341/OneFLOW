@@ -51,6 +51,8 @@ License
 #include "INsCom.h"
 #include "UINsCom.h"
 #include "SolverDef.h"
+
+#include <stdexcept>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -207,7 +209,8 @@ void CalcAeroForce(int idump_pres)
 	MRField * dqdz = FieldHome::GetGradField( grid, NS_SOLVER, 3 );
 	if ( dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
 	{
-		Fatal( "aero force requires the NS cell gradient fields" );
+		throw std::runtime_error(
+			"aero force requires the NS cell gradient fields" );
 	}
 
 	int startStrategy = ctrl.startStrategy;
