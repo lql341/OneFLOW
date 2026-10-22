@@ -66,6 +66,50 @@ HIP gradient 会读到过期 owned/ghost 值。这正是之前自动打开 gradi
   HIP `4269.301`，`1.0014x`）相比，本轮是同一 basis 的新测量；节点不同，不能把
   两次数据混算，但方向从“持平”变为“HIP 明显更快”。
 
+## 2026-10-22 默认 policy 收口：只设 `ONEFLOW_ACCEL_BACKEND=HIP`
+
+目标要求“通过 `ONEFLOW_ACCEL_BACKEND=HIP` 切换 GPU 后段”，而此前 reconstruction /
+state update / boundary / resident time-step 都要显式变量才开。`63793e16` 把已验证的
+阶段全部挂到 policy，随后用**纯 backend-only** 门禁反过来抓到两个遗留 bug：
+
+1. `NsCalcBoundary` 仍只认 `ONEFLOW_ENABLE_UNS_HIP_BOUNDARY` 这个显式变量 →
+   policy-only 运行时静默回退 host `NsCalcBc`（100-step 里 `boundary_bc≈1018 ms`）。
+2. `ULhs::UseResidentHipTimeStep()` 只读显式变量 → policy-only 时 `CALC_LHS`
+   把**过期的 host timestep** 上传去缩放残差，导致 state 差 8e-3。
+
+`bd35bac9` / `03cae1bb` 修掉：两者都改走 `HipProductionFeatureEnabled()`，显式请求
+仍保留 fail-fast。这也说明 backend-only 门禁不能省——之前的显式变量门禁掩盖了它们。
+
+**`03cae1bb` 门禁（全部 backend-only，不带任何 `ONEFLOW_ENABLE_UNS_HIP_*`）**
+
+| 门禁 | 结果 |
+|---|---|
+| 8-zone 3-step trace | `MULTIZONE_TRACE_PASS`，每 rank 36 records |
+| resident contract | `records=24 failures=0 max_abs_diff=0` |
+| 8-zone 50-step stability | legacy / cpu_batch / hip_batch 全 `exit_code=0`、`hits=0`、PASS |
+| 单 zone 3-step stage trace | `STAGE_TRACE_PASS records=36` |
+| 单 zone 50-step stability | 三路全 PASS（之前的 FAIL 是本轮脚本把 8-rank manifest 泄漏到 1-rank 腿，已修） |
+| 硬件 CTest / contract | 16/16，resident-state contract 12/12 |
+
+**端到端（100 steps，全开默认）**
+
+| 对照 | 样本 | mean | 比值 |
+|---|---|---:|---:|
+| 8C（`kshcnormal`，无卡） | 22889.8 / 23658.8 / 24468.7 / 24526.1 | 23885.9 ms | **2.50x** |
+| 8C + 1 DCU（`kshdnormal`，8 ranks/DCU） | 9332.3 / 9451.6 / 9822.5 / 9549.3 | 9538.9 ms | — |
+| 同节点 8C（DCU 节点） vs 8C+1DCU | 28657.9 / 30517.1 vs 9212.1 / 10707.7 | 29587.5 / 9959.9 | 2.97x |
+
+- HIP 侧稳定（9.3–9.8 s，±3%）；**CPU 基线才是噪声源**（CPU 队列 21.9–24.5 s，
+  跨节点 ±5%），所以比值区间 2.30–2.50x，引用时必须带样本。
+- 资源标注：CPU 腿 8 核；HIP 腿 8 核 + 1 DCU（8 ranks/DCU = 规范 8:1 槽）。
+
+**仍未闭合**
+
+- 多卡 8:1 核卡比：缺 ≥64-zone fixture（`Partition` 任务未实现，需外部 METIS 分区）。
+- DeviceDirect：probe 通过但实测慢 1.59x，MPI 内部仍 host staging。
+- `SwapBcGrad` 的 host 打包（~10 ms/step）与未计时 ~19 ms/step。
+- 跨节点 8:1 核卡比（受同一 fixture 与 7+1 分布限制）。
+
 ## 2026-10-22 跨节点打通与 fixture 扩展评估
 
 ### 跨节点阻塞已定位并修复
