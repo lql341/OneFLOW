@@ -22,6 +22,8 @@ License
 
 #include "Grad.h"
 #include "StageProfiler.h"
+
+#include <cstdlib>
 #include "UGrad.h"
 #include "UCom.h"
 #include "FieldManager.h"
@@ -97,6 +99,26 @@ void Grad::CalcGradDebug()
     this->SwapBcGrad();
 }
 
+namespace
+{
+
+// StoreBcGrad fills the face-indexed boundary gradient (bdqdx/bdqdy/bdqdz).
+// No consumer reads those fields in this tree, and the store costs a random
+// gather over 3*neq cell-sized arrays per RK stage (about 4 ms/step on the
+// 8-zone DCU case). Keep it behind an explicit switch so a future consumer can
+// re-enable it instead of silently reading zeros.
+bool StoreBoundaryGradientRequested()
+{
+    static const bool enabled = []()
+    {
+        const char * value = std::getenv( "ONEFLOW_ENABLE_BC_GRADIENT_STORE" );
+        return value != nullptr && value[ 0 ] == '1';
+    }();
+    return enabled;
+}
+
+}
+
 void Grad::SwapBcGrad()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
@@ -131,7 +153,7 @@ void Grad::SwapBcGrad()
         HXDebug::DumpField( "grad.dqdzDownload.debug", dqdzField );
         HXDebug::CompareFile( mindiff, idumpcell );
     }
-    if ( istore == 1 )
+    if ( istore == 1 && StoreBoundaryGradientRequested() )
     {
         ScopedStageTimer timer( "swap_store" );
         this->StoreBcGrad();
