@@ -138,9 +138,8 @@ run_once() {
     (
         cd "$ONEFLOW_MZ_RUN_ROOT"
         if [ "$mode" = hip ]; then
+            # Backend-only: the production policy selects the validated stages.
             export ONEFLOW_ACCEL_BACKEND=HIP
-            export ONEFLOW_ENABLE_UNS_HIP_BATCH=1
-            export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
             export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
             export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
         else

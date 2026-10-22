@@ -219,12 +219,13 @@ config_file="$stability_root/configuration.tsv"
     printf 'limiter\t%s\n' "${limiter:-source}"
     printf 'cpu_ranks\t%s\n' "$cpu_ranks"
     printf 'hip_ranks\t%s\n' "$hip_ranks"
-    printf 'hip_gradient\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}"
-    printf 'hip_reconstruction\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_RECONSTRUCTION:-0}"
-    printf 'hip_state_update\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-0}"
-    printf 'hip_boundary\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-0}"
-    printf 'hip_interface\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-$partitioned_case}"
-    printf 'hip_time_step\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_TIME_STEP:-0}"
+    # "auto" means the backend policy decides; "1"/"0" is an explicit override.
+    printf 'hip_gradient\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-auto}"
+    printf 'hip_reconstruction\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_RECONSTRUCTION:-auto}"
+    printf 'hip_state_update\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_STATE_UPDATE:-auto}"
+    printf 'hip_boundary\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_BOUNDARY:-auto}"
+    printf 'hip_interface\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-auto}"
+    printf 'hip_time_step\t%s\n' "${ONEFLOW_F2_STABILITY_HIP_TIME_STEP:-auto}"
     printf 'partitioned_case\t%s\n' "$partitioned_case"
     printf 'partitioned_grid\t%s\n' "$partitioned_grid"
     printf 'fixture_metadata\t%s\n' "${fixture_metadata:-unset}"
@@ -260,9 +261,11 @@ run_mode() {
             app_prefix=( env ONEFLOW_FAIL_ON_NONPHYSICAL=1 )
         fi
         if [ "$mode" = hip_batch ]; then
+            # Backend-only by default: the production policy enables every
+            # validated stage. The ONEFLOW_F2_STABILITY_HIP_* variables below
+            # remain overrides for bisection and are recorded as such.
             export ONEFLOW_ACCEL_BACKEND=HIP
-            if [ "$partitioned_case" = 1 ] || \
-                [ "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-0}" = 1 ]; then
+            if [ "${ONEFLOW_F2_STABILITY_HIP_INTERFACE:-}" = 1 ]; then
                 export ONEFLOW_ENABLE_UNS_HIP_INTERFACE=1
             fi
             if [ "${ONEFLOW_F2_STABILITY_HIP_GRADIENT:-0}" = 1 ]; then
