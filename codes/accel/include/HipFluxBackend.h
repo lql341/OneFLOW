@@ -95,6 +95,17 @@ struct HipGradientStorage
     DeviceBuffer< Real > cellVolume;
     DeviceBuffer< int > leftCell;
     DeviceBuffer< int > rightCell;
+    // Cell-to-face CSR built once per topology.  The cell-based gradient and
+    // residual kernels consume this list; it removes the face-parallel
+    // atomicAdd scatter from the production path.
+    DeviceBuffer< int > cellFaceOffsets;
+    DeviceBuffer< int > cellFaceIds;
+    const int * cachedCellFaceLeft = nullptr;
+    const int * cachedCellFaceRight = nullptr;
+    int cachedCellFaceCells = -1;
+    int cachedCellFaceFaces = -1;
+    int cachedCellFaceBoundaryFaces = -1;
+    bool cellFaceValid = false;
     const void * cachedOwnerToken = nullptr;
     std::uint64_t cachedTopologyGeneration = 0;
     const Real * cachedXFace = nullptr;

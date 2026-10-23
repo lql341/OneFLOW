@@ -67,6 +67,67 @@ private:
     HipGradientStorage gradient_;
 };
 
+
+// Build the cell-to-face CSR used by the cell-based production kernels.  The
+// face arrays stay the source of truth; this is only a deterministic
+// enumeration of each owned cell's incident faces (boundary faces appear on
+// the left cell only; internal faces appear on both sides).
+void EnsureCellFaceConnectivity(
+    HipGradientStorage & storage,
+    const int * leftCell,
+    const int * rightCell,
+    int nCells,
+    int nFaces,
+    int nBoundaryFaces )
+{
+    if ( storage.cellFaceValid
+         && storage.cachedCellFaceLeft == leftCell
+         && storage.cachedCellFaceRight == rightCell
+         && storage.cachedCellFaceCells == nCells
+         && storage.cachedCellFaceFaces == nFaces
+         && storage.cachedCellFaceBoundaryFaces == nBoundaryFaces )
+    {
+        return;
+    }
+    if ( nCells <= 0 || nFaces <= 0 || leftCell == nullptr
+         || rightCell == nullptr )
+    {
+        throw std::invalid_argument(
+            "cell-face connectivity requires a non-empty face partition" );
+    }
+    std::vector< int > offsets( static_cast< std::size_t >( nCells ) + 1, 0 );
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        const int left = leftCell[ face ];
+        if ( left >= 0 && left < nCells ) ++ offsets[ left + 1 ];
+        const int right = rightCell[ face ];
+        if ( right >= 0 && right < nCells ) ++ offsets[ right + 1 ];
+    }
+    for ( int cell = 0; cell < nCells; ++ cell )
+    {
+        offsets[ cell + 1 ] += offsets[ cell ];
+    }
+    std::vector< int > ids( static_cast< std::size_t >( offsets[ nCells ] ) );
+    std::vector< int > cursor( offsets.begin(), offsets.end() - 1 );
+    for ( int face = 0; face < nFaces; ++ face )
+    {
+        const int left = leftCell[ face ];
+        if ( left >= 0 && left < nCells ) ids[ cursor[ left ] ++ ] = face;
+        const int right = rightCell[ face ];
+        if ( right >= 0 && right < nCells ) ids[ cursor[ right ] ++ ] = face;
+    }
+    storage.cellFaceOffsets.CopyFromHost(
+        offsets.data(), static_cast< int >( offsets.size() ) );
+    storage.cellFaceIds.CopyFromHost(
+        ids.data(), static_cast< int >( ids.size() ) );
+    storage.cachedCellFaceLeft = leftCell;
+    storage.cachedCellFaceRight = rightCell;
+    storage.cachedCellFaceCells = nCells;
+    storage.cachedCellFaceFaces = nFaces;
+    storage.cachedCellFaceBoundaryFaces = nBoundaryFaces;
+    storage.cellFaceValid = true;
+}
+
 // ---------------------------------------------------------------------------
 // Scalar convection kernel (nEquations == 1)
 // ---------------------------------------------------------------------------
@@ -425,23 +486,13 @@ __global__ void CalcAndScatterPrimitiveEulerKernel(
         lambdaMax = lambdaL > lambdaR ? lambdaL : lambdaR;
     }
 
-    const int left = leftCell[ face ];
-    const int right = rightCell[ face ];
-    const bool boundary = boundaryMask != nullptr
-        ? boundaryMask[ face ] != 0
-        : face < nBoundaryFaces;
+    // Write the face flux only.  The cell-based gather kernel consumes it;
+    // the fused face-parallel atomic scatter was the main 3-D bottleneck.
     for ( int eq = 0; eq < nEq; ++ eq )
     {
-        const Real faceFlux = faceArea * (
+        flux[ eq * nFaces + face ] = faceArea * (
             0.5 * ( fL[ eq ] + fR[ eq ] )
             - 0.5 * lambdaMax * ( qR[ eq ] - qL[ eq ] ) );
-        if ( flux != nullptr )
-            flux[ eq * nFaces + face ] = faceFlux;
-        atomicAdd(
-            &residual[ eq * nCells + left ], -faceFlux );
-        if ( ! boundary && right >= 0 && right < nCells )
-            atomicAdd(
-                &residual[ eq * nCells + right ], faceFlux );
     }
 }
 
@@ -543,6 +594,62 @@ __device__ void AtomicMinPositiveReal( Real * address, Real value )
         const unsigned long long assumed = previous;
         previous = atomicCAS( bits, assumed, valueBits );
         if ( previous == assumed ) break;
+    }
+}
+
+__global__ void GradientCellKernel(
+    const Real * q, Real * gradient,
+    const Real * xFace, const Real * yFace, const Real * zFace,
+    const Real * xNormal, const Real * yNormal, const Real * zNormal,
+    const Real * faceArea, const Real * xCell, const Real * yCell,
+    const Real * zCell, const Real * volume,
+    const int * leftCell, const int * rightCell,
+    const int * cellFaceOffsets, const int * cellFaceIds,
+    int nCells, int nBoundaryFaces, int nFaces, int nEq )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+    const int totalCells = nCells + nBoundaryFaces;
+    Real accumulated[ 5 * 3 ] = {};
+    for ( int slot = cellFaceOffsets[ cell ];
+          slot < cellFaceOffsets[ cell + 1 ]; ++ slot )
+    {
+        const int face = cellFaceIds[ slot ];
+        const int left = leftCell[ face ];
+        const int right = rightCell[ face ];
+        const Real dxl = xFace[ face ] - xCell[ left ];
+        const Real dyl = yFace[ face ] - yCell[ left ];
+        const Real dzl = zFace[ face ] - zCell[ left ];
+        const Real dxr = xFace[ face ] - xCell[ right ];
+        const Real dyr = yFace[ face ] - yCell[ right ];
+        const Real dzr = zFace[ face ] - zCell[ right ];
+        const Real delt1 = sqrt( dxl * dxl + dyl * dyl + dzl * dzl );
+        const Real delt2 = sqrt( dxr * dxr + dyr * dyr + dzr * dzr );
+        const Real delta = 1.0 / ( delt1 + delt2 + 1.0e-40 );
+        const Real cl = delt2 * delta;
+        const Real cr = delt1 * delta;
+        const Real ax = xNormal[ face ] * faceArea[ face ];
+        const Real ay = yNormal[ face ] * faceArea[ face ];
+        const Real az = zNormal[ face ] * faceArea[ face ];
+        const Real sign = left == cell ? 1.0 : -1.0;
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            const Real value = cl * q[ eq * totalCells + left ]
+                + cr * q[ eq * totalCells + right ];
+            accumulated[ eq * 3 ] += sign * ax * value;
+            accumulated[ eq * 3 + 1 ] += sign * ay * value;
+            accumulated[ eq * 3 + 2 ] += sign * az * value;
+        }
+    }
+    const Real inverseVolume = 1.0 / volume[ cell ];
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        const int base = eq * 3 * totalCells;
+        gradient[ base + cell ] = accumulated[ eq * 3 ] * inverseVolume;
+        gradient[ base + totalCells + cell ] =
+            accumulated[ eq * 3 + 1 ] * inverseVolume;
+        gradient[ base + 2 * totalCells + cell ] =
+            accumulated[ eq * 3 + 2 ] * inverseVolume;
     }
 }
 
@@ -971,6 +1078,45 @@ __global__ void ScatterFaceFluxEulerKernel(
         atomicAdd( &residual[ eq * nCells + left ], -faceFlux );
         if ( ! boundary && right >= 0 && right < nCells )
             atomicAdd( &residual[ eq * nCells + right ], faceFlux );
+    }
+}
+
+__global__ void GatherFaceFluxEulerKernel(
+    const Real * flux,
+    const int * leftCell,
+    const int * rightCell,
+    const unsigned char * boundaryMask,
+    const int * cellFaceOffsets,
+    const int * cellFaceIds,
+    int nBoundaryFaces,
+    int nFaces,
+    int nCells,
+    int nEq,
+    Real * residual )
+{
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
+    for ( int eq = 0; eq < nEq; ++ eq )
+    {
+        Real value = 0.0;
+        for ( int slot = cellFaceOffsets[ cell ];
+              slot < cellFaceOffsets[ cell + 1 ]; ++ slot )
+        {
+            const int face = cellFaceIds[ slot ];
+            const Real faceFlux = flux[ eq * nFaces + face ];
+            if ( leftCell[ face ] == cell )
+            {
+                value -= faceFlux;
+            }
+            else if ( rightCell[ face ] == cell )
+            {
+                const bool boundary = boundaryMask != nullptr
+                    ? boundaryMask[ face ] != 0
+                    : face < nBoundaryFaces;
+                if ( ! boundary ) value += faceFlux;
+            }
+        }
+        residual[ eq * nCells + cell ] += value;
     }
 }
 
@@ -1500,31 +1646,26 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
         storage->geometryCacheValid = true;
     }
     storage->cellGradient.Resize( totalGradient );
+    EnsureCellFaceConnectivity(
+        *storage, view.leftCell, view.rightCell,
+        view.nCells, view.nFaces, view.nBoundaryFaces );
     const int blockSize = 256;
     { ScopedStageTimer kernelTimer( "gradient_kernel" );
     hipLaunchKernelGGL(
-        GradientZeroKernel,
-        dim3( ( totalGradient + blockSize - 1 ) / blockSize ),
-        dim3( blockSize ), 0, 0, storage->cellGradient.Data(),
-        totalGradient );
-    hipLaunchKernelGGL(
-        GradientAccumulateKernel,
-        dim3( ( view.nFaces + blockSize - 1 ) / blockSize ),
+        GradientCellKernel,
+        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
         dim3( blockSize ), 0, 0, storage->cellState.Data(),
+        storage->cellGradient.Data(),
         storage->xFaceCenter.Data(), storage->yFaceCenter.Data(),
         storage->zFaceCenter.Data(), storage->xNormal.Data(),
         storage->yNormal.Data(), storage->zNormal.Data(),
         storage->faceArea.Data(), storage->xCellCenter.Data(),
         storage->yCellCenter.Data(), storage->zCellCenter.Data(),
+        storage->cellVolume.Data(),
         storage->leftCell.Data(), storage->rightCell.Data(),
-        view.nFaces, view.nBoundaryFaces, view.nCells,
-        view.nEquations, storage->cellGradient.Data() );
-    hipLaunchKernelGGL(
-        GradientNormalizeKernel,
-        dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
-        dim3( blockSize ), 0, 0, storage->cellGradient.Data(),
-        storage->cellVolume.Data(), view.nCells,
-        view.nBoundaryFaces, view.nEquations );
+        storage->cellFaceOffsets.Data(), storage->cellFaceIds.Data(),
+        view.nCells, view.nBoundaryFaces, view.nFaces,
+        view.nEquations );
     if ( view.nBoundaryFaces > 0 )
     {
         hipLaunchKernelGGL(
@@ -2144,7 +2285,10 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     storage->residualEquations = nEq;
     storage->residualValid = true;
     storage->residualMetricsValid = false;
-    if ( hostFlux != nullptr ) storage->faceFlux.Resize( nFaces * nEq );
+    storage->faceFlux.Resize( nFaces * nEq );
+    EnsureCellFaceConnectivity(
+        *storage, connectivity.leftCell, connectivity.rightCell,
+        nCells, nFaces, connectivity.nBoundaryFaces );
 
     const unsigned char * deviceBoundaryMask = nullptr;
     if ( connectivity.boundaryMask != nullptr )
@@ -2165,7 +2309,17 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         storage->leftCell.Data(), storage->rightCell.Data(),
         deviceBoundaryMask, connectivity.nBoundaryFaces, nFaces, nCells,
         nEq, gamma, scheme,
-        hostFlux != nullptr ? storage->faceFlux.Data() : nullptr,
+        storage->faceFlux.Data(),
+        storage->residual.Data() );
+    hipLaunchKernelGGL(
+        GatherFaceFluxEulerKernel,
+        dim3( ( nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage->faceFlux.Data(),
+        storage->leftCell.Data(), storage->rightCell.Data(),
+        deviceBoundaryMask,
+        storage->cellFaceOffsets.Data(), storage->cellFaceIds.Data(),
+        connectivity.nBoundaryFaces, nFaces, nCells, nEq,
         storage->residual.Data() );
     CheckHip( hipGetLastError(),
               "reconstructed primitive flux kernel launch" );
@@ -3602,8 +3756,14 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
                 nCells * sizeof( Real ), AccelCopyKind::HostToDevice );
         }
     }
-    if ( hostFlux != nullptr ) fluxBuffer->Resize( totalFlux );
+    fluxBuffer->Resize( totalFlux );
     }
+
+    HipGradientStorage * cellStorage =
+        boundStorage != nullptr ? boundStorage : &fallbackGradientStorage_;
+    EnsureCellFaceConnectivity(
+        *cellStorage, connectivity.leftCell, connectivity.rightCell,
+        nCells, nFaces, connectivity.nBoundaryFaces );
 
     const int blockSize = 256;
     const int gridSize = ( nFaces + blockSize - 1 ) / blockSize;
@@ -3630,7 +3790,18 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         nEq,
         state.gamma,
         scheme,
-        hostFlux != nullptr ? fluxBuffer->Data() : nullptr,
+        fluxBuffer->Data(),
+        residualBuffer->Data() );
+    hipLaunchKernelGGL(
+        GatherFaceFluxEulerKernel,
+        dim3( ( nCells + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        fluxBuffer->Data(),
+        leftCellBuffer->Data(), rightCellBuffer->Data(),
+        connectivity.boundaryMask ? boundaryMaskBuffer->Data() : nullptr,
+        cellStorage->cellFaceOffsets.Data(),
+        cellStorage->cellFaceIds.Data(),
+        connectivity.nBoundaryFaces, nFaces, nCells, nEq,
         residualBuffer->Data() );
     CheckHip(
         hipGetLastError(), "CalcAndScatterPrimitiveEulerKernel launch" );
