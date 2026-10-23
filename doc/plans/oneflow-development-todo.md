@@ -90,9 +90,9 @@ CPU 基线只能在 `kshcnormal`（同 8 核在 DCU 节点慢 37%）；比例只
 | 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.08 s** 默认输出；无中间输出 **7.65 s**（cell-gather 后，2026-10-23） |
 | 本轮优化前后（交臂 3 对） | 9.79 s → 9.12 s，mean 1.073x，3/3 对为正 |
 | loop 求合（rank 0/4/7） | **52.4 ms/step**（优化前 57.95，−9.5%） |
-| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.38x**（默认输出）→ **2.54x**（无中间输出）→ **2.71x**（cell-gather 后，20714.5 / 7649.6 ms） |
+| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.71x**（100 steps，cell-gather 后）→ **3.78x**（1000 steps：230800.4 / 61067.1 ms，同样 8C vs 8C+1DCU） |
 | 同节点 8-zone"加卡"隔离（8C vs 8C+1DCU） | **3.13x**（默认输出）→ **3.24x**（无中间输出）→ **3.50x**（cell-gather 后） |
-| 8-zone solver loop（8 ranks，100 steps 均值） | CPU `238.6 ms/step` vs HIP `45.3 ms/step` = **5.27x**（cell-gather 后；旧 4.86x） |
+| 8-zone solver loop（profiled stage sum） | CPU `238.6 ms/step` vs HIP `45.3 ms/step` = **5.27x**（cell-gather 后）；另加约 **15.8 ms/step 未计时** host 开销 |
 | 4-zone（4C vs 4C+1DCU，非 8:1） | 4.74x（41795.9 / 8822.2 ms） |
 | 1-zone（1C/1 rank vs 1C+1DCU，非 8:1） | 10.01x（无中间输出：127039.8 / 12696.4 ms） |
 | 1→8 rank 扩展（solver loop） | CPU 5.09x / HIP 1.22x；HIP 8-rank 绝对时间 8.14 s < 1-rank 12.70 s |
@@ -537,6 +537,46 @@ fixed overhead/interface，端到端提升会被按比例稀释。129³ 1-zone �
 fixed overhead 只会带来约 **1–2% wall**；更大的 wall 杠杆是约 **3.5 s（46%）**
 的 fixed overhead（129³ 1-zone 约 20 s）和 interface 的 host 交换本身。若目标是
 4x，需要先做 fixed-overhead profiling/削减，而不是再调一个 kernel。
+
+### 1000-step 基准：100-step 的 2.71x 是基准问题
+
+100-step 的 `wall−loop` 差值约 3.2 s 曾被当成“固定开销”，但 1-step 实测只有
+**1.83 s（old）/1.95 s（new）**；3.2 s 里还包含约 1.4 s 的**未计时 per-step**
+开销。1000-step 同节点 paired warm A/B（8 ranks，1 DCU，无输出）：
+
+| 项 | old face-atomic | new cell-gather |
+|---|---:|---:|
+| 1-step wall（含启动/收尾） | 1827.2 ms | 1947.0 ms |
+| 1000-step wall（3 对均值） | 62589.6 ms | **61067.1 ms（−2.4%）** |
+| per-step wall | 62.59 ms | **61.07 ms** |
+| profiled stage sum | 49.21 ms | **45.27 ms** |
+| **未计时 per-step** | **13.38 ms（21%）** | **15.80 ms（26%）** |
+
+CPU 8 核 1000-step：**230800.4 ms**。因此：
+
+- 100-step 的 CPU/HIP `2.71x` 被 1.8 s 启动/收尾和 CPU 节点差异放大了；
+- **1000-step 的实际 8:1 wall 比值是 230800.4 / 61067.1 = 3.78x**
+  （old 为 3.69x）；
+- 3.78x 已落在 1D 应用级 `3.85–9.70x` 的低端附近，而不是 100-step 看起来的
+  “2.71x 差很远”。
+
+主要矛盾因此修正为：
+
+1. **未计时 per-step 约 13–16 ms（21–26%）**：任务调度/同步/MPI 等待/输出等
+   未进入 StageProfiler 类别的 host 开销；这是当前最大的单一未知块。
+2. **interface 约 25.9 ms/step（42% per-step）**：`mpi_interface 12.74` +
+   `swap 5.90` + `gradient_mirror/halo 7.26`。
+3. reconstruction 7.15、gradient 11.56（其中 kernel 只有 0.86）。
+
+cell-gather 的 stage −8% 只带来 1000-step wall −2.4%，因为第 1 项的未计时
+per-step 没有随之下降。1000-step 下 fixed 只占 3%，**不是**主要矛盾；100-step
+下 fixed 占 23%，所以 100-step 不适合作为 3D 的生产基线。
+
+**修订预期（1000-step 口径）**：若把“未计时 per-step + interface”合计约
+41.7 ms 压掉 20–30%（8–12.5 ms），per-step 61.1 → 48.6–53.1 ms，wall
+61.1 → 48.6–53.1 s，CPU/HIP 比值 **3.78x → 约 4.1–4.6x**。这比 100-step 的
+“2.8–2.9x”预期更合理，也说明 4x 在 1000-step 口径下是有希望的（中等把握），
+在 100-step 口径下则基本不可能。
 
 **基线问题**：目前 129³ 的 31.25x 是“均匀流 box、1 rank、50 steps、单次几何”
 的一个点，数据支持不足以当正式基线；至少还需要真实 flow、不同 steps、8-zone
