@@ -653,6 +653,38 @@ __global__ void GradientCellKernel(
     }
 }
 
+__global__ void PackGradientFacesKernel(
+    const Real * gradient, const int * cellIds, int nFaces, int nEq,
+    int totalCells, Real * packed )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nFaces * 3 * nEq;
+    if ( index >= total ) return;
+    const int face = index % nFaces;
+    const int plane = index / nFaces;
+    const int component = plane / nEq;
+    const int equation = plane - component * nEq;
+    packed[ index ] = gradient[
+        equation * 3 * totalCells + component * totalCells
+        + cellIds[ face ] ];
+}
+
+__global__ void UnpackGradientFacesKernel(
+    Real * gradient, const int * ghostCellIds, int nFaces, int nEq,
+    int totalCells, const Real * packed )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nFaces * 3 * nEq;
+    if ( index >= total ) return;
+    const int face = index % nFaces;
+    const int plane = index / nFaces;
+    const int component = plane / nEq;
+    const int equation = plane - component * nEq;
+    gradient[
+        equation * 3 * totalCells + component * totalCells
+        + ghostCellIds[ face ] ] = packed[ index ];
+}
+
 __global__ void InviscidSpectrumZeroKernel(
     Real * spectrum, int nCells )
 {
@@ -3234,6 +3266,97 @@ void HipFluxBackend::MirrorGradientCellsToHost(
             }
         }
     }
+}
+
+void HipFluxBackend::PackGradientFacesToHost(
+    const void * cacheKey, const int * cellIds, int nFaces, int nEquations,
+    Real * hostPacked )
+{
+    if ( cacheKey == nullptr || cellIds == nullptr || nFaces <= 0
+         || nEquations <= 0 || hostPacked == nullptr )
+    {
+        throw std::invalid_argument( "invalid HIP gradient face pack request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error( "HIP gradient face pack requires a bound state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error( "bound HIP state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( totalCells <= 0
+         || storage.cellGradient.Size()
+             < static_cast< std::size_t >( totalCells ) * 3 * nEquations )
+    {
+        throw std::logic_error( "HIP gradient face pack has no resident gradient" );
+    }
+    const int valueCount = nFaces * 3 * nEquations;
+    storage.gradientPackIds.CopyFromHost( cellIds, nFaces );
+    storage.gradientPackValues.Resize( valueCount );
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        PackGradientFacesKernel,
+        dim3( ( valueCount + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.cellGradient.Data(), storage.gradientPackIds.Data(),
+        nFaces, nEquations, totalCells,
+        storage.gradientPackValues.Data() );
+    CheckHip( hipGetLastError(), "gradient face pack kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "gradient face pack synchronize" );
+    storage.gradientPackValues.CopyToHost( hostPacked, valueCount );
+}
+
+void HipFluxBackend::UnpackGradientFacesFromHost(
+    const void * cacheKey, const int * ghostCellIds, int nFaces,
+    int nEquations, const Real * hostPacked )
+{
+    if ( cacheKey == nullptr || ghostCellIds == nullptr || nFaces <= 0
+         || nEquations <= 0 || hostPacked == nullptr )
+    {
+        throw std::invalid_argument( "invalid HIP gradient face unpack request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP gradient face unpack requires a bound state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error( "bound HIP state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( totalCells <= 0
+         || storage.cellGradient.Size()
+             < static_cast< std::size_t >( totalCells ) * 3 * nEquations )
+    {
+        throw std::logic_error(
+            "HIP gradient face unpack has no resident gradient" );
+    }
+    const int valueCount = nFaces * 3 * nEquations;
+    storage.gradientPackIds.CopyFromHost( ghostCellIds, nFaces );
+    storage.gradientPackValues.CopyFromHost( hostPacked, valueCount );
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        UnpackGradientFacesKernel,
+        dim3( ( valueCount + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.cellGradient.Data(), storage.gradientPackIds.Data(),
+        nFaces, nEquations, totalCells,
+        storage.gradientPackValues.Data() );
+    CheckHip( hipGetLastError(), "gradient face unpack kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "gradient face unpack synchronize" );
 }
 
 bool HipFluxBackend::VerifyResidentStateAgainstHost(

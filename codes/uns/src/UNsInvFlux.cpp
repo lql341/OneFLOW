@@ -373,7 +373,8 @@ void UNsInvFlux::CalcInvFace()
         view.pressureComponent = nEquations == 5 ? 4 : 2;
         view.hasSolidBoundary = hipBoundaryHasSolid;
         view.syncGradientGhostsFromHost =
-            ZoneState::nZones > 1 || ZoneState::nLocal > 1;
+            ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 )
+            && ! HipPackedGradientExchangeEnabled();
         view.ownerToken = grid;
         view.cacheKey = grid;
         view.topologyGeneration = 1;

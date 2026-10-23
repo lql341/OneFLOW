@@ -35,6 +35,9 @@ License
 #include "CellMesh.h"
 #include "CellTopo.h"
 #include "HipProductionPolicy.h"
+#include "StageProfiler.h"
+#include "InterFace.h"
+#include "InterField.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #include <cstdlib>
@@ -148,7 +151,60 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool mirrorBoundaryGradient )
         }
         HipFluxBackend::Shared().MirrorGradientCellsToHost(
             grid, nEqu, cells, dx, dy, dz );
-        this->SwapBcGrad();
+        if ( HipPackedGradientExchangeEnabled()
+             && grid->interFace != nullptr )
+        {
+            InterFace * interFace = grid->interFace.get();
+            MRField * fields[ 3 ] = { dqdx, dqdy, dqdz };
+            const std::string names[ 3 ] = { namex, namey, namez };
+            std::vector< int > endpointCells;
+            std::vector< Real > packed;
+            for ( int ghostId = MAX_GHOST_LEVELS - 1;
+                  ghostId >= 0; -- ghostId )
+            {
+                const int nIFaces = interFace->nIFaces;
+                if ( nIFaces <= 0 ) continue;
+                endpointCells.resize( static_cast< std::size_t >( nIFaces ) );
+                packed.resize(
+                    static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
+                for ( int iFace = 0; iFace < nIFaces; ++ iFace )
+                {
+                    int iCell = -1;
+                    grid->GetFaceTopo().GetSId(
+                        iFace, ghostId + 1, iCell );
+                    endpointCells[ iFace ] = iCell;
+                }
+                {
+                    ScopedStageTimer timer( "swap_upload" );
+                    HipFluxBackend::Shared().PackGradientFacesToHost(
+                        grid, endpointCells.data(), nIFaces, nEqu,
+                        packed.data() );
+                    UploadInterfaceValuePacked(
+                        grid, fields, names, 3, nEqu, ghostId,
+                        packed.data() );
+                }
+                {
+                    ScopedStageTimer timer( "swap_download" );
+                    DownloadInterfaceValuePacked(
+                        grid, fields, names, 3, nEqu, ghostId,
+                        packed.data() );
+                    for ( int iFace = 0; iFace < nIFaces; ++ iFace )
+                    {
+                        int iCell = -1;
+                        grid->GetFaceTopo().GetTId(
+                            iFace, ghostId + 1, iCell );
+                        endpointCells[ iFace ] = iCell;
+                    }
+                    HipFluxBackend::Shared().UnpackGradientFacesFromHost(
+                        grid, endpointCells.data(), nIFaces, nEqu,
+                        packed.data() );
+                }
+            }
+        }
+        else
+        {
+            this->SwapBcGrad();
+        }
     }
     else if ( view.downloadToHost )
     {

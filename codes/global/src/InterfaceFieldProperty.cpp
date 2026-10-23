@@ -33,6 +33,7 @@ along with OneFLOW.  If not, see <http://www.gnu.org/licenses/>.
 #include "FaceTopo.h"
 #include "BoundaryExchangeContract.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -195,6 +196,74 @@ void DownloadInterfaceValue( UnsGrid * grid, MRField * field2D, const std::strin
             {
                 target[ cellIds[ iFace ] ] = source[ iFace ];
             }
+        }
+    }
+}
+
+void UploadInterfaceValuePacked(
+    UnsGrid * grid, MRField * const * fields, const std::string * names,
+    int fieldCount, int nEqu, int ghostId, const Real * packed )
+{
+    InterFace * interFace = grid->interFace.get();
+    if ( ! ONEFLOW::IsValid( interFace ) ) return;
+    if ( fieldCount <= 0 || fields == nullptr || names == nullptr
+         || packed == nullptr )
+    {
+        return;
+    }
+    const int nIFaces = interFace->nIFaces;
+    DataStorage * dataSend = &interFace->GetSendStorage( ghostId );
+    for ( int fieldId = 0; fieldId < fieldCount; ++ fieldId )
+    {
+        MRField * fieldStorage =
+            ONEFLOW::GetFieldPointer< MRField >( dataSend, names[ fieldId ] );
+        if ( fieldStorage == nullptr )
+        {
+            Fatal(
+                "Interface send field is not allocated: "
+                + names[ fieldId ] );
+        }
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            const Real * source =
+                packed + ( static_cast< std::size_t >( fieldId ) * nEqu + iEqu )
+                    * nIFaces;
+            Real * target = ( * fieldStorage )[ iEqu ].data();
+            std::copy( source, source + nIFaces, target );
+        }
+    }
+}
+
+void DownloadInterfaceValuePacked(
+    UnsGrid * grid, MRField * const * fields, const std::string * names,
+    int fieldCount, int nEqu, int ghostId, Real * packed )
+{
+    InterFace * interFace = grid->interFace.get();
+    if ( ! ONEFLOW::IsValid( interFace ) ) return;
+    if ( fieldCount <= 0 || fields == nullptr || names == nullptr
+         || packed == nullptr )
+    {
+        return;
+    }
+    const int nIFaces = interFace->nIFaces;
+    DataStorage * dataRecv = &interFace->GetRecvStorage( ghostId );
+    for ( int fieldId = 0; fieldId < fieldCount; ++ fieldId )
+    {
+        MRField * fieldStorage =
+            ONEFLOW::GetFieldPointer< MRField >( dataRecv, names[ fieldId ] );
+        if ( fieldStorage == nullptr )
+        {
+            Fatal(
+                "Interface recv field is not allocated: "
+                + names[ fieldId ] );
+        }
+        for ( int iEqu = 0; iEqu < nEqu; ++ iEqu )
+        {
+            Real * target =
+                packed + ( static_cast< std::size_t >( fieldId ) * nEqu + iEqu )
+                    * nIFaces;
+            const Real * source = ( * fieldStorage )[ iEqu ].data();
+            std::copy( source, source + nIFaces, target );
         }
     }
 }

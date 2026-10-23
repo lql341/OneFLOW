@@ -66,4 +66,17 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
         || std::strcmp( legacyName, "ONEFLOW_ENABLE_UNS_HIP_TIME_STEP" ) == 0;
 }
 
+// Device-packed gradient interface exchange.  The send side packs the
+// resident device gradient directly into the interface storage order; the
+// receive side unpacks the interface storage directly into the device ghost
+// gradient.  This removes the host cell gather/scatter and the separate
+// ghost-gradient upload while preserving the legacy one-round lag.  The host
+// mirror of boundary-adjacent owned cells is still produced for aero forces.
+inline bool HipPackedGradientExchangeEnabled()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_PACKED" );
+    if ( value != nullptr ) return value[ 0 ] == '1';
+    return HipProductionBackendSelected();
+}
+
 EndNameSpace

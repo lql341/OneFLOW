@@ -211,6 +211,8 @@ struct HipGradientStorage
     // Cells whose gradient is mirrored to the host for the host-side interface
     // exchange.  Kept resident so the mirror does not re-upload ids per stage.
     DeviceBuffer< int > gradientMirrorCellIds;
+    DeviceBuffer< int > gradientPackIds;
+    DeviceBuffer< Real > gradientPackValues;
     std::vector< int > cachedGradientMirrorCellIds;
     DeviceBuffer< Real > gradientMirrorValues;
     int cachedGradientMirrorEquations = 0;
@@ -398,6 +400,27 @@ public:
         Real * const * dqdx,
         Real * const * dqdy,
         Real * const * dqdz );
+
+    // Pack the resident gradient at the interface send cells into a
+    // [component][equation][face] host buffer.  The host then copies it into
+    // the interface send storage in exchange order, so the endpoint cell
+    // gather runs on the device instead of the host.
+    void PackGradientFacesToHost(
+        const void * cacheKey,
+        const int * cellIds,
+        int nFaces,
+        int nEquations,
+        Real * hostPacked );
+
+    // Read the interface receive storage into a packed host buffer and scatter
+    // it directly into the resident ghost gradient.  This replaces the host
+    // ghost scatter plus the separate ghost-gradient H2D sync.
+    void UnpackGradientFacesFromHost(
+        const void * cacheKey,
+        const int * ghostCellIds,
+        int nFaces,
+        int nEquations,
+        const Real * hostPacked );
 
     // Reduce the resident (already LHS-scaled) device residual into the
     // per-zone diagnostic scalars the solver's residual task reports.  Returns
