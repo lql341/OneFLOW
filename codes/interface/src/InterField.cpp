@@ -166,7 +166,11 @@ void HXWriteSubData( DataBook * dataBook, RealField & field, IntField & idMap )
 {
     int nElem = idMap.size();
     if ( nElem <= 0 ) return;
-    RealField swapField( nElem );
+    // The per-equation pack buffer is reused across every field/equation in a
+    // stage.  Keep it thread-local so the hot interface pack does not allocate
+    // one vector per equation per stage.
+    static thread_local RealField swapField;
+    swapField.resize( nElem );
     for ( int iElem = 0; iElem < nElem; ++ iElem )
     {
         int id = idMap[ iElem ];
@@ -188,7 +192,8 @@ void HXReadSubData( DataBook * dataBook, RealField & field, IntField & idMap )
 {
     int nElem = idMap.size();
     if ( nElem <= 0 ) return;
-    RealField swapField( nElem );
+    static thread_local RealField swapField;
+    swapField.resize( nElem );
     HXRead( dataBook, swapField );
 
     for ( int iElem = 0; iElem < nElem; ++ iElem )
