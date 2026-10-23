@@ -5,135 +5,229 @@
 > 本文其余按日期分节的内容是**历史证据**，不代表当前状态；当前状态、能力边界与下一步以本节为准。
 > 分支模型/门禁规则见 `AGENTS.md`，集群流程见 `ci/kunshan/README.md`。
 
-### 0. 仓库与分支（本轮已同步）
+### 0. 仓库、分支与本轮提交
 
-| 项 | revision | 说明 |
+| 项 | 值 | 说明 |
 |---|---|---|
-| `master` = `origin/master` = `upstream/master` | `b83d78c7` | 本轮 fast-forward 三端同步；含 137 个上游提交（`tools/oneflow_gui`、`grid/*`、`tools/mesh_layout`、`tests/tools`、`tests/geometry`、`vcpkg.json`、docs），**未触及 `codes/` 与 `ci/`** |
-| `dev` = `origin/dev` | `762a847e`（merge）+ 本 handoff 文档提交 | `Merge branch 'master' into dev`（无冲突）；领先 `upstream/master` 264 个提交；本轮已授权并已 push `origin/dev` |
-| HIP 代码已验证 revision | `95830d9b`（性能/门禁基线） | 下文数字来自该 revision；合并只新增上游 tools/grid/docs 与 3 个 tests 文件，`codes/`、`ci/` 未变 |
-| 合并后 revision | `52fe404d`（Kunshan 已复验） | root HIP build + DCU preflight PASS、硬件 CTest `16/16`、8-zone 3-step trace PASS（contract `24/0/0`）、50-step stability 三路 PASS |
+| `dev` 代码 HEAD | `ac594fbd`（本轮代码最后一个提交） | 文档提交在其后；`dev` 领先 `origin/dev` 12 个提交，**尚未 push** |
+| 本轮代码提交 | `9b5934bd` cell-gather；`afb7e8d6` device-packed gradient interface；`ac594fbd` task class cache + `task_plan` | 另有 `0f02e8ee` recon 寄存器、`b93b4502` interface staging、`63fa0cf8` CPU 构建修复 |
+| 本轮文档提交 | `568ccf2b`、`3da729d1`、`c8ee2bc8`、`c543d8bd`、`707feeb4` + 本交接 | 全部只在 `dev` |
+| 集群环境 | Kunshan DTK 26.04 / `gfx906` / 1 DCU | CPU 基线 `kshcnormal` 8 核；HIP 8 ranks/1 DCU（8:1 槽） |
+| 已验证二进制 | `root-cellgather`、`root-packedgrad`、`root-taskcache`（集群 builds，不入库） | `root-52fe404d` 为 A/B 原始基线 |
 
-### 1. 目标与能力边界
+### 1. 当前结论（先看这一张）
 
-**目标**：root 3D 主求解器通过 `ONEFLOW_ACCEL_BACKEND=HIP` 切换 GPU 后段，走真实主流程
-（gradient→reconstruction→fused flux/residual→state update→boundary→timestep→halo），
-不是 standalone port。CPU oracle 与 host 回退始终保留。
+- **受限 inviscid 空间链已 device 化**：gradient、reconstruction、fused flux/residual、
+  state update、physical boundary（受限模型）、resident local time-step、gradient
+  interface pack/unpack。
+- **全链路不是 GPU-resident**：时间推进仍是 host task 序列；q interface/MPI、IO/restart、
+  气动力、limiter/LUSGS/multigrid/viscous 仍是 host 或未迁移。
+- **生产性能（1000-step，8-zone，8C vs 8C+1DCU）**：
+  CPU `230800.4 ms`（1 个样本），HIP `59355.6 ms` → **3.89x**；
+  per-step HIP `59.36 ms`；1-step（启动+1 步+收尾）约 `1.92 s`。
+- **100-step 的 `2.71x` 是基准问题**：1.9 s 启动/收尾和 CPU 节点差异放大了它；
+  不要再用 100-step 作为 3D 生产口径。1000-step 的 `3.89x` 才与 1D 应用级
+  `3.85–9.70x` 可比（处于低端）。
+- **当前 host 链占比仍大**：1000-step per-step 59.36 ms 中，profiled stage 约
+  45–46 ms，未计时 host 约 **13–14 ms**；interface 约 **11.8 ms**；
+  gradient 交换约 **10.2 ms**（swap 6.5 + mirror 3.2 + kernel 0.9）；
+  reconstruction **7.9 ms**。kernel 本身只有 **0.86 ms**，不是主矛盾。
+- **4x 的判断**：1000-step 口径下，若 host 链再压 2–4 ms/step，per-step
+  59.4 → 约 55–57 ms，CPU/HIP 约 **4.0–4.2x**，中等把握；100-step 口径下 4x
+  基本不可能。5x 以上把握低。
 
-**自动启用条件**（不满足→该阶段整段 host 回退；显式请求不满足→fail-fast，不静默）：
-`NS_SOLVER`、5 方程、Lax–Friedrichs（`ischeme=5`）、`ilim=0`、`vismodel=0`、
-`gridLevel=0 && nGrids=1`、显式多阶段 RK（`time_integral=MULTI_STAGE`）、`nTModel=1`、
-无化学、1 rank 1 zone、`nGhostCells == nBFaces`。
+### 2. 全链路审计（device / host / 未迁移）
 
-**已设备化（全部默认，`ONEFLOW_ACCEL_BACKEND=HIP` 即可）**：fused flux+residual、
-interface/halo（传输仍 HostStaged，pack/unpack 写入 state-owned device q ghost）、
-Green–Gauss 梯度、面重构（保留 legacy 的一轮交换滞后）、primitive state update +
-resident residual 链、物理边界模型、resident local time-step。
+| 链路段 | 状态 | 备注 |
+|---|---|---|
+| 网格读入/分区/wall distance | host | 129³ 1-zone 的 fixed 约 19–20 s，主要是 host 网格/初始化 |
+| solver/state 创建、init q | host + H2D | 启动/收尾约 1.9 s（8-zone 1000-step 只占 3%） |
+| **时间推进调度（RK stage 循环）** | **host（legacy task 序列）** | `rk_update` 计时为 0；`task_plan` 仅 0.10 ms/step，未计时主要在 task 执行/同步 |
+| gradient | device + host 窄镜像 | cell CSR gather；`gradient_mirror` 约 3.2 ms（aero 力需要） |
+| gradient interface pack/unpack | device pack + host MPI | `ONEFLOW_HIP_GRADIENT_PACKED` 默认开；`halo_ghost_sync 3.41→0.46` |
+| reconstruction | device | face-based；寄存器数组已精简；约 7.9 ms/step |
+| inviscid flux + residual | device | fused face flux + cell gather residual |
+| state update / resident residual | device | primitive state update + 设备归约标量 |
+| physical boundary | device（受限类型） | host `bcQ`/ghost 镜像仍在 |
+| q interface/halo | **host-staged** | `InterfaceTask` 设备 pack/unpack + host MPI；约 11.8 ms/step |
+| limiter | host / 未迁移 | `ilim!=0` 回退 |
+| LUSGS / multigrid / dual-time | host / 未迁移 | `time_integral!=MULTI_STAGE`、`nGrids>1` 回退 |
+| viscous/turbulence/SA | host / 未迁移 | `vismodel!=0` 回退 |
+| restart/输出/气动力 | host | q/residual 按需 D2H；aero 读 owned cell gradient |
 
-**未迁移**：viscous/turbulence/SA、limiter≠0、多重网格、LUSGS、双时间、CUDA/Kokkos。
+### 3. 性能数据（同 basis 规则）
 
-**生命周期**：q 的权威在 device `cellState`，host 镜像每 stage 由 state update 回写；
-residual 只在 trace/输出/restart dump 下传，NoTrace 的残差与正性检查由设备归约标量提供；
-gradient 只在 boundary-adjacent owned + ghost 上镜像（host 交换需要，也是 aero 力需要的单元）。
+**规则**：同节点、同资源/绑定、同 fixture、同 `steps/warmup/repeats`；CPU 基线在
+`kshcnormal`；1 DCU 槽 = 8 核；`lifecycle_*_ms` 是 repeats 总和；不同 `repeats`
+不可比。
 
-### 2. 关键文件地图（改这里，不要新建平行体系）
+#### 3.1 8-zone 主结果（1000-step，无中间输出，paired warm）
+
+| 版本 | CPU 8C | HIP 8C+1DCU | CPU/HIP |
+|---|---:|---:|---:|
+| 原始 face-atomic | 230800.4 ms | 62589.6 ms | 3.69x |
+| + cell-gather | — | 61067.1 ms | — |
+| + packed gradient | — | 60186.3 ms | — |
+| + task cache（当前） | 230800.4 ms | **59355.6 ms** | **3.89x** |
+
+- 1-step：约 1.92 s；**fixed 约 1.9 s**，100-step 时占 25%，1000-step 时占 3%。
+- 100-step 对照：当前 2.71x（旧基准；只用于历史对照）。
+- CPU 1000-step 只有 **1 个样本**（230.8 s）；CPU 节点差异会直接影响 3.89x，
+  正式报告前需补 1–2 个样本。
+
+#### 3.2 当前 1000-step 分项（8-zone，rank 均值，ms/step）
+
+| 类别 | 值 | 说明 |
+|---|---:|---|
+| 未计时 host（task 执行/内存/同步） | **~13–14** | 最大单一未知块；`task_plan` 只有 0.10 |
+| `mpi_interface` | 11.83 | q interface：设备 pack/unpack + host MPI |
+| `gradient` 父项 | 12.09 | `swap_upload 3.44` + `swap_download 3.10` + `gradient_mirror 3.24` + `gradient_kernel 0.86` |
+| `reconstruction` | 7.90 | face-based，寄存器已精简 |
+| `update_flowfield` | 3.04 | 3 stages |
+| `calc_boundary` | 2.60 | 设备 boundary |
+| `load_residuals` | 2.05 | |
+| `load_q` | 0.83 | |
+| `calc_time_step` | 0.37 | resident time-step |
+| `calc_lhs` | 0.28 | |
+| `task_plan` | 0.10 | class/name 查表已排除为瓶颈 |
+| `update_residuals` | 24.93 | **父项**，含 gradient/recon/flux，不能与子项相加 |
+
+#### 3.3 规模/分区（非 8:1 的点只作趋势）
+
+| 配置 | cells | 端到端 CPU/HIP | loop CPU/HIP | 备注 |
+|---|---:|---:|---:|---|
+| m6wing 1-zone / 1 rank | 294912 | 10.01x | 20.35x | 1C vs 1C+1DCU，非 8:1 |
+| m6wing 4-zone / 4 ranks | 294912 | 4.74x | — | 4C vs 4C+1DCU，非 8:1 |
+| box 65³ / 1 rank | 262144 | 9.80x | 24.34x | cell-gather；均匀流，1C vs 1C+1DCU |
+| box 97³ / 1 rank | 912673 | 10.91x | 25.23x | **face-atomic 旧二进制**，未重跑 |
+| box 129³ / 1 rank | 2097152 | 14.71x | 33.15x | cell-gather；fixed 约 19–20 s |
+
+**规模结论**：网格放大到 2.1M，1C vs 1C+1DCU 的 loop 比值从 22.7x 升到 33.2x；
+规模效应真实存在，但 8:1 的 3.89x 仍受 host 链限制。box 是均匀流，只作为
+solver-path 趋势，不是气动验证。
+
+#### 3.4 1D Euler 参考（standalone，不是 3D 主求解器）
+
+1D vs 32-rank CPU 的应用级 lifecycle 为 `3.85 / 5.34 / 6.80 / 9.70x`
+（65k → 4M）；1D vs **单线程**的 `101–296x` 不是 3D 的目标口径。3D 1000-step
+的 3.89x 已在 1D 应用级低端附近。
+
+### 4. 本轮已做/已试（全部有 A/B）
+
+| 改动 | 结果 | 去留 |
+|---|---|---|
+| cell-based gradient/residual gather（去 face atomic） | 1000-step vs 原始 **−2.4%**；gradient kernel 4.28→0.86 ms/step；100-step paired −1.6%（3/3） | **保留** `9b5934bd` |
+| device-packed gradient interface + 去 ghost sync | 1000-step vs cell-gather **−2.17%**；`halo_ghost_sync 3.41→0.46`；gradient 交换 13.16→10.24 | **保留** `afb7e8d6` |
+| task class cache + `task_plan` | 1000-step 0.48%（噪声）；`task_plan 0.10 ms/step`；证明未计时不是查表 | 保留为诊断/清理，`ac594fbd` |
+| reconstruction 去冗余寄存器数组 | recon 7.15→6.86 ms/step，端到端在噪声内 | 保留 micro，`0f02e8ee` |
+| interface x/y/z 批量 upload/download | `swap_upload 3.88→4.69`，`swap_download 2.02→1.72`，总 loop 无收益 | **已回退** |
+| interface staging thread-local | 100-step 1.004x（噪声） | 保留清理，`b93b4502` |
+| 100-step 作为 3D 基线 | 2.71x 被 1.9 s 启动/收尾放大 | **改用 1000-step** |
+
+累计：原始 `62589.6` → 当前 `59355.6 ms`（**−5.2%**）；CPU/HIP `3.69x → 3.89x`。
+这些是 A/B/paired 结果，不是正式性能报告；1000-step CPU 仍只有 1 个样本。
+
+### 5. 门禁与未复验项
+
+已通过（当前代码）：
+
+- 8-zone 3-step trace：`MULTIZONE_TRACE_PASS`，8/8 rank，contract `24/0/0`，
+  HIP vs legacy 最大绝对差约 `1.8e-13`；
+- HIP CTest `16/16`、HIP smoke PASS；
+- 1000-step HIP `exit_code=0`，`ONEFLOW_FAIL_ON_NONPHYSICAL=1`；
+- cell-gather / packed-gradient / task-cache 三个二进制都通过 trace。
+
+**本轮未复验，PR 前必须补**：
+
+- CPU 五算例 normal `1e-8` 与 strict `1e-15`（host task/interface 改动后未重跑）；
+- 200-step NoTrace residual/aero vs CPU（cell-gather/packed gradient 后未重跑）；
+- restart `50+50 vs 100`（packed gradient 只改 gradient，q 未变；但仍建议重跑）；
+- CPU 1000-step 第二/第三个样本；
+- 50-step stability 三路（本轮用 1000-step exit code 代替，正式门禁仍应跑）。
+
+### 6. 关键文件与开关（本轮新增）
 
 | 关注点 | 文件 |
 |---|---|
-| 默认策略 / 阶段开关 | `codes/accel/include/HipProductionPolicy.h` |
-| HIP 生产链与 kernel | `codes/accel/src/HipFluxBackend.hip`、`codes/accel/include/HipFluxBackend.h` |
-| resident state 契约 | `codes/accel/include/ResidentStateContract.h`、`codes/accel/include/AccelViews.h` |
-| solver 侧调用点 | `codes/uns/src/UNsInvFlux.cpp`（gradient/recon/flux/residual）、`codes/uns/src/UNsGrad.cpp`、`codes/uns/src/UNsUpdate.cpp`、`codes/usolver/src/ULhs.cpp`、`codes/usolver/src/ULimiter.cpp` |
-| 边界 | `codes/ns/src/NsSolverImp.cpp` |
-| halo / ownership | `codes/task/src/InterfaceTask.cpp`、`codes/parallel/src/BoundaryExchangeContract.cpp`、`codes/global/src/InterfaceFieldProperty.cpp`、`codes/task/include/InterfaceEndpoint.h` |
-| 残差/输出/气动力 | `codes/residual/src/ResidualTask.cpp`、`codes/force/src/AeroForceTask.cpp`、`codes/restart/*` |
-| 计时 | `codes/accel/src/StageProfiler.cpp`（类别表 + `ScopedStageTimer`） |
-| 单测 | `tests/hip_resident_state_contract_test.cpp`、`tests/euler/CMakeLists.txt` |
-| 集群 runner | `ci/kunshan/f2-main-solver-{build.slurm,multizone-trace.sh,multizone-timing.sh,multizone-matrix.sh,stability.slurm,stage.slurm}` |
+| cell→face CSR / cell gather | `codes/accel/src/HipFluxBackend.hip`、`codes/accel/include/HipFluxBackend.h` |
+| device-packed gradient interface | `codes/accel/src/HipFluxBackend.hip`、`codes/uns/src/UNsGrad.cpp`、`codes/uns/src/UNsInvFlux.cpp`、`codes/global/src/InterfaceFieldProperty.cpp`、`codes/interface/include/InterField.h` |
+| gradient packed 开关 | `codes/accel/include/HipProductionPolicy.h`：`ONEFLOW_HIP_GRADIENT_PACKED=0` 回退 host swap；默认开 |
+| task class cache / task_plan | `codes/task/src/CmxTask.cpp`、`codes/accel/src/StageProfiler.cpp` |
+| RK 调度 / host 链 | `codes/solver/src/TimeIntegral.cpp`、`codes/task/src/InterfaceTask.cpp` |
+| CPU 构建修复 | `codes/ns/src/NsSolverImp.cpp`（`HipProductionPolicy.h` 无条件包含） |
+| 计时 | `StageProfiler` 新增 `task_plan`；现有 `gradient_mirror`、`swap_upload/download`、`halo_ghost_sync` |
 
-### 3. 开关（含兼容语义）
+### 7. 未完成 / 阻塞
 
-| 变量 | 作用 |
-|---|---|
-| `ONEFLOW_ACCEL_BACKEND=HIP` | 选定后端；默认 policy 打开上述全部已验证阶段 |
-| `ONEFLOW_ENABLE_UNS_HIP_{BATCH,GRADIENT,RECONSTRUCTION,STATE_UPDATE,BOUNDARY,INTERFACE,TIME_STEP}` | 旧变量，现为**覆盖**：未设=auto（policy）；`0`=强制 host；`1`=请求，能力不满足则 fail-fast |
-| `ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1` | 每次 gradient 前逐值比较 device(owned+ghost) vs host，打印 `RESIDENT_STATE_CONTRACT` |
-| `ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` | 一次性打印 gradient/recon/boundary 的决策与拒绝原因 |
-| `ONEFLOW_ENABLE_BC_GRADIENT_STORE=1` | 恢复 `StoreBcGrad`（`bcdq*` 面索引梯度拷贝）；默认关，aero 力已直接读 cell gradient |
-| `ONEFLOW_FAIL_ON_NONPHYSICAL=1` | 非物理 state 直接失败（device 归约标量也遵守它） |
-| `ONEFLOW_RESIDUAL_TEST_OUTPUT=1` | 残差文件 `max_digits10` 精度（高精度对比用） |
-| `ONEFLOW_GPU_AWARE_MPI` / `..._CONFIRMED` | DeviceDirect，**保持关闭**（见 §6） |
-| `OMPI_MCA_coll='^hcoll,han'` | 昆山 MPI 必需；`han` 在不均匀分布上会崩 |
-| `ONEFLOW_MZ_*` | 多 zone runner：`RANKS/STEPS/CFL/MAP_BY/HIP_DEVICES/FIXTURE_METADATA/RESIDENT_CONTRACT/...` |
+- **host 链**：未计时 ~13–14 ms/step（task 执行/内存/同步）、q interface 11.83、
+  reconstruction 7.90、gradient swap 6.54 / mirror 3.24；这是当前性能主矛盾。
+- **全链路能力**：RK 调度、IO/restart、气动力、limiter、LUSGS、multigrid、
+  viscous/turbulence 未迁移；不能称为完整 NS HIP 求解器。
+- **DeviceDirect**：probe 通过但历史实测慢 1.59x；在 packed layout 上未重测，
+  保持关闭。
+- **多卡 8:1 / 跨节点 8:1**：仍缺 ≥64-zone 合法 fixture；`Partition` 任务未实现，
+  需外部 METIS 分区或 owner 提供。
+- **129³ fixed**：1-zone 的 19–20 s 主要是 host 网格/初始化；尚未拆到子项。
 
-### 4. 门禁证据（`95830d9b`，Kunshan DTK 26.04 / gfx906）
+### 8. 下一步（按序，含验收）
 
-| 门禁 | 结果 |
-|---|---|
-| 8-zone 3-step trace（backend-only） | `MULTIZONE_TRACE_PASS`，每 rank 36 records，HIP vs legacy ≈2.3e-13 |
-| resident contract | `records=24 failures=0 max_abs_diff=0` |
-| 8-zone / 单 zone 50-step stability | 三路（legacy/cpu_batch/hip_batch）全 `exit_code=0`、`hits=0`、PASS |
-| 单 zone 3-step stage trace | `STAGE_TRACE_PASS records=36` |
-| **NoTrace 200-step residual vs CPU（高精度）** | `max_rel_diff = 1.094e-14`；`aero` 在输出精度内一致 |
-| CPU normal / strict 五算例 | 5/5、5/5（含 viscous/turbulent） |
-| 硬件 CTest / HIP gtest / resident-state 单测 | 16/16、15/15、12/12 |
-| 跨节点 2×4 ranks trace | PASS（7+1 分布，见 §6） |
+1. **补必过门禁**：CPU 五算例 normal/strict；200-step residual/aero；50-step
+   stability 三路；CPU 1000-step 第二/第三样本。任何 host 改动先过这些。
+2. **task 执行时间线**：在 task body/`generate→execute` 内外加非嵌套时间戳，拆开
+   未计时 ~13–14 ms；目标减少 2–4 ms/step。验收：paired 1000-step A/B ≥1.5%，
+   trace/CPU 5/5/200-step residual 全过。
+3. **q interface 往返**：11.83 ms/step；在 packed layout 上重测 DeviceDirect/紧凑
+   endpoint；目标减少 2–3 ms/step。
+4. **reconstruction 7.90 / gradient swap 6.54 / mirror 3.24**：face-based/寄存器/
+   去搬运；目标合计 1–2 ms/step。
+5. **RK 调度迁移**：目前 host legacy task 序列；预计 4–8 ms/step，排在 host 链之后。
+6. **64-zone fixture → 多卡 8:1**。
+7. **全链路能力扩展**：limiter → LUSGS/multigrid → 层流 NS → RANS/SA；与性能
+   优化分开立项。
+8. **DTK kernel 调优最后做**：kernel 0.86 ms/step（约 1.4% per-step）；
+   occupancy/HBM/LDS/rocprof 的收益上限远小于 host 链。
 
-### 5. 性能（同 basis 规则与当前值）
-
-**规则**：报告必须成组——同节点、同资源与绑定、同 fixture、同 `steps/warmup/repeats`；
-CPU 基线只能在 `kshcnormal`（同 8 核在 DCU 节点慢 37%）；比例只与同组数据比较；
-**1 DCU 槽 = 8 核**（节点 32 核/4 卡）。
-
-| 项 | 值 |
-|---|---|
-| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.08 s** 默认输出；无中间输出 **7.65 s**（cell-gather 后，2026-10-23） |
-| 本轮优化前后（交臂 3 对） | 9.79 s → 9.12 s，mean 1.073x，3/3 对为正 |
-| loop 求合（rank 0/4/7） | **52.4 ms/step**（优化前 57.95，−9.5%） |
-| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.71x**（100 steps，cell-gather 后）→ **3.78x**（1000 steps：230800.4 / 61067.1 ms，同样 8C vs 8C+1DCU） |
-| 同节点 8-zone"加卡"隔离（8C vs 8C+1DCU） | **3.13x**（默认输出）→ **3.24x**（无中间输出）→ **3.50x**（cell-gather 后） |
-| 8-zone solver loop（profiled stage sum） | CPU `238.6 ms/step` vs HIP `45.3 ms/step` = **5.27x**（cell-gather 后）；另加约 **15.8 ms/step 未计时** host 开销 |
-| 4-zone（4C vs 4C+1DCU，非 8:1） | 4.74x（41795.9 / 8822.2 ms） |
-| 1-zone（1C/1 rank vs 1C+1DCU，非 8:1） | 10.01x（无中间输出：127039.8 / 12696.4 ms） |
-| 1→8 rank 扩展（solver loop） | CPU 5.09x / HIP 1.22x；HIP 8-rank 绝对时间 8.14 s < 1-rank 12.70 s |
-| restart `50+50` vs `100` | CPU 逐位一致；HIP 流场最大相对差约 `1.6e-14`，res/aero 输出精度内一致 |
-| 固定开销 | ≈1.9 s/run（100 steps 时占 wall 约 20%；10 steps 时占 80%，故 10-step 比值无意义） |
-
-当前 loop 分项（ms/step）：`update_residuals 27.0`（gradient 12.7 / reconstruction 9.0 /
-HIP kernel 1.0 / residual_metrics 0.6）、`mpi_interface 13.1`、`update_flowfield 2.9`、
-`state_update 2.5`、`calc_boundary 2.2`、`load_residuals 2.4`、`load_q 1.3`、
-`calc_time_step 0.7`、`calc_lhs 0.3`。
-
-### 6. 未完成 / 阻塞
-
-| 项 | 状态与原因 |
-|---|---|
-| **DeviceDirect** | probe 通过但实测慢 1.59x（MPI 内部仍 host staging）→ 保持关闭 |
-| **多卡 8:1 核卡比** | 缺 ≥64-zone fixture；`simutask=Partition` 在本 build 抛 "not implemented"，需外部 METIS 分区或 owner 提供 |
-| **跨节点 8:1 比值** | 正确性 PASS，但分配固定 7+1、2 卡 4 核/卡；portal 不接受 `--ntasks-per-node` |
-| viscous/RANS/limiter/multigrid/LUSGS | 未迁移，host 回退 |
-
-### 7. 下一步（按序，含验收）
-
-1. **接口紧凑布局**：`swap_upload+swap_download ≈ 4.3 ms/step` 是 `SwapBcGrad` 为接口 storage 做的随机 gather/scatter；让交换直接消费 endpoint 布局。验收：CPU 5/5、3-step trace、200-step residual、A/B ≥3%。
-2. **gradient_mirror 3.5 / reconstruction 9.0** 的进一步去搬运（不要动数值语义与时序）。
-3. **64-zone fixture**（并行请求）→ 16-zone 双卡 → 多卡 8:1。
-4. 受限路径闭环后再选生产能力扩展：层流 NS → RANS/SA。
-
-### 8. 复现（Kunshan）
+### 9. 复现（Kunshan，脱敏）
 
 ```bash
-# 同步源码（scnet-hpc skill）
+# 1) 源码归档 + 上传（scnet-hpc skill）
 git archive --format=tar.gz --prefix="OneFLOW-<rev>/" <rev> -o /tmp/OneFLOW-<rev>.tar.gz
-python3 <skill>/scripts/scnet.py upload /tmp/OneFLOW-<rev>.tar.gz /public/home/luql/.scnet-hpc/oneflow/incoming
-# 构建 + 硬件 CTest（DCU 队列）
-sbatch --export=ALL,ONEFLOW_F2_BUILD_SOURCE_DIR=<src>,ONEFLOW_F2_BUILD_DIR=<build> f2-main-solver-build.slurm
-# 门禁（backend-only：不要设 ONEFLOW_ENABLE_UNS_HIP_*）
-ONEFLOW_MZ_RUN_ROOT=<run> bash f2-main-solver-multizone-trace.sh        # 3-step trace + contract
-ONEFLOW_F2_STABILITY_RUN_DIR=<run> bash f2-main-solver-stability.slurm  # 50-step 三路
-bash f2-main-solver-multizone-timing.sh                                  # 100-step 配对/交臂
+python3 <skill>/scripts/scnet.py upload /tmp/OneFLOW-<rev>.tar.gz <workspace>/incoming
+
+# 2) root HIP build + 硬件 CTest（DCU 队列）
+#    ONEFLOW_F2_BUILD_SOURCE_DIR=<src> ONEFLOW_F2_BUILD_DIR=<build>
+bash ci/kunshan/f2-main-solver-build.slurm
+
+# 3) 数值门禁（backend-only：不要设 ONEFLOW_ENABLE_UNS_HIP_*）
+ONEFLOW_MZ_RUN_ROOT=<run> bash ci/kunshan/f2-main-solver-multizone-trace.sh
+#    期望：MULTIZONE_TRACE_PASS + RESIDENT_STATE_CONTRACT 24/0/0
+
+# 4) 1000-step paired warm（8-zone，8 ranks/1 DCU，无中间输出）
+#    old/new 二进制同节点交错；先 warm 两个二进制，再 3 对
+#    maxSteps=1000, nFieldSave/nResSave/nForceSave=100000, CFL=0.01, ilim=0,
+#    ischeme=5, time_integral=1, rk_stage=3, vismodel=0
+#    采集 wall + ONEFLOW_STAGE_BREAKDOWN_FILE；用 CPU 8C 作 8:1 分母
+
+# 5) 必补回归（PR 前）
+#    CPU 五算例 normal/strict；200-step NoTrace residual/aero；50-step stability
+
+# 6) 129³ / 65³ box（1 rank，均匀流，仅趋势）
+#    注意：nResSave/nForceSave=1 才能正常迭代；大网格 CPU 单 rank 很慢
 ```
-所有原始日志、私有 fixture、ownership manifest 留在集群 artifacts，不进仓库。
+
+**口径提醒**：100-step 的 2.71x 不是 3D 生产指标；报告引用必须写成
+`1000-step, 8C vs 8C+1DCU, CPU 230800.4ms / HIP 59355.6ms = 3.89x`，
+并注明 CPU 只有 1 个样本。129³ 的 14.71x 是 1C vs 1C+1DCU，不是 8:1。
+
+### 10. 提交与产物
+
+- 代码：`9b5934bd`（cell-gather）、`afb7e8d6`（packed gradient）、`ac594fbd`
+  （task cache）、`0f02e8ee`（recon 寄存器）、`b93b4502`（interface staging）、
+  `63fa0cf8`（CPU 构建修复）。
+- 文档：`568ccf2b`、`3da729d1`、`c8ee2bc8`、`c543d8bd`、`707feeb4` + 本交接。
+- `dev` 领先 `origin/dev` 12 个提交，**尚未 push**；PR 前先补 §5 未复验项。
+- 原始 trace/breakdown/timing、私有 fixture、ownership manifest 留在集群 artifacts，
+  不进仓库；正式报告不得含绝对路径、hostname、account/job 元数据。
 
 ## 2026-10-23 受限 inviscid HIP 收口：restart 等价性与多配置端到端
 
