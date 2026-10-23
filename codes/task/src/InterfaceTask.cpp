@@ -37,6 +37,7 @@ License
 #include "SolverDef.h"
 #include "FieldWrap.h"
 #include "SimuContext.h"
+#include "StageProfiler.h"
 #include "AccelRuntime.h"
 #include "HipProductionPolicy.h"
 #ifdef ONEFLOW_ENABLE_HIP
@@ -49,6 +50,8 @@ License
 #include <fstream>
 #include <stdexcept>
 #include <vector>
+#include <array>
+#include <map>
 
 BeginNameSpace( ONEFLOW )
 
@@ -227,6 +230,52 @@ void ExportFixtureMetadataShard()
 }
 
 #ifdef ONEFLOW_ENABLE_HIP
+bool HostInterfaceSkipped()
+{
+    return HipSkipHostInterfaceExchange() && ZoneState::nZones > 1;
+}
+
+namespace {
+
+// The readiness and value-count handshakes in ExchangeHipInterfaceQ are two
+// blocking round trips per interface exchange.  They validate the endpoint
+// contract, which is a property of the partition, not of the time step: once a
+// pair has been proven, the steady state only needs the payload message.
+// Caching them removes the per-step waiting that dominated the q halo.  Set
+// ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE=0 to restore the per-step handshakes.
+bool ExchangeHandshakeCacheEnabled()
+{
+    const char * value =
+        std::getenv( "ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
+std::map< std::array< int, 5 >, int > & ExchangeCounts()
+{
+    static std::map< std::array< int, 5 >, int > counts;
+    return counts;
+}
+
+// The handshakes validate two things: the endpoints exist and both sides agree
+// on the payload length.  Both are properties of the partition, so they are
+// cached per (zone, zone, rank, rank, equations) pair.  The cached value is the
+// *verified* length, used symmetrically by both ranks; caching each side's own
+// length independently would let a mismatch slip through as silent truncation.
+const int * CachedExchangeCount( const std::array< int, 5 > & key )
+{
+    if ( ! ExchangeHandshakeCacheEnabled() ) return nullptr;
+    const auto found = ExchangeCounts().find( key );
+    return found == ExchangeCounts().end() ? nullptr : & found->second;
+}
+
+void RecordExchangeCount( const std::array< int, 5 > & key, int count )
+{
+    if ( ! ExchangeHandshakeCacheEnabled() ) return;
+    ExchangeCounts()[ key ] = count;
+}
+
+}
+
 void ExchangeHipInterfaceQ(
     SimuContext & context,
     int sourceZone,
@@ -326,17 +375,35 @@ void ExchangeHipInterfaceQ(
         }
     }
 
-    if ( ! ( isSource && isTarget ) )
+    const std::array< int, 5 > exchangeKey{
+        sourceZone, targetZone, sourceRank, targetRank, nEquations };
+    const int * cachedCount = CachedExchangeCount( exchangeKey );
+    const bool validated = cachedCount != nullptr;
+    if ( ! validated )
     {
-        HXSwapData(
-            & sourceReady, 1, sourceRank, targetRank, tagBase );
-        HXSwapData(
-            & targetReady, 1, targetRank, sourceRank, tagBase + 1 );
+        if ( ! ( isSource && isTarget ) )
+        {
+            ScopedStageTimer readyTimer( "interface_ready" );
+            HXSwapData(
+                & sourceReady, 1, sourceRank, targetRank, tagBase );
+            HXSwapData(
+                & targetReady, 1, targetRank, sourceRank, tagBase + 1 );
+        }
+        if ( sourceReady == 0 || targetReady == 0 )
+        {
+            ZoneState::zid = previousZone;
+            return;
+        }
     }
-    if ( sourceReady == 0 || targetReady == 0 )
+    else
     {
-        ZoneState::zid = previousZone;
-        return;
+        // Cached: the endpoint contract was already proven for this pair.
+        if ( ( isSource && sourceReady == 0 )
+             || ( isTarget && targetReady == 0 ) )
+        {
+            ZoneState::zid = previousZone;
+            return;
+        }
     }
 
     if ( isSource )
@@ -363,9 +430,13 @@ void ExchangeHipInterfaceQ(
     if ( isSource )
     {
         ZoneState::zid = sourceZone;
-        backend.UploadBoundaryState(
-            sourceKey, sourceGrid->nCells, sourceGrid->nBFaces,
-            nEquations, sourceComponents );
+        {
+            ScopedStageTimer uploadTimer( "interface_upload" );
+            backend.UploadBoundaryState(
+                sourceKey, sourceGrid->nCells, sourceGrid->nBFaces,
+                nEquations, sourceComponents );
+        }
+        ScopedStageTimer packTimer( "interface_pack" );
         send = backend.PackBoundary(
             sourceKey, sourceEndpoint, nEquations,
             useDeviceDirect
@@ -376,9 +447,13 @@ void ExchangeHipInterfaceQ(
     if ( isTarget )
     {
         ZoneState::zid = targetZone;
-        backend.UploadBoundaryState(
-            targetKey, targetGrid->nCells, targetGrid->nBFaces,
-            nEquations, targetComponents );
+        {
+            ScopedStageTimer uploadTimer( "interface_upload" );
+            backend.UploadBoundaryState(
+                targetKey, targetGrid->nCells, targetGrid->nBFaces,
+                nEquations, targetComponents );
+        }
+        ScopedStageTimer packTimer( "interface_pack" );
         receive = backend.PrepareBoundaryReceive(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
@@ -414,57 +489,88 @@ void ExchangeHipInterfaceQ(
             contract, send, receive, transferMode );
     }
 
-    int sendCount = isSource
-        ? static_cast< int >( send.valueCount ) : 0;
-    int receiveCount = 0;
-    HXSwapData( &sendCount, 1, sourceRank, targetRank, tagBase );
-    if ( isTarget )
     {
-        receiveCount = static_cast< int >( receive.valueCount );
-        if ( sendCount != receiveCount )
-            throw std::runtime_error(
-                "HIP interface exchange value count mismatch" );
-    }
-
-    if ( isSource && isTarget )
-    {
-        // Same-rank exchanges remain host-staged.  Device pointers are not
-        // valid inputs to std::copy, and the host path is deterministic for
-        // the local multi-zone case.
-        if ( send.valueCount != receive.valueCount )
+        ScopedStageTimer mpiTimer( "interface_mpi" );
+        int sendCount = isSource
+            ? static_cast< int >( send.valueCount ) : 0;
+        int payloadCount = 0;
+        if ( ! validated )
         {
-            throw std::runtime_error(
-                "local HIP interface exchange value count mismatch" );
-        }
-        std::copy(
-            send.values,
-            send.values + send.valueCount,
-            receive.values );
-    }
-    else
-    {
-        if ( useDeviceDirect )
-        {
-            Real * data = isSource
-                ? send.values : receive.values;
-            HXSwapDeviceData(
-                data,
-                static_cast< std::size_t >( sendCount ) * sizeof( Real ),
-                sourceRank,
-                targetRank,
-                tagBase + 1 );
+            HXSwapData( &sendCount, 1, sourceRank, targetRank, tagBase );
+            if ( isTarget )
+            {
+                const int receiveCount =
+                    static_cast< int >( receive.valueCount );
+                if ( sendCount != receiveCount )
+                    throw std::runtime_error(
+                        "HIP interface exchange value count mismatch" );
+            }
+            // The count exchange is itself the validation: after it, both
+            // ranks hold the same verified length, so caching each side's own
+            // copy is symmetric without a second message.
+            payloadCount = sendCount;
+            RecordExchangeCount( exchangeKey, payloadCount );
         }
         else
         {
-            Real * data = isSource
-                ? send.values : receive.values;
-            HXSwapData(
-                data, sendCount, sourceRank, targetRank, tagBase + 1 );
+            payloadCount = * cachedCount;
+            if ( isSource
+                 && static_cast< int >( send.valueCount ) != payloadCount )
+            {
+                throw std::runtime_error(
+                    "HIP interface exchange send length differs from the "
+                    "validated contract" );
+            }
+            if ( isTarget
+                 && static_cast< int >( receive.valueCount ) != payloadCount )
+            {
+                throw std::runtime_error(
+                    "HIP interface receive length differs from the validated "
+                    "contract" );
+            }
+        }
+
+        if ( isSource && isTarget )
+        {
+            // Same-rank exchanges remain host-staged.  Device pointers are not
+            // valid inputs to std::copy, and the host path is deterministic for
+            // the local multi-zone case.
+            if ( send.valueCount != receive.valueCount )
+            {
+                throw std::runtime_error(
+                    "local HIP interface exchange value count mismatch" );
+            }
+            std::copy(
+                send.values,
+                send.values + send.valueCount,
+                receive.values );
+        }
+        else
+        {
+            if ( useDeviceDirect )
+            {
+                Real * data = isSource
+                    ? send.values : receive.values;
+                HXSwapDeviceData(
+                    data,
+                    static_cast< std::size_t >( payloadCount ) * sizeof( Real ),
+                    sourceRank,
+                    targetRank,
+                    tagBase + 1 );
+            }
+            else
+            {
+                Real * data = isSource
+                    ? send.values : receive.values;
+                HXSwapData(
+                    data, payloadCount, sourceRank, targetRank, tagBase + 1 );
+            }
         }
     }
 
     if ( isTarget )
     {
+        ScopedStageTimer unpackTimer( "interface_unpack" );
         backend.UnpackBoundary(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
@@ -552,7 +658,10 @@ void CUpdateInterface::Run()
         zoneNeighbors,
         Parallel::GetNProc() );
 #ifdef ONEFLOW_ENABLE_HIP
-    const bool trackResidentHalo = HipProductionBackendSelected();
+    // When the legacy host exchange is skipped the host ghost cells are stale,
+    // so the resident repair pass must not upload them over the device ghosts.
+    const bool trackResidentHalo =
+        HipProductionBackendSelected() && ! HostInterfaceSkipped();
 #endif
     for ( const BoundaryExchange & exchange : plan.BoundaryExchanges() )
     {
@@ -570,7 +679,11 @@ void CUpdateInterface::Run()
         this->SwapInterfaceData( plan, exchange );
     }
 #ifdef ONEFLOW_ENABLE_HIP
-    if ( trackResidentHalo ) SyncLocalResidentGhostStates();
+    if ( trackResidentHalo )
+    {
+        ScopedStageTimer ghostTimer( "interface_ghost_sync" );
+        SyncLocalResidentGhostStates();
+    }
 #endif
 }
 
@@ -583,22 +696,35 @@ void CUpdateInterface::SwapInterfaceData(
     const int sPid = plan.OwnerRank( iZone );
     const int rPid = plan.OwnerRank( jZone );
 
-    if ( Parallel::pid == sPid )
+#ifdef ONEFLOW_ENABLE_HIP
+    const bool skipHostExchange = HostInterfaceSkipped();
+#else
+    const bool skipHostExchange = false;
+#endif
+    if ( ! skipHostExchange )
     {
-        ZoneState::zid  = iZone;
-        ZoneState::rzid = jZone;
+        if ( Parallel::pid == sPid )
+        {
+            ZoneState::zid  = iZone;
+            ZoneState::rzid = jZone;
 
-        this->sendAction();
-    }
+            ScopedStageTimer sendTimer( "interface_host_send" );
+            this->sendAction();
+        }
 
-    HXSwapData( ActionState::dataBook, sPid, rPid );
+        {
+            ScopedStageTimer hostMpiTimer( "interface_host_mpi" );
+            HXSwapData( ActionState::dataBook, sPid, rPid );
+        }
 
-    if ( Parallel::pid == rPid )
-    {
-        ZoneState::zid  = jZone;
-        ZoneState::szid = iZone;
+        if ( Parallel::pid == rPid )
+        {
+            ZoneState::zid  = jZone;
+            ZoneState::szid = iZone;
 
-        this->recvAction();
+            ScopedStageTimer recvTimer( "interface_host_recv" );
+            this->recvAction();
+        }
     }
 
 #ifdef ONEFLOW_ENABLE_HIP

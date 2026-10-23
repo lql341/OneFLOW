@@ -43,11 +43,33 @@ License
 #include <utility>
 #include <map>
 #include <cstdint>
+#include <chrono>
 
 BeginNameSpace( ONEFLOW )
 
 namespace {
 
+// Times one plan+execute dispatch.  When the stage breakdown file is unset the
+// object is inert, so the production path keeps paying only the Enabled()
+// environment lookup that the coarse-stage timers already perform.
+struct TaskDispatchTimer
+{
+    bool active = false;
+    std::chrono::steady_clock::time_point start;
+
+    TaskDispatchTimer() : active( StageProfiler::Enabled() )
+    {
+        if ( active ) start = std::chrono::steady_clock::now();
+    }
+
+    void Finish( int operationId, const char * taskName ) const
+    {
+        if ( ! active ) return;
+        const auto end = std::chrono::steady_clock::now();
+        const std::chrono::duration< double, std::milli > elapsed = end - start;
+        StageProfiler::RecordTask( operationId, taskName, elapsed.count() );
+    }
+};
 // Cache HXClone* by (operationId, solverType, funcType). Invalidated when
 // MessageMap::Epoch() changes (Init/Free). Hot path: CmdAction / GenerateCmdList.
 struct GetClassCache
@@ -438,12 +460,15 @@ void DumpTaskDispatch(
 
 void SingleSolverSingleGridTask( int operationId )
 {
+    TaskDispatchTimer dispatchTimer;
+    const std::string & taskName = MessageMap::GetMsgName( operationId );
+
     // Runtime form: plan + execute by id (no string lookup here).
     {
         ScopedStageTimer planTimer( "task_plan" );
         GenerateCmdList( operationId );
     }
-    const char * category = StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
+    const char * category = StageProfiler::CategoryForTask( taskName );
     if ( category[ 0 ] != '\0' )
     {
         ScopedStageTimer timer( category );
@@ -453,18 +478,22 @@ void SingleSolverSingleGridTask( int operationId )
     {
         CMD::ExecuteCmd();
     }
+    dispatchTimer.Finish( operationId, taskName.c_str() );
 }
 
 void SingleSolverSingleGridTask(
     int operationId,
     SimuContext & context )
 {
+    TaskDispatchTimer dispatchTimer;
+    const std::string & taskName = MessageMap::GetMsgName( operationId );
+
     {
         ScopedStageTimer planTimer( "task_plan" );
         GenerateCmdList( operationId );
     }
     const char * category =
-        StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
+        StageProfiler::CategoryForTask( taskName );
     if ( category[ 0 ] != '\0' )
     {
         ScopedStageTimer timer( category );
@@ -474,6 +503,7 @@ void SingleSolverSingleGridTask(
     {
         CMD::ExecuteCmd( & context );
     }
+    dispatchTimer.Finish( operationId, taskName.c_str() );
 }
 
 void SingleSolverSingleGridTask( const std::string & taskName )

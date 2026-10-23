@@ -86,6 +86,10 @@ def main() -> int:
         return 2
 
     paths = [pathlib.Path(value) for value in sorted(glob.glob(args.pattern))]
+    # The opt-in per-task diagnostic is written next to the stage breakdown as
+    # "<breakdown>.tasks.tsv".  It shares the prefix but is not part of the
+    # per-rank stage contract.
+    paths = [path for path in paths if not path.name.endswith(".tasks.tsv")]
     by_rank = {}  # type: Dict[int, pathlib.Path]
     for path in paths:
         match = RANK_SUFFIX.search(path.name)

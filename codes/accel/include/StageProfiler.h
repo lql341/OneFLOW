@@ -35,6 +35,13 @@ public:
     // contract.  An empty string means that the task is not a coarse-stage
     // boundary and should not be timed here.
     static const char * CategoryForTask( const std::string & taskName );
+
+    // Accumulate the end-to-end dispatch time of one task (plan + execute).
+    // Unlike Record(), this is keyed by operation id so the task breakdown can
+    // show which dispatch owns the time that the coarse categories do not
+    // name.  Flush() writes these totals to "<breakdown>.tasks.tsv".
+    static void RecordTask( int taskId, const char * taskName,
+                            double elapsedMs ) noexcept;
 };
 
 class ScopedStageTimer

@@ -72,6 +72,29 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
 // gradient.  This removes the host cell gather/scatter and the separate
 // ghost-gradient upload while preserving the legacy one-round lag.  The host
 // mirror of boundary-adjacent owned cells is still produced for aero forces.
+// Skip the legacy host dataBook interface exchange when the resident device
+// exchange already owns the halo.  The device path packs/sends/unpacks the
+// same cells, and the per-iteration post-process round trip still refreshes
+// the host mirror, so the extra host MPI pass is pure duplication.  Set
+// ONEFLOW_HIP_SKIP_HOST_INTERFACE=0 to restore the legacy double exchange for
+// bisection; the 200-step cross-backend gate covers the default.
+inline bool HipSkipHostInterfaceExchange()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_INTERFACE" );
+    if ( value != nullptr ) return value[ 0 ] != '0';
+    return HipProductionBackendSelected();
+}
+
+// The host mirror of the boundary-adjacent gradient only feeds aerodynamic
+// forces, the optional boundary-gradient store and field dumps.  Mirroring it
+// every RK stage costs a device pack plus one H2D of the sampled cells;
+// request it only on the steps whose host consumers actually run.
+inline bool HipGradientHostMirrorOnDemand()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
 inline bool HipPackedGradientExchangeEnabled()
 {
     const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_PACKED" );

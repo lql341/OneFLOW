@@ -39,6 +39,9 @@ License
 #include "Lusgs.h"
 #include "Lhs.h"
 #include "FieldManager.h"
+#include "StageProfiler.h"
+#include "AccelRuntime.h"
+#include "Ctrl.h"
 #include "SolverState.h"
 #include "Zone.h"
 #include "Grid.h"
@@ -89,6 +92,38 @@ void CalcInterfaceGrad( StringField & data )
 //    fieldManager->GetInterfaceFieldProperty().DownloadInterfaceValue();
 //}
 
+namespace {
+
+// Only the gradient is device-owned: UNsGrad already packed it into the same
+// send storage from the resident field, and the receive side unpacks it
+// directly into the device ghosts.  Re-packing it from the host mirror would
+// overwrite the device payload, which is exactly what made the host mirror
+// mandatory on every step.  The other interface fields, dataBook layout and
+// message sizes stay untouched, so peers remain in step.
+bool SkipHostFieldPackFor( const std::string & fieldName )
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK" );
+    if ( value != nullptr && value[ 0 ] == '0' ) return false;
+    if ( fieldName != "dqdx" && fieldName != "dqdy" && fieldName != "dqdz" )
+    {
+        return false;
+    }
+    AccelRuntime & runtime = AccelRuntime::Instance();
+    if ( ! runtime.IsInitialized()
+         || runtime.Backend().Kind() != AccelBackendKind::HIP )
+    {
+        return false;
+    }
+    return vis_model.vismodel == 0;
+#else
+    (void) fieldName;
+    return false;
+#endif
+}
+
+}
+
 void UploadInterfaceData( StringField & data )
 {
     Grid & baseGrid = Zone::GetGridReference();
@@ -106,8 +141,10 @@ void UploadInterfaceData( StringField & data )
     const auto & fieldData =
         fieldManager->GetInterfaceFieldProperty().GetData();
 
+    ScopedStageTimer uploadTimer( "post_upload" );
     for ( const auto & [ fieldName, nEqu ] : fieldData )
     {
+        if ( SkipHostFieldPackFor( fieldName ) ) continue;
         MRField * field =
             ONEFLOW::GetFieldPointer< MRField >(
                 grid,
@@ -145,8 +182,10 @@ void DownloadInterfaceData( StringField & data )
     const auto & fieldData =
         fieldManager->GetInterfaceFieldProperty().GetData();
 
+    ScopedStageTimer downloadTimer( "post_download" );
     for ( const auto & [ fieldName, nEqu ] : fieldData )
     {
+        if ( SkipHostFieldPackFor( fieldName ) ) continue;
         MRField * field =
             ONEFLOW::GetFieldPointer< MRField >(
                 grid,

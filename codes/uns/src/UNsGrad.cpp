@@ -85,7 +85,8 @@ void UNsGrad::Init()
     this->istore = 1;
 }
 
-void UNsGrad::CalcGradHip( bool downloadToHost, bool mirrorBoundaryGradient )
+void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
+                          bool mirrorToHost )
 {
 #ifdef ONEFLOW_ENABLE_HIP
     if ( q == nullptr || dqdx == nullptr || dqdy == nullptr || dqdz == nullptr )
@@ -122,7 +123,7 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool mirrorBoundaryGradient )
         view.dqdz[ equation ] = ( * dqdz )[ equation ].data();
     }
     HipFluxBackend::Shared().CalcGradient( view );
-    if ( mirrorBoundaryGradient && ! view.downloadToHost )
+    if ( packedExchange && ! view.downloadToHost )
     {
         // The host mirror is consumed by Grad::SwapBcGrad only at the
         // boundary-adjacent owned cells: UploadInterfaceValue packs
@@ -130,27 +131,31 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool mirrorBoundaryGradient )
         // value for every boundary face.  Mirror exactly that set, then run the
         // unchanged host swap so the receive buffer (and therefore the
         // one-round lag) keeps the CPU oracle semantics.
-        if ( ug.bcRecord == nullptr )
+        if ( mirrorToHost )
         {
-            throw std::runtime_error(
-                "UNs HIP gradient mirror requires a boundary record" );
+            if ( ug.bcRecord == nullptr )
+            {
+                throw std::runtime_error(
+                    "UNs HIP gradient mirror requires a boundary record" );
+            }
+            std::vector< int > cells( static_cast< std::size_t >( ug.nBFaces ) );
+            for ( int face = 0; face < ug.nBFaces; ++ face )
+                cells[ face ] = ( * ug.lcf )[ face ];
+            std::sort( cells.begin(), cells.end() );
+            cells.erase( std::unique( cells.begin(), cells.end() ),
+                         cells.end() );
+            Real * dx[ 5 ] = {};
+            Real * dy[ 5 ] = {};
+            Real * dz[ 5 ] = {};
+            for ( int equation = 0; equation < nEqu; ++ equation )
+            {
+                dx[ equation ] = ( * dqdx )[ equation ].data();
+                dy[ equation ] = ( * dqdy )[ equation ].data();
+                dz[ equation ] = ( * dqdz )[ equation ].data();
+            }
+            HipFluxBackend::Shared().MirrorGradientCellsToHost(
+                grid, nEqu, cells, dx, dy, dz );
         }
-        std::vector< int > cells( static_cast< std::size_t >( ug.nBFaces ) );
-        for ( int face = 0; face < ug.nBFaces; ++ face )
-            cells[ face ] = ( * ug.lcf )[ face ];
-        std::sort( cells.begin(), cells.end() );
-        cells.erase( std::unique( cells.begin(), cells.end() ), cells.end() );
-        Real * dx[ 5 ] = {};
-        Real * dy[ 5 ] = {};
-        Real * dz[ 5 ] = {};
-        for ( int equation = 0; equation < nEqu; ++ equation )
-        {
-            dx[ equation ] = ( * dqdx )[ equation ].data();
-            dy[ equation ] = ( * dqdy )[ equation ].data();
-            dz[ equation ] = ( * dqdz )[ equation ].data();
-        }
-        HipFluxBackend::Shared().MirrorGradientCellsToHost(
-            grid, nEqu, cells, dx, dy, dz );
         if ( HipPackedGradientExchangeEnabled()
              && grid->interFace != nullptr )
         {

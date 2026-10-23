@@ -247,13 +247,28 @@ void UNsInvFlux::CalcInvFace()
         // CellFaceReconstructionView::syncGradientGhostsFromHost).
         const bool crossZoneGhostGradient = hipReconstruction
             && ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 );
+        // packedExchange is the contract that fills the resident ghost
+        // gradient every stage; mirrorToHost only feeds host readers.
+        const bool packedExchange =
+            hipGradient && hipReconstruction && crossZoneGhostGradient;
         const bool downloadGradient =
-            hipGradient && ( ! hipReconstruction || crossZoneGhostGradient );
+            hipGradient && ( ! hipReconstruction || crossZoneGhostGradient )
+            && ! ( packedExchange && HipPackedGradientExchangeEnabled() );
         // With a cross-zone device reconstruction the host mirror is only used
         // by the host interface exchange, so mirror just the boundary-adjacent
-        // owned gradient instead of downloading the whole field.
+        // owned gradient instead of downloading the whole field.  On the
+        // device-packed path the interface faces travel through the packed
+        // buffer instead, which leaves the host consumers (aero forces,
+        // boundary-gradient store, field dumps) as the only readers, so the
+        // mirror is requested on those steps only.
+        const bool hostMirrorReaderThisStep =
+            ! HipGradientHostMirrorOnDemand()
+            || ctrl.debugFieldDump != 0
+            || Iteration::ForceOk()
+            || Iteration::outerSteps + 1 >= Iteration::maxSteps;
         const bool mirrorBoundaryGradient =
-            hipGradient && hipReconstruction && crossZoneGhostGradient;
+            packedExchange
+            && ( ! HipPackedGradientExchangeEnabled() || hostMirrorReaderThisStep );
         if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
         {
             static int printed = 0;
@@ -272,7 +287,8 @@ void UNsInvFlux::CalcInvFace()
         }
         if ( hipGradient )
             uns_grad.CalcGradHip(
-                downloadGradient && ! mirrorBoundaryGradient,
+                downloadGradient && ! packedExchange,
+                packedExchange,
                 mirrorBoundaryGradient );
         else
             uns_grad.CalcGrad();

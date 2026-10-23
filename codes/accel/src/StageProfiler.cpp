@@ -6,6 +6,7 @@
 
 #include "StageProfiler.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -13,6 +14,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 BeginNameSpace( ONEFLOW )
 
@@ -31,9 +35,22 @@ struct CategoryTotal
     double elapsedMs;
 };
 
-std::array< CategoryTotal, 43 > & Totals()
+struct TaskTotal
 {
-    static std::array< CategoryTotal, 43 > totals = {{
+    std::string name;
+    unsigned long long count = 0;
+    double elapsedMs = 0.0;
+};
+
+std::unordered_map< int, TaskTotal > & TaskTotals()
+{
+    static std::unordered_map< int, TaskTotal > totals;
+    return totals;
+}
+
+std::array< CategoryTotal, 54 > & Totals()
+{
+    static std::array< CategoryTotal, 54 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -77,6 +94,17 @@ std::array< CategoryTotal, 43 > & Totals()
         { "swap_download", 0.0 },
         { "swap_store", 0.0 },
         { "task_plan", 0.0 },
+        { "interface_host_send", 0.0 },
+        { "interface_host_mpi", 0.0 },
+        { "interface_host_recv", 0.0 },
+        { "interface_ready", 0.0 },
+        { "interface_upload", 0.0 },
+        { "interface_pack", 0.0 },
+        { "interface_mpi", 0.0 },
+        { "interface_unpack", 0.0 },
+        { "interface_ghost_sync", 0.0 },
+        { "post_upload", 0.0 },
+        { "post_download", 0.0 },
     }};
     return totals;
 }
@@ -128,6 +156,31 @@ void StageProfiler::Record( const char * category, double elapsedMs ) noexcept
     }
 }
 
+void StageProfiler::RecordTask( int taskId, const char * taskName,
+                                double elapsedMs ) noexcept
+{
+    if ( elapsedMs < 0.0 ) return;
+    try
+    {
+        std::lock_guard< std::mutex > lock( OutputMutex() );
+        auto & totals = TaskTotals();
+        auto found = totals.find( taskId );
+        if ( found == totals.end() )
+        {
+            TaskTotal total;
+            total.name = taskName == nullptr
+                ? std::string( "<unnamed>" ) : std::string( taskName );
+            found = totals.emplace( taskId, std::move( total ) ).first;
+        }
+        found->second.count += 1;
+        found->second.elapsedMs += elapsedMs;
+    }
+    catch ( ... )
+    {
+        // Profiling must never change solver behaviour.
+    }
+}
+
 void StageProfiler::Flush()
 {
     const char * configured = std::getenv( "ONEFLOW_STAGE_BREAKDOWN_FILE" );
@@ -152,6 +205,42 @@ void StageProfiler::Flush()
     {
         throw std::runtime_error(
             "failed while writing ONEFLOW_STAGE_BREAKDOWN_FILE: " + path );
+    }
+
+    const std::string taskPath = path + ".tasks.tsv";
+    std::vector< std::pair< int, const TaskTotal * > > ordered;
+    ordered.reserve( TaskTotals().size() );
+    for ( const auto & entry : TaskTotals() )
+    {
+        ordered.emplace_back( entry.first, & entry.second );
+    }
+    std::sort( ordered.begin(), ordered.end(),
+        []( const std::pair< int, const TaskTotal * > & left,
+            const std::pair< int, const TaskTotal * > & right )
+        {
+            return left.second->elapsedMs > right.second->elapsedMs;
+        } );
+
+    std::ofstream taskOutput( taskPath, std::ios::out | std::ios::trunc );
+    if ( ! taskOutput )
+    {
+        throw std::runtime_error(
+            "cannot open task breakdown file: " + taskPath );
+    }
+    taskOutput << "task_id\ttask\tcount\ttotal_ms\tmean_ms\n";
+    for ( const auto & entry : ordered )
+    {
+        const TaskTotal & total = * entry.second;
+        taskOutput << entry.first << '\t' << total.name << '\t'
+                   << total.count << '\t' << total.elapsedMs << '\t'
+                   << ( total.count == 0 ? 0.0
+                                         : total.elapsedMs / total.count )
+                   << '\n';
+    }
+    if ( ! taskOutput )
+    {
+        throw std::runtime_error(
+            "failed while writing task breakdown file: " + taskPath );
     }
 }
 
