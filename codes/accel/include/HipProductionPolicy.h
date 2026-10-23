@@ -102,4 +102,25 @@ inline bool HipPackedGradientExchangeEnabled()
     return HipProductionBackendSelected();
 }
 
+inline bool HipSkipHostFieldPackRequested()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
+// The device gradient interface path owns dqdx/dqdy/dqdz on both sides: the
+// send side is packed once per exchange round, and the receive side is
+// unpacked on the device from a buffer uploaded once per round.  Outside this
+// configuration the host pack/download keeps running so viscous or non-packed
+// runs still see the host mirror.
+inline bool HipDeviceGradientInterfaceEnabled( bool viscousModelActive )
+{
+    if ( viscousModelActive ) return false;
+    const char * unpack = std::getenv( "ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK" );
+    if ( unpack != nullptr && unpack[ 0 ] == '0' ) return false;
+    return HipPackedGradientExchangeEnabled()
+        && HipSkipHostFieldPackRequested()
+        && HipProductionBackendSelected();
+}
+
 EndNameSpace

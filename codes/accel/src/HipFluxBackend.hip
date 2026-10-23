@@ -3315,6 +3315,89 @@ void HipFluxBackend::PackGradientFacesToHost(
     storage.gradientPackValues.CopyToHost( hostPacked, valueCount );
 }
 
+void HipFluxBackend::UploadGradientFacesToDevice(
+    const void * cacheKey, int nFaces, int nEquations, const Real * hostPacked )
+{
+    if ( cacheKey == nullptr || nFaces <= 0 || nEquations <= 0
+         || hostPacked == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid HIP gradient receive upload request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP gradient receive upload requires a bound state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error( "bound HIP state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const std::size_t valueCount =
+        static_cast< std::size_t >( nFaces ) * 3 * nEquations;
+    storage.gradientPackValues.CopyFromHost( hostPacked, valueCount );
+}
+
+void HipFluxBackend::UnpackGradientFacesFromDevice(
+    const void * cacheKey, const int * ghostCellIds, int nFaces,
+    int nEquations )
+{
+    if ( cacheKey == nullptr || ghostCellIds == nullptr || nFaces <= 0
+         || nEquations <= 0 )
+    {
+        throw std::invalid_argument(
+            "invalid HIP gradient receive unpack request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP gradient receive unpack requires a bound state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error( "bound HIP state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    if ( totalCells <= 0
+         || storage.cellGradient.Size()
+             < static_cast< std::size_t >( totalCells ) * 3 * nEquations )
+    {
+        throw std::logic_error(
+            "HIP gradient receive unpack has no resident gradient" );
+    }
+    const std::size_t needed =
+        static_cast< std::size_t >( nFaces ) * 3 * nEquations;
+    if ( storage.gradientPackValues.Size() < needed )
+    {
+        // Before the first exchange round there is no payload; the host path
+        // scattered a zero-initialised receive buffer, so mirror that.
+        storage.gradientPackValues.Resize( needed );
+        CheckHip( hipMemset( storage.gradientPackValues.Data(), 0,
+                             needed * sizeof( Real ) ),
+                  "gradient receive zero fill" );
+    }
+    storage.gradientPackIds.CopyFromHost( ghostCellIds, nFaces );
+    const int valueCount = nFaces * 3 * nEquations;
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        UnpackGradientFacesKernel,
+        dim3( ( valueCount + blockSize - 1 ) / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.cellGradient.Data(), storage.gradientPackIds.Data(),
+        nFaces, nEquations, totalCells,
+        storage.gradientPackValues.Data() );
+    CheckHip( hipGetLastError(), "gradient receive unpack kernel launch" );
+}
+
 void HipFluxBackend::UnpackGradientFacesFromHost(
     const void * cacheKey, const int * ghostCellIds, int nFaces,
     int nEquations, const Real * hostPacked )

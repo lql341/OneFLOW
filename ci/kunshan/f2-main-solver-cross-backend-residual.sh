@@ -150,6 +150,9 @@ run_backend() {
             if [ -n "${ONEFLOW_XB_HIP_CACHE_HANDSHAKE:-}" ]; then
                 export ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE="$ONEFLOW_XB_HIP_CACHE_HANDSHAKE"
             fi
+            if [ -n "${ONEFLOW_XB_HIP_SKIP_STATE_HOST_SYNC:-}" ]; then
+                export ONEFLOW_HIP_SKIP_STATE_HOST_SYNC="$ONEFLOW_XB_HIP_SKIP_STATE_HOST_SYNC"
+            fi
             export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-0}"
             export ROCR_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES:-0}"
         else

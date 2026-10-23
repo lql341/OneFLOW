@@ -35,6 +35,7 @@ License
 #include "CellMesh.h"
 #include "CellTopo.h"
 #include "HipProductionPolicy.h"
+#include "Ctrl.h"
 #include "StageProfiler.h"
 #include "InterFace.h"
 #include "InterField.h"
@@ -159,6 +160,8 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
         if ( HipPackedGradientExchangeEnabled()
              && grid->interFace != nullptr )
         {
+            const bool deviceUnpack =
+                HipDeviceGradientInterfaceEnabled( vis_model.vismodel != 0 );
             // Only the receive side runs here.  The send storage is packed
             // once per outer iteration by UploadInterfaceData, right before
             // the round trip that exchanges it.
@@ -177,9 +180,12 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
                     static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
                 {
                     ScopedStageTimer timer( "swap_download" );
-                    DownloadInterfaceValuePacked(
-                        grid, fields, names, 3, nEqu, ghostId,
-                        packed.data() );
+                    if ( ! deviceUnpack )
+                    {
+                        DownloadInterfaceValuePacked(
+                            grid, fields, names, 3, nEqu, ghostId,
+                            packed.data() );
+                    }
                     for ( int iFace = 0; iFace < nIFaces; ++ iFace )
                     {
                         int iCell = -1;
@@ -187,9 +193,17 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
                             iFace, ghostId + 1, iCell );
                         endpointCells[ iFace ] = iCell;
                     }
-                    HipFluxBackend::Shared().UnpackGradientFacesFromHost(
-                        grid, endpointCells.data(), nIFaces, nEqu,
-                        packed.data() );
+                    if ( deviceUnpack )
+                    {
+                        HipFluxBackend::Shared().UnpackGradientFacesFromDevice(
+                            grid, endpointCells.data(), nIFaces, nEqu );
+                    }
+                    else
+                    {
+                        HipFluxBackend::Shared().UnpackGradientFacesFromHost(
+                            grid, endpointCells.data(), nIFaces, nEqu,
+                            packed.data() );
+                    }
                 }
             }
         }

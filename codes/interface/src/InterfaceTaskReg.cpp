@@ -40,6 +40,7 @@ License
 #include "Lhs.h"
 #include "FieldManager.h"
 #include "StageProfiler.h"
+#include "HipProductionPolicy.h"
 #include "AccelRuntime.h"
 #include "HipFluxBackend.h"
 #include "FaceTopo.h"
@@ -105,19 +106,11 @@ namespace {
 bool SkipHostFieldPackFor( const std::string & fieldName )
 {
 #ifdef ONEFLOW_ENABLE_HIP
-    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK" );
-    if ( value != nullptr && value[ 0 ] == '0' ) return false;
     if ( fieldName != "dqdx" && fieldName != "dqdy" && fieldName != "dqdz" )
     {
         return false;
     }
-    AccelRuntime & runtime = AccelRuntime::Instance();
-    if ( ! runtime.IsInitialized()
-         || runtime.Backend().Kind() != AccelBackendKind::HIP )
-    {
-        return false;
-    }
-    return vis_model.vismodel == 0;
+    return HipDeviceGradientInterfaceEnabled( vis_model.vismodel != 0 );
 #else
     (void) fieldName;
     return false;
@@ -238,6 +231,35 @@ void DownloadInterfaceData( StringField & data )
         fieldManager->GetInterfaceFieldProperty().GetData();
 
     ScopedStageTimer downloadTimer( "post_download" );
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( SkipHostFieldPackFor( "dqdx" ) )
+    {
+        // The receive payload only changes once per exchange round.  Upload it
+        // here so every RK stage can unpack it device-to-device instead of
+        // repeating the same host->device copy three times.
+        MRField * dx = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdx" );
+        MRField * dy = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdy" );
+        MRField * dz = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdz" );
+        if ( dx != nullptr && dy != nullptr && dz != nullptr )
+        {
+            MRField * fields[ 3 ] = { dx, dy, dz };
+            const std::string names[ 3 ] = { "dqdx", "dqdy", "dqdz" };
+            const int nEqu = static_cast< int >( dx->GetNEqu() );
+            std::vector< Real > packed;
+            InterFace * interFace = grid->interFace.get();
+            for ( int ghostId = MAX_GHOST_LEVELS - 1; ghostId >= 0; -- ghostId )
+            {
+                const int nIFaces = interFace->nIFaces;
+                if ( nIFaces <= 0 ) continue;
+                packed.resize( static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
+                DownloadInterfaceValuePacked(
+                    grid, fields, names, 3, nEqu, ghostId, packed.data() );
+                HipFluxBackend::Shared().UploadGradientFacesToDevice(
+                    grid, nIFaces, nEqu, packed.data() );
+            }
+        }
+    }
+#endif
     for ( const auto & [ fieldName, nEqu ] : fieldData )
     {
         if ( SkipHostFieldPackFor( fieldName ) ) continue;

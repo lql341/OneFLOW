@@ -422,6 +422,23 @@ public:
         int nEquations,
         const Real * hostPacked );
 
+    // Upload the interface receive payload for the device gradient into the
+    // resident pack buffer, once per exchange round.  Every RK stage then
+    // unpacks it on the device instead of repeating the same host->device copy.
+    void UploadGradientFacesToDevice(
+        const void * cacheKey,
+        int nFaces,
+        int nEquations,
+        const Real * hostPacked );
+
+    // Scatter the uploaded receive payload into the resident ghost gradient.
+    // The payload buffer is the one UploadGradientFacesToDevice filled.
+    void UnpackGradientFacesFromDevice(
+        const void * cacheKey,
+        const int * ghostCellIds,
+        int nFaces,
+        int nEquations );
+
     // Reduce the resident (already LHS-scaled) device residual into the
     // per-zone diagnostic scalars the solver's residual task reports.  Returns
     // false when the grid has no resident residual, so callers keep the host
