@@ -10,8 +10,9 @@
 | 项 | revision | 说明 |
 |---|---|---|
 | `master` = `origin/master` = `upstream/master` | `b83d78c7` | 本轮 fast-forward 三端同步；含 137 个上游提交（`tools/oneflow_gui`、`grid/*`、`tools/mesh_layout`、`tests/tools`、`tests/geometry`、`vcpkg.json`、docs），**未触及 `codes/` 与 `ci/`** |
-| `dev` = `origin/dev` | `762a847e` | `Merge branch 'master' into dev`（无冲突）；领先 `upstream/master` 264 个提交；本轮已授权 push `origin/dev` |
-| HIP 代码已验证 revision | `95830d9b` | 下文全部门禁/性能数字来自该 revision；合并只新增上游 tools/grid/docs，`codes/`、`ci/` 未变，合并后的树仍建议重跑一次 Kunshan build+trace 再引用 |
+| `dev` = `origin/dev` | `762a847e`（merge）+ 本 handoff 文档提交 | `Merge branch 'master' into dev`（无冲突）；领先 `upstream/master` 264 个提交；本轮已授权并已 push `origin/dev` |
+| HIP 代码已验证 revision | `95830d9b`（性能/门禁基线） | 下文数字来自该 revision；合并只新增上游 tools/grid/docs 与 3 个 tests 文件，`codes/`、`ci/` 未变 |
+| 合并后 revision | `52fe404d`（Kunshan 已复验） | root HIP build + DCU preflight PASS、硬件 CTest `16/16`、8-zone 3-step trace PASS（contract `24/0/0`）、50-step stability 三路 PASS |
 
 ### 1. 目标与能力边界
 
