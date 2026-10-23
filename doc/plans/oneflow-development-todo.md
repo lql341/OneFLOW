@@ -521,6 +521,23 @@ gradient/recon 的 atomic/gather 和 interface host staging。
 fixed overhead/interface，端到端提升会被按比例稀释。129³ 1-zone 的 fixed overhead
 约 19 s，情况更严重。
 
+### 第二轮：interface 微优化实测（收益递减）
+
+- `HXWriteSubData/HXReadSubData` 的 per-equation staging 改为 thread-local
+  复用：paired warm A/B `7883.2 → 7851.2 ms`（**1.0041x**，在噪声内）。
+- x/y/z 批量 upload/download：`swap_upload 3.88→4.69`、`swap_download
+  2.02→1.72`，总 loop 无收益，已回退。
+- reconstruction 去冗余数组：reconstruction `7.15→6.86 ms/step`，端到端在
+  噪声内。
+- 8-zone cell-gather 的 paired warm 结果是 **1.0164x**（3/3 对为正），
+  不是跨作业的 6.1%。
+
+结论：**继续做 loop 微优化的边际收益已经很小**。剩下的 interface 紧凑布局
+是结构性改动（storage/device pack 顺序），预期 loop −4–6 ms/step，但按当前
+fixed overhead 只会带来约 **1–2% wall**；更大的 wall 杠杆是约 **3.5 s（46%）**
+的 fixed overhead（129³ 1-zone 约 20 s）和 interface 的 host 交换本身。若目标是
+4x，需要先做 fixed-overhead profiling/削减，而不是再调一个 kernel。
+
 **基线问题**：目前 129³ 的 31.25x 是“均匀流 box、1 rank、50 steps、单次几何”
 的一个点，数据支持不足以当正式基线；至少还需要真实 flow、不同 steps、8-zone
 2.1M 和 CPU 多核对照。这里只把它作为“规模趋势”的证据，不写成性能结论。
