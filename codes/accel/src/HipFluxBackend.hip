@@ -3309,7 +3309,9 @@ void HipFluxBackend::PackGradientFacesToHost(
         nFaces, nEquations, totalCells,
         storage.gradientPackValues.Data() );
     CheckHip( hipGetLastError(), "gradient face pack kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "gradient face pack synchronize" );
+    // CopyToHost is a blocking hipMemcpy on the same stream, so it already
+    // waits for the pack kernel.  An explicit device synchronize here only
+    // serialized the pipeline once more per interface ghost level and stage.
     storage.gradientPackValues.CopyToHost( hostPacked, valueCount );
 }
 
@@ -3356,7 +3358,9 @@ void HipFluxBackend::UnpackGradientFacesFromHost(
         nFaces, nEquations, totalCells,
         storage.gradientPackValues.Data() );
     CheckHip( hipGetLastError(), "gradient face unpack kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "gradient face unpack synchronize" );
+    // No trailing synchronize: the next device operation is stream-ordered
+    // after the unpack, and no host reader touches the ghost gradient here.
+    // The old synchronize turned every stage into a full pipeline drain.
 }
 
 bool HipFluxBackend::VerifyResidentStateAgainstHost(
