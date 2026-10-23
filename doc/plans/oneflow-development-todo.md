@@ -451,7 +451,21 @@ reconstruction、boundary、interface。3D 每 cell 更贵是应该的；但实�
 `MULTIZONE_TRACE_PASS`、resident contract `24/0/0`、HIP vs legacy 最大绝对差
 `1.806e-13`。
 
-A/B（同节点、100 steps、无中间输出、2 formal repeats）：
+A/B（同节点、100 steps、无中间输出；先 warm 两个二进制，再 3 对同节点交错）：
+
+| 项 | 旧 face-atomic | 新 cell-gather | 变化 |
+|---|---:|---:|---:|
+| **paired wall（warm）** | 7843.3 ms | **7716.5 ms** | **−1.6%（3/3 对为正）** |
+| 8-zone HIP solver loop | 49.21 ms/step | **45.27 ms/step** | −8.0% |
+| `gradient_kernel` | 4.28 ms/step | **0.86 ms/step** | −80% |
+| 65³ box loop 比值 | 22.67x | **24.34x** | +7.4% |
+| 129³ box loop 比值 | 31.25x | **33.15x** | +6.1% |
+
+> 之前一版跨作业的 `HIP wall 8143.3 → 7649.6 ms（−6.1%）` 混入了节点/冷启动
+> 差异；同节点 warm 后的配对结果是 **−1.6%**，更可信。loop 的 −8% 是真实算法
+> 收益，但端到端被约 3.5 s fixed overhead 稀释。
+
+早期跨作业 A/B（仅作趋势，不作正式结论）：
 
 | 项 | 旧 face-atomic | 新 cell-gather | 变化 |
 |---|---:|---:|---:|
@@ -488,6 +502,24 @@ overhead 和 interface host staging 还在。** 下一步主杠杆是接口紧�
 2.7–2.8x；若同时把 3 个 stage 的 gradient/recon 融合、避免重复 zero/mirror，
 收益才会更大。它值得做一个原型，但不是把 2.54x 推到 4–6x 的主杠杆；主杠杆仍是
 gradient/recon 的 atomic/gather 和 interface host staging。
+
+### 其余瓶颈的实验状态与预期
+
+| 瓶颈 | 状态 | 实测/预期 |
+|---|---|---|
+| gradient/residual atomic | **已做**（cell-gather） | loop −8.0%，paired wall **−1.6%**；gradient kernel −80% |
+| reconstruction 寄存器 | 已做（去掉 2×5 冗余数组） | opt2 中 reconstruction 7.15→6.86 ms/step；端到端在噪声内，未宣称 |
+| interface batch（x/y/z 共用 endpoint id） | **试过，未保留** | 无收益（`swap_upload 3.88→4.69`，`swap_download 2.02→1.72`），已回退 |
+| interface 紧凑布局 / `SwapBcGrad` 去 host | 未做（结构性改动） | 预期 loop −4–8 ms/step（9–18%），端到端因 fixed overhead 约 −2–5% |
+| reconstruction+flux fusion | 未做 | 预期 loop −1–3 ms/step（2–6%） |
+| gradient mirror / halo ghost sync | 未做 | 预期 loop −1–2 ms/step |
+
+**全部做完的修订预期**（不要把 2.54x 直接推成 4x）：8-zone loop
+45.3 → 约 **37–40 ms/step**（−12–18%）；paired wall 7.72 s → 约 **7.3–7.5 s**
+（−3–5%）；CPU 队列比值 2.71x → 约 **2.8–2.9x**。原因是 HIP wall 里约 **3.5 s
+（46%）是 fixed overhead**，interface 还有约 18.6 ms/step；只改 loop 不改
+fixed overhead/interface，端到端提升会被按比例稀释。129³ 1-zone 的 fixed overhead
+约 19 s，情况更严重。
 
 **基线问题**：目前 129³ 的 31.25x 是“均匀流 box、1 rank、50 steps、单次几何”
 的一个点，数据支持不足以当正式基线；至少还需要真实 flow、不同 steps、8-zone
