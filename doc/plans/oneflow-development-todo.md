@@ -554,6 +554,29 @@ fixed overhead 只会带来约 **1–2% wall**；更大的 wall 杠杆是约 **3
 
 CPU 8 核 1000-step：**230800.4 ms**。
 
+**host 链第二、三刀**：packed gradient 之后又做了 task-class cache + `task_plan`
+计时。1000-step paired warm 结果：packedgrad `59641.8 ms` → taskcache
+`59355.6 ms`（**1.0048x**，噪声内）；`task_plan` 实测只有 **0.10 ms/step**，
+说明未计时的约 14.4 ms/step **不是 class/name 查表**，而是 task 执行/内存/
+同步等。该改动保留为诊断/清理，不作为性能收益。
+
+三次 host 链切片的 1000-step 同节点结果（不是跨作业）：
+
+| 版本 | 1000-step HIP | vs 原始 |
+|---|---:|---:|
+| 原始 face-atomic | 62589.6 ms | — |
+| + cell-gather | 61067.1 ms | −2.4% |
+| + packed gradient | 60186.3 ms | −3.8% |
+| + task cache | 59355.6 ms | **−5.2%** |
+
+CPU 8 核 230800.4 ms → 当前 8:1 比值 **3.89x**。packed gradient 把
+`halo_ghost_sync 3.41→0.46 ms/step`，但 `swap_upload/download` 从 5.90
+升到 6.54（pack/unpack 的 D2H/H2D 计入），净 gradient 交换 13.16→10.24。
+剩余 host 大块：`mpi_interface 11.83`（q MPI/设备 pack）、未计时约 14.4
+（task 执行/内存/同步）、reconstruction 7.90、gradient 12.09（swap 6.54 +
+mirror 3.24 + kernel 0.86）。下一刀是 q MPI/紧凑交换和 task 执行，而不是
+再做查表缓存。
+
 **host 链第一刀（`afb7e8d6`）**：把 HIP gradient 的 interface 交换改成
 device pack/unpack——send 端在设备上按 `[component][equation][face]` 打包，
 host 直接拷入 interface storage；recv 端 host 复制后直接 scattered 到设备

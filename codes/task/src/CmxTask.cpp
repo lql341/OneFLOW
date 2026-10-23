@@ -185,14 +185,10 @@ void GenerateCmdList( int operationId )
 {
     const int solverType = SolverState::solverType;
 
-    HXRegister * hxRegister =
-        RegisterFactory::GetRegister( solverType, MESG_FUNC );
-
-    const std::string & operationName =
-        MessageMap::GetMsgName( operationId );
-
-    HXClone * cloneClass =
-        hxRegister->GetClass( operationName );
+    // The register/class lookup is epoch-cached by GetClass().  The old path
+    // repeated the MessageMap name lookup and HXRegister::GetClass string map
+    // on every RK task (thousands of calls per run); reuse the cache.
+    HXClone * cloneClass = GetClass( operationId, solverType, MESG_FUNC );
 
     if ( cloneClass )
     {
@@ -202,7 +198,7 @@ void GenerateCmdList( int operationId )
     else
     {
         // Treat the operation as a single runtime command.
-        ONEFLOW::AddCmdToList( operationName );
+        ONEFLOW::AddCmdToList( MessageMap::GetMsgName( operationId ) );
     }
 }
 
@@ -443,7 +439,10 @@ void DumpTaskDispatch(
 void SingleSolverSingleGridTask( int operationId )
 {
     // Runtime form: plan + execute by id (no string lookup here).
-    GenerateCmdList( operationId );
+    {
+        ScopedStageTimer planTimer( "task_plan" );
+        GenerateCmdList( operationId );
+    }
     const char * category = StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
     if ( category[ 0 ] != '\0' )
     {
@@ -460,7 +459,10 @@ void SingleSolverSingleGridTask(
     int operationId,
     SimuContext & context )
 {
-    GenerateCmdList( operationId );
+    {
+        ScopedStageTimer planTimer( "task_plan" );
+        GenerateCmdList( operationId );
+    }
     const char * category =
         StageProfiler::CategoryForTask( MessageMap::GetMsgName( operationId ) );
     if ( category[ 0 ] != '\0' )
