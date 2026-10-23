@@ -552,7 +552,23 @@ fixed overhead 只会带来约 **1–2% wall**；更大的 wall 杠杆是约 **3
 | profiled stage sum | 49.21 ms | **45.27 ms** |
 | **未计时 per-step** | **13.38 ms（21%）** | **15.80 ms（26%）** |
 
-CPU 8 核 1000-step：**230800.4 ms**。因此：
+CPU 8 核 1000-step：**230800.4 ms**。
+
+**host 链第一刀（`afb7e8d6`）**：把 HIP gradient 的 interface 交换改成
+device pack/unpack——send 端在设备上按 `[component][equation][face]` 打包，
+host 直接拷入 interface storage；recv 端 host 复制后直接 scattered 到设备
+ghost gradient，跳过 host cell gather/scatter 和单独的 ghost H2D sync。
+host mirror 仍保留给 aero 力。
+
+- 1000-step paired warm（vs cell-gather）：`61491.9 → 60186.3 ms`（**1.0217x**）；
+- vs 原始 face-atomic：`62589.6 → 60186.3 ms`（**−3.8%**）；
+- CPU 230800.4 / 60186.3 = **3.835x**（原始 3.69x）；
+- 3-step trace PASS、contract `24/0/0`、HIP CTest 16/16。
+- `ONEFLOW_HIP_GRADIENT_PACKED=0` 可回退 host swap。
+
+这说明 host 链可以一刀一刀切，但每刀约 1–2 ms/step（1–2% wall）；剩下的
+`mpi_interface 12.74`（q 交换/MPI）和约 15.8 ms/step 未计时 host 块才是
+下一刀的主目标。因此：
 
 - 100-step 的 CPU/HIP `2.71x` 被 1.8 s 启动/收尾和 CPU 节点差异放大了；
 - **1000-step 的实际 8:1 wall 比值是 230800.4 / 61067.1 = 3.78x**
