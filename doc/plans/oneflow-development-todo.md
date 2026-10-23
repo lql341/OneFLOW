@@ -1,5 +1,136 @@
 # OneFLOW 开发待办与衔接（living document）
 
+## 交接摘要（先读这一段，2026-10-23）
+
+> 本文其余按日期分节的内容是**历史证据**，不代表当前状态；当前状态、能力边界与下一步以本节为准。
+> 分支模型/门禁规则见 `AGENTS.md`，集群流程见 `ci/kunshan/README.md`。
+
+### 0. 仓库与分支（本轮已同步）
+
+| 项 | revision | 说明 |
+|---|---|---|
+| `master` = `origin/master` = `upstream/master` | `b83d78c7` | 本轮 fast-forward 三端同步；含 137 个上游提交（`tools/oneflow_gui`、`grid/*`、`tools/mesh_layout`、`tests/tools`、`tests/geometry`、`vcpkg.json`、docs），**未触及 `codes/` 与 `ci/`** |
+| `dev` = `origin/dev` | `762a847e` | `Merge branch 'master' into dev`（无冲突）；领先 `upstream/master` 264 个提交；本轮已授权 push `origin/dev` |
+| HIP 代码已验证 revision | `95830d9b` | 下文全部门禁/性能数字来自该 revision；合并只新增上游 tools/grid/docs，`codes/`、`ci/` 未变，合并后的树仍建议重跑一次 Kunshan build+trace 再引用 |
+
+### 1. 目标与能力边界
+
+**目标**：root 3D 主求解器通过 `ONEFLOW_ACCEL_BACKEND=HIP` 切换 GPU 后段，走真实主流程
+（gradient→reconstruction→fused flux/residual→state update→boundary→timestep→halo），
+不是 standalone port。CPU oracle 与 host 回退始终保留。
+
+**自动启用条件**（不满足→该阶段整段 host 回退；显式请求不满足→fail-fast，不静默）：
+`NS_SOLVER`、5 方程、Lax–Friedrichs（`ischeme=5`）、`ilim=0`、`vismodel=0`、
+`gridLevel=0 && nGrids=1`、显式多阶段 RK（`time_integral=MULTI_STAGE`）、`nTModel=1`、
+无化学、1 rank 1 zone、`nGhostCells == nBFaces`。
+
+**已设备化（全部默认，`ONEFLOW_ACCEL_BACKEND=HIP` 即可）**：fused flux+residual、
+interface/halo（传输仍 HostStaged，pack/unpack 写入 state-owned device q ghost）、
+Green–Gauss 梯度、面重构（保留 legacy 的一轮交换滞后）、primitive state update +
+resident residual 链、物理边界模型、resident local time-step。
+
+**未迁移**：viscous/turbulence/SA、limiter≠0、多重网格、LUSGS、双时间、CUDA/Kokkos。
+
+**生命周期**：q 的权威在 device `cellState`，host 镜像每 stage 由 state update 回写；
+residual 只在 trace/输出/restart dump 下传，NoTrace 的残差与正性检查由设备归约标量提供；
+gradient 只在 boundary-adjacent owned + ghost 上镜像（host 交换需要，也是 aero 力需要的单元）。
+
+### 2. 关键文件地图（改这里，不要新建平行体系）
+
+| 关注点 | 文件 |
+|---|---|
+| 默认策略 / 阶段开关 | `codes/accel/include/HipProductionPolicy.h` |
+| HIP 生产链与 kernel | `codes/accel/src/HipFluxBackend.hip`、`codes/accel/include/HipFluxBackend.h` |
+| resident state 契约 | `codes/accel/include/ResidentStateContract.h`、`codes/accel/include/AccelViews.h` |
+| solver 侧调用点 | `codes/uns/src/UNsInvFlux.cpp`（gradient/recon/flux/residual）、`codes/uns/src/UNsGrad.cpp`、`codes/uns/src/UNsUpdate.cpp`、`codes/usolver/src/ULhs.cpp`、`codes/usolver/src/ULimiter.cpp` |
+| 边界 | `codes/ns/src/NsSolverImp.cpp` |
+| halo / ownership | `codes/task/src/InterfaceTask.cpp`、`codes/parallel/src/BoundaryExchangeContract.cpp`、`codes/global/src/InterfaceFieldProperty.cpp`、`codes/task/include/InterfaceEndpoint.h` |
+| 残差/输出/气动力 | `codes/residual/src/ResidualTask.cpp`、`codes/force/src/AeroForceTask.cpp`、`codes/restart/*` |
+| 计时 | `codes/accel/src/StageProfiler.cpp`（类别表 + `ScopedStageTimer`） |
+| 单测 | `tests/hip_resident_state_contract_test.cpp`、`tests/euler/CMakeLists.txt` |
+| 集群 runner | `ci/kunshan/f2-main-solver-{build.slurm,multizone-trace.sh,multizone-timing.sh,multizone-matrix.sh,stability.slurm,stage.slurm}` |
+
+### 3. 开关（含兼容语义）
+
+| 变量 | 作用 |
+|---|---|
+| `ONEFLOW_ACCEL_BACKEND=HIP` | 选定后端；默认 policy 打开上述全部已验证阶段 |
+| `ONEFLOW_ENABLE_UNS_HIP_{BATCH,GRADIENT,RECONSTRUCTION,STATE_UPDATE,BOUNDARY,INTERFACE,TIME_STEP}` | 旧变量，现为**覆盖**：未设=auto（policy）；`0`=强制 host；`1`=请求，能力不满足则 fail-fast |
+| `ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1` | 每次 gradient 前逐值比较 device(owned+ghost) vs host，打印 `RESIDENT_STATE_CONTRACT` |
+| `ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` | 一次性打印 gradient/recon/boundary 的决策与拒绝原因 |
+| `ONEFLOW_ENABLE_BC_GRADIENT_STORE=1` | 恢复 `StoreBcGrad`（`bcdq*` 面索引梯度拷贝）；默认关，aero 力已直接读 cell gradient |
+| `ONEFLOW_FAIL_ON_NONPHYSICAL=1` | 非物理 state 直接失败（device 归约标量也遵守它） |
+| `ONEFLOW_RESIDUAL_TEST_OUTPUT=1` | 残差文件 `max_digits10` 精度（高精度对比用） |
+| `ONEFLOW_GPU_AWARE_MPI` / `..._CONFIRMED` | DeviceDirect，**保持关闭**（见 §6） |
+| `OMPI_MCA_coll='^hcoll,han'` | 昆山 MPI 必需；`han` 在不均匀分布上会崩 |
+| `ONEFLOW_MZ_*` | 多 zone runner：`RANKS/STEPS/CFL/MAP_BY/HIP_DEVICES/FIXTURE_METADATA/RESIDENT_CONTRACT/...` |
+
+### 4. 门禁证据（`95830d9b`，Kunshan DTK 26.04 / gfx906）
+
+| 门禁 | 结果 |
+|---|---|
+| 8-zone 3-step trace（backend-only） | `MULTIZONE_TRACE_PASS`，每 rank 36 records，HIP vs legacy ≈2.3e-13 |
+| resident contract | `records=24 failures=0 max_abs_diff=0` |
+| 8-zone / 单 zone 50-step stability | 三路（legacy/cpu_batch/hip_batch）全 `exit_code=0`、`hits=0`、PASS |
+| 单 zone 3-step stage trace | `STAGE_TRACE_PASS records=36` |
+| **NoTrace 200-step residual vs CPU（高精度）** | `max_rel_diff = 1.094e-14`；`aero` 在输出精度内一致 |
+| CPU normal / strict 五算例 | 5/5、5/5（含 viscous/turbulent） |
+| 硬件 CTest / HIP gtest / resident-state 单测 | 16/16、15/15、12/12 |
+| 跨节点 2×4 ranks trace | PASS（7+1 分布，见 §6） |
+
+### 5. 性能（同 basis 规则与当前值）
+
+**规则**：报告必须成组——同节点、同资源与绑定、同 fixture、同 `steps/warmup/repeats`；
+CPU 基线只能在 `kshcnormal`（同 8 核在 DCU 节点慢 37%）；比例只与同组数据比较；
+**1 DCU 槽 = 8 核**（节点 32 核/4 卡）。
+
+| 项 | 值 |
+|---|---|
+| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.12 s**（样本 8.90–9.48 s） |
+| 本轮优化前后（交臂 3 对） | 9.79 s → 9.12 s，mean 1.073x，3/3 对为正 |
+| loop 求合（rank 0/4/7） | **52.4 ms/step**（优化前 57.95，−9.5%） |
+| 端到端 vs CPU 8 核（CPU 队列 21.9–24.5 s） | 约 **2.4–2.7x** |
+| 同节点"加卡"隔离（8C vs 8C+1DCU） | 约 **3.0x**（旧构建测得；新构建更快，未重测） |
+| 固定开销 | ≈1.9 s/run（100 steps 时占 wall 约 20%；10 steps 时占 80%，故 10-step 比值无意义） |
+
+当前 loop 分项（ms/step）：`update_residuals 27.0`（gradient 12.7 / reconstruction 9.0 /
+HIP kernel 1.0 / residual_metrics 0.6）、`mpi_interface 13.1`、`update_flowfield 2.9`、
+`state_update 2.5`、`calc_boundary 2.2`、`load_residuals 2.4`、`load_q 1.3`、
+`calc_time_step 0.7`、`calc_lhs 0.3`。
+
+### 6. 未完成 / 阻塞
+
+| 项 | 状态与原因 |
+|---|---|
+| **restart 等价性** | 未做端到端实测（q 权威且当前、residual 已在 dump 镜像；缺"50 步→重启→再 50 步 vs 连续 100 步"） |
+| **DeviceDirect** | probe 通过但实测慢 1.59x（MPI 内部仍 host staging）→ 保持关闭 |
+| **多卡 8:1 核卡比** | 缺 ≥64-zone fixture；`simutask=Partition` 在本 build 抛 "not implemented"，需外部 METIS 分区或 owner 提供 |
+| **跨节点 8:1 比值** | 正确性 PASS，但分配固定 7+1、2 卡 4 核/卡；portal 不接受 `--ntasks-per-node` |
+| viscous/RANS/limiter/multigrid/LUSGS | 未迁移，host 回退 |
+
+### 7. 下一步（按序，含验收）
+
+1. **接口紧凑布局**：`swap_upload+swap_download ≈ 4.3 ms/step` 是 `SwapBcGrad` 为接口 storage 做的随机 gather/scatter；让交换直接消费 endpoint 布局。验收：CPU 5/5、3-step trace、200-step residual、A/B ≥3%。
+2. **restart 等价性**：`nFieldSave=50` 跑 50 步→重启再 50 步 vs 连续 100 步；比较 `res.dat`（≤1e-12）、`aero.dat`（≤1e-10）、exit code。
+3. **gradient_mirror 3.5 / reconstruction 9.0** 的进一步去搬运（不要动数值语义与时序）。
+4. **64-zone fixture**（并行请求）→ 16-zone 双卡 → 多卡 8:1。
+5. 受限路径闭环后再选生产能力扩展：层流 NS → RANS/SA。
+
+### 8. 复现（Kunshan）
+
+```bash
+# 同步源码（scnet-hpc skill）
+git archive --format=tar.gz --prefix="OneFLOW-<rev>/" <rev> -o /tmp/OneFLOW-<rev>.tar.gz
+python3 <skill>/scripts/scnet.py upload /tmp/OneFLOW-<rev>.tar.gz /public/home/luql/.scnet-hpc/oneflow/incoming
+# 构建 + 硬件 CTest（DCU 队列）
+sbatch --export=ALL,ONEFLOW_F2_BUILD_SOURCE_DIR=<src>,ONEFLOW_F2_BUILD_DIR=<build> f2-main-solver-build.slurm
+# 门禁（backend-only：不要设 ONEFLOW_ENABLE_UNS_HIP_*）
+ONEFLOW_MZ_RUN_ROOT=<run> bash f2-main-solver-multizone-trace.sh        # 3-step trace + contract
+ONEFLOW_F2_STABILITY_RUN_DIR=<run> bash f2-main-solver-stability.slurm  # 50-step 三路
+bash f2-main-solver-multizone-timing.sh                                  # 100-step 配对/交臂
+```
+所有原始日志、私有 fixture、ownership manifest 留在集群 artifacts，不进仓库。
+
 ## 2026-10-21 resident q generation contract, multi-zone device gradient + reconstruction
 
 **目标**：把多 zone HIP 从“只验证 fused flux/interface”推进到“device gradient 与
@@ -720,40 +851,11 @@ resident contract 在每次 gradient 前比较 owned+ghost，全部 `failures=0`
   face/cell、equation-major counts、memory space），然后重新执行 verifier、
   CPU/HIP trace 和 stability。未取得该 manifest 前不更新正式性能报告。
 
-## 交接摘要（先读这一段）
+## 交接摘要（历史，2026-10-18）
 
-**2026-10-18 分支同步**：按用户要求，将本仓库 `origin/master`
-`9b3c909cf9be863b25faf5854adde1cd0c70ce98` merge 到 `dev`
-（原 head `c5c109c2f14a5e442ea2153a58d90db7156b3e3e`），保留双方历史，
-本轮授权包含推送 `origin/dev`。唯一文本冲突位于
-`tests/geometry/CMakeLists.txt`，保留 dev 的 `InterfaceNeighborMappingTest`
-与 master 的 `FaceSearchBasicTest` 两项注册。合并后 Python 测试
-`88/88` 通过（GUI services 52、case catalog 9、layout compilers 13、
-Tkinter runner 3、mesh export 6、mesh workflow 5）。当前环境缺少 C++
-构建工具，未运行 C++/CTest、CPU normal/strict 五算例或 HIP 验证；
-此记录不构成数值/后端验收。既有 CI 的分支过滤不覆盖 `dev`，
-不能把此次推送描述为 CI 已通过。下方旧 checkpoint 的不 push 边界仅属历史记录。
-
-**现在在飞什么**
-
-| 项 | 状态 |
-|---|---|
-| `origin/dev` / 本地 `dev` | 2026-10-18 合入本仓库 `origin/master` `9b3c909c`；本轮按用户要求推送 `origin/dev`。精确 revision 与同步状态以 Git 为准 |
-| PR #159 `pr/agents-branch-model` | **MERGED**（2026-09-19，review approved）；1 文件 +23/−0；CI 4/4 绿；内容为 `AGENTS.md` 的 fork 无关分支模型。**纯文档**，不涉及数值/后端 |
-| PR #160 `pr/euler-weno5-unified` | **MERGED**（2026-09-19，review approved）；64 文件 +4771/−272；CI 4/4 绿；内容为 accelerator substrate + CPU vertical slice + 1D Euler port 的 WENO5/HIP contract |
-| PR #203 `pr/database-type-map-init` | **OPEN**；用户要求不跟踪，保持等待通过；不纳入本轮开发判断 |
-
-PR #159/#160 均从 `upstream/master` 分 topic 分支开出，未包含 fork-only 文档，已合并；#160 在 PR 分支实跑昆山 T1 + T2，#159 为 docs-only。对应 topic branch 已清理。PR #203 也基于 upstream master 单独提交，尚未合并；不得提前删除其 topic branch。
-
-**当前交接事项**：PR #203 按用户要求只等待其 review/CI 结果，不再跟踪或刷新状态；本轮工作转回 3D HIP resident timestep 的准确性、稳定性、配对性能和后续 ownership/MPI 门禁。PR #203 的数据库初始化证据仍保留作历史记录，不作为当前开发阻塞项。
-
-**当前状态**：已完成受限的 gradient→reconstruction→fused primitive flux/residual→state-update device residency seam。本轮新增 backend-neutral cell/face reconstruction view、opaque state-owned backend seam、generation/token 与 backend/device identity contract，并将 HIP 的 `cellState`、gradient、几何/连通性、`qf1/qf2`、boundary operation、可选 `bc_q` 与 residual 归入按 grid binding 的 backend-specific state。显式 opt-in `ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION=1` 与 `ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE=1` 仅在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 的 HIP batch 路径启用；NoTrace 不下载 qf1/qf2、invflux 或 residual，FullTrace/stage trace 才回传诊断数组。2026-09-23 Kunshan DTK 26.04 / `gfx906` / `dcu:1` 已完成 root configure/build、HIP smoke、GoogleTest `9/9`、hardware CTest `10/10`、3-step 36-record accuracy 和 fixed-CFL `0.01` 50-step stability；legacy/CPU batch 使用 8 ranks、HIP batch 使用 1 rank，三路 workload exit 均为 `0` 且 diagnostic hits 为 `0`。同 basis 探索性 timing 已记录，但没有足够的配对重复来形成稳定性能结论或更新正式报告。该验收不等同于完整 MPI/halo、多 zone、viscous/turbulence 或全链路 GPU residency；gradient 的 q H2D、gradient D2H，以及现有 boundary/下一 stage 所需的 host state 路径仍是后续工作。
-
-2026-10-19 又完成双节点 4-rank standalone Euler GPU-aware MPI correctness 与四规模 benchmark；CPU/HIP hash、decomposition、halo count 和 physical checks 全部通过。3D root solver 的 ownership 与应用级 paired timing 仍是后续门禁。
-
-**Kunshan 默认测试依赖（2026-10-09 起）**：所有新 CPU、CPU MPI 与 root main-solver 测试使用 GCC `16.2.0`（`gcc/16.2.0`）、OpenMPI `5.0.11`（`openmpi/5.0.11`）、CMake `4.4.3`（`cmake/4.4.3`），MPI 测试设置 `OMPI_MCA_coll=^hcoll`，并在运行证据中记录实际版本与 MPI 路径。旧 GCC 9/OpenMPI 4/CMake 3.25 记录只作为历史结果；DTK/HIP 测试如确需兼容工具链，必须作为明确的 HIP 专用例外记录，不能用于 CPU/MPI 验证。权威说明见 [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)。
-
-**本轮最终 checkpoint 与同步边界**：本轮文档提交后，以该 commit 的完整 SHA 作为唯一 handoff revision。提交后不得改写该 revision；本地 Git 不 push、不新开 PR，PR #203 继续只等待通过。昆山同步使用 SCNet OpenAPI region `11250`，将 `git archive` 上传到 `/public/home/luql/.scnet-hpc/oneflow/incoming`，再通过短 CPU 作业在 `/public/home/luql/.scnet-hpc/oneflow/src/OneFLOW-<SHA>` 解压；目标目录不存在时才创建，不覆盖已有 revision。远端核验至少包含该 source 目录、本文档和 `ci/kunshan/f2-main-solver-paired-performance.slurm`，并确认本地与远端文件属于同一 SHA。该同步是云端工作区备份，不代表 `origin/dev` 已更新。
+> 本节已被文首 **`## 交接摘要（先读这一段，2026-10-23）`** 取代，内容（PR #159/#160/#203 状态、
+> 2026-09/10 的单 zone 原始 opt-in 验收、旧的 Kunshan 度量）仅作历史记录，**不要据此判断当前能力**。
+> 当前结论：受限 inviscid 路径的七个阶段已默认 device 化、多 zone 已闭合、100-step 端到端约 2.4–2.7x。
 
 ## Big picture：正确性优先的统一 GPU solver 架构
 
@@ -1158,17 +1260,23 @@ git show dev:doc/plans/oneflow-development-todo.md
 
 | 项目 | 状态 |
 |---|---|
-| 主分支 | `master` = `origin/master` = `upstream/master` = `063c0a12`（三端 0/0；已合入 dev） |
-| upstream PR | #159、#160 均已 MERGED，review approved，CI 4/4 绿；对应 fork topic branches 已删除 |
-| 分支 | `dev` 与 `origin/dev` 当前同为 `665c77c4`；本地另有未提交的 F-stage verifier 容差与本次文档更新。 |
+| 主分支 | `master` = `origin/master` = `upstream/master` = `b83d78c7`（2026-10-23 三端同步；已合入 dev） |
+| upstream PR | #159/#160 已 MERGED；#203 仍只等待 review/CI，不作为当前开发阻塞项 |
+| 分支 | `dev` = `origin/dev` = `762a847e`（merge `master` into `dev`，无冲突）；领先 `upstream/master` 264 个提交 |
 | 昆山工作区 | 已规范化：`<workspace>/` 下 `src/`、`deps/`、`builds/`、`runs/<date>/<suite>/`、`archive/`；集群侧 README 记录具体路径 |
 | 昆山作业脚本 | 四个标准套件脚本已更新到新工作区路径 |
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
-| 当前进度 | 受限的单 zone、finest-grid、5 方程、Lax–Friedrichs、limiter-off、inviscid HIP path 已覆盖 gradient → reconstruction → flux/residual → state update，并完成 3-step 36-record target-node accuracy gate。完整多 zone/MPI halo、viscous/turbulence、跨 stage 全量 device residency 和稳定的重复性能结论仍未完成。 |
-| 最新验证 | 2026-10-19 Kunshan：双节点、4 ranks、4 DCUs（每节点 2 ranks/2 DCUs）GPU-aware MPI regression 通过，`gfx906`、`gpu_aware_mpi=1`、CPU/HIP hash 一致、`decomposition=PASS`、halo 次数正确。随后在单节点 32 CPU cores + 4 DCUs 上完成严格 rank/DCU 矩阵：CPU 8/16/32 ranks 对 HIP 1/2/4 ranks（1 rank/DCU），四规模 `nx=65536/262144/1048576/4194304`，固定 `steps=100,warmup=1,repeats=2`；36 个 CPU/HIP 配对全部检查 `local_ranks`、`decomposition_active_ranks`、非空分区、halo 次数、HIP `visible_devices` 和 CPU/HIP hash。32 CPU ranks 对 1 DCU 的比值为 `1.280835x/2.708388x/5.915925x/7.591373x`，对 4 DCUs 为 `1.217872x/3.697872x/13.472202x/25.490468x`。这些是一维 Euler standalone 证据；root 3D 主 solver 的 single-zone `m6wingroe_sa` 不能通过增加 rank 伪造 multi-zone scaling，需独立的已分区 multi-zone fixture。 |
+| 当前进度 | 受限 inviscid 路径（5 方程 / Lax–Friedrichs / limiter-off / 显式 RK）的七个阶段已**默认** device 化并通过门禁：fused flux+residual、interface/halo、gradient、reconstruction、state update+resident residual、device boundary、resident time-step。多 zone（8 zone/8 rank）与单 zone 均已闭合；NoTrace 残差/正性检查由设备归约标量提供。未迁移：viscous/turbulence、limiter、multigrid、LUSGS、双时间。 |
+| 最新验证 | `95830d9b`（2026-10-23，Kunshan DTK 26.04 / gfx906）：8-zone 3-step trace PASS（36 records/rank，≈2.3e-13）、resident contract `24/0/0`、8-zone 与单 zone 50-step stability 三路全 PASS、NoTrace 200-step residual vs CPU `1.094e-14`、CPU normal/strict 各 5/5、硬件 CTest 16/16。100-step HIP `9.12 s`（8.90–9.48），对优化前 `9.79 s` 为 `1.073x`（3/3 交臂对为正），loop `52.4 ms/step`；对 CPU 8 核约 `2.4–2.7x`。详细口径见文首交接摘要 §5。 |
 
-**能力边界（不要越界声明）**：一维 Euler 的 CPU/HIP 后端、单节点 MPI 和双节点 GPU-aware MPI 已实测；CUDA、Kokkos、多 zone 3D MPI 和完整 Navier–Stokes 主线仍未验证。`codes/accel` 的 accelerator substrate 已完成 Phase 1-3；3D 主 solver 当前只在单 zone、finest grid、5 方程、Lax-Friedrichs、limiter off、inviscid 条件下验证 HIP inviscid flux/residual 与 opt-in Green–Gauss gradient。q H2D、gradient D2H、reconstruction、RK/state update、viscous/turbulence 和 3D MPI/interface 仍依赖 host，不能称为完整 stateful/device-resident solver。
+**能力边界（不要越界声明）**：3D 主 solver 的 HIP 能力目前严格限定在
+`NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 显式多阶段 RK /
+1 rank 1 zone / `nGhostCells==nBFaces`；这七个阶段默认走 device，其它配置自动回退 host。
+halo 传输仍是 HostStaged（DeviceDirect 实测更慢，保持关闭）。多卡 8:1 核卡比受限于缺少
+≥64-zone fixture（`Partition` 任务未实现）。跨节点已有正确性证据但无规范核卡比。
+viscous/turbulence/SA、limiter、multigrid、LUSGS、双时间未迁移；不能称为完整
+stateful/device-resident NS solver。
 
 **GPU 融入路线图 (2026-09-13 启动)**：
 
