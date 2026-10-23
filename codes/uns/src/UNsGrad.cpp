@@ -159,6 +159,9 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
         if ( HipPackedGradientExchangeEnabled()
              && grid->interFace != nullptr )
         {
+            // Only the receive side runs here.  The send storage is packed
+            // once per outer iteration by UploadInterfaceData, right before
+            // the round trip that exchanges it.
             InterFace * interFace = grid->interFace.get();
             MRField * fields[ 3 ] = { dqdx, dqdy, dqdz };
             const std::string names[ 3 ] = { namex, namey, namez };
@@ -172,22 +175,6 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
                 endpointCells.resize( static_cast< std::size_t >( nIFaces ) );
                 packed.resize(
                     static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
-                for ( int iFace = 0; iFace < nIFaces; ++ iFace )
-                {
-                    int iCell = -1;
-                    grid->GetFaceTopo().GetSId(
-                        iFace, ghostId + 1, iCell );
-                    endpointCells[ iFace ] = iCell;
-                }
-                {
-                    ScopedStageTimer timer( "swap_upload" );
-                    HipFluxBackend::Shared().PackGradientFacesToHost(
-                        grid, endpointCells.data(), nIFaces, nEqu,
-                        packed.data() );
-                    UploadInterfaceValuePacked(
-                        grid, fields, names, 3, nEqu, ghostId,
-                        packed.data() );
-                }
                 {
                     ScopedStageTimer timer( "swap_download" );
                     DownloadInterfaceValuePacked(

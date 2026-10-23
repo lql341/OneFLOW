@@ -41,6 +41,8 @@ License
 #include "FieldManager.h"
 #include "StageProfiler.h"
 #include "AccelRuntime.h"
+#include "HipFluxBackend.h"
+#include "FaceTopo.h"
 #include "Ctrl.h"
 #include "SolverState.h"
 #include "Zone.h"
@@ -122,6 +124,52 @@ bool SkipHostFieldPackFor( const std::string & fieldName )
 #endif
 }
 
+// Fill the interface send storage for the device-owned gradient.  This runs
+// once per outer iteration, from UploadInterfaceData, because that is the round
+// trip that actually exchanges the storage.  Packing inside every RK stage only
+// repeated the same work (nStages-1 of the packs were overwritten unused) and
+// put a device->host copy on the RK critical path.  The receive side still
+// unpacks every stage, so the CPU one-round lag is unchanged.
+void PackResidentGradientToInterface( UnsGrid * grid )
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( grid == nullptr || grid->interFace == nullptr ) return;
+    MRField * dqdx = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdx" );
+    MRField * dqdy = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdy" );
+    MRField * dqdz = ONEFLOW::GetFieldPointer< MRField >( grid, "dqdz" );
+    if ( dqdx == nullptr || dqdy == nullptr || dqdz == nullptr ) return;
+    const int nEqu = static_cast< int >( dqdx->GetNEqu() );
+    if ( nEqu <= 0 ) return;
+
+    InterFace * interFace = grid->interFace.get();
+    MRField * fields[ 3 ] = { dqdx, dqdy, dqdz };
+    const std::string names[ 3 ] = { "dqdx", "dqdy", "dqdz" };
+    std::vector< int > endpointCells;
+    std::vector< Real > packed;
+    for ( int ghostId = MAX_GHOST_LEVELS - 1; ghostId >= 0; -- ghostId )
+    {
+        const int nIFaces = interFace->nIFaces;
+        if ( nIFaces <= 0 ) continue;
+        endpointCells.resize( static_cast< std::size_t >( nIFaces ) );
+        packed.resize( static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
+        for ( int iFace = 0; iFace < nIFaces; ++ iFace )
+        {
+            int iCell = -1;
+            grid->GetFaceTopo().GetSId( iFace, ghostId + 1, iCell );
+            endpointCells[ iFace ] = iCell;
+        }
+        HipFluxBackend::Shared().PackGradientFacesToHost(
+            grid, endpointCells.data(), nIFaces, nEqu,
+            packed.data() );
+        UploadInterfaceValuePacked(
+            grid, fields, names, 3, nEqu, ghostId,
+            packed.data() );
+    }
+#else
+    ( void ) grid;
+#endif
+}
+
 }
 
 void UploadInterfaceData( StringField & data )
@@ -142,6 +190,13 @@ void UploadInterfaceData( StringField & data )
         fieldManager->GetInterfaceFieldProperty().GetData();
 
     ScopedStageTimer uploadTimer( "post_upload" );
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( SkipHostFieldPackFor( "dqdx" ) )
+    {
+        ScopedStageTimer packTimer( "swap_upload" );
+        PackResidentGradientToInterface( grid );
+    }
+#endif
     for ( const auto & [ fieldName, nEqu ] : fieldData )
     {
         if ( SkipHostFieldPackFor( fieldName ) ) continue;
