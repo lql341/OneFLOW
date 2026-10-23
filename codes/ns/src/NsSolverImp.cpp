@@ -46,8 +46,11 @@ License
 #include "Boundary.h"
 #include "BcRecord.h"
 #include "UNsCom.h"
-#ifdef ONEFLOW_ENABLE_HIP
+// The policy header is header-only and CPU-safe (it returns false when the
+// HIP backend is not built/selected). The boundary gate calls it in both
+// builds, so it must not be guarded by ONEFLOW_ENABLE_HIP.
 #include "HipProductionPolicy.h"
+#ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
 #endif
 #include <cstdlib>

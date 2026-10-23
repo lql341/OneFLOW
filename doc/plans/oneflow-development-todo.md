@@ -87,11 +87,16 @@ CPU 基线只能在 `kshcnormal`（同 8 核在 DCU 节点慢 37%）；比例只
 
 | 项 | 值 |
 |---|---|
-| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.12 s**（样本 8.90–9.48 s） |
+| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.08 s**（2026-10-23 正式样本 8.86–9.30 s；此前 `95830d9b` 为 9.12 s） |
 | 本轮优化前后（交臂 3 对） | 9.79 s → 9.12 s，mean 1.073x，3/3 对为正 |
 | loop 求合（rank 0/4/7） | **52.4 ms/step**（优化前 57.95，−9.5%） |
-| 端到端 vs CPU 8 核（CPU 队列 21.9–24.5 s） | 约 **2.4–2.7x** |
-| 同节点"加卡"隔离（8C vs 8C+1DCU） | 约 **3.0x**（旧构建测得；新构建更快，未重测） |
+| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.38x**（默认输出；2026-10-23：21599.9 / 9079.6 ms）→ **2.54x**（无中间输出：20714.5 / 8143.3 ms） |
+| 同节点 8-zone"加卡"隔离（8C vs 8C+1DCU） | **3.13x**（默认输出）→ **3.24x**（无中间输出；26414.2 / 8143.3 ms） |
+| 8-zone solver loop（8 ranks，100 steps 均值） | CPU `239.3 ms/step` vs HIP `49.2 ms/step` = **4.86x** |
+| 4-zone（4C vs 4C+1DCU，非 8:1） | 4.74x（41795.9 / 8822.2 ms） |
+| 1-zone（1C/1 rank vs 1C+1DCU，非 8:1） | 10.01x（无中间输出：127039.8 / 12696.4 ms） |
+| 1→8 rank 扩展（solver loop） | CPU 5.09x / HIP 1.22x；HIP 8-rank 绝对时间 8.14 s < 1-rank 12.70 s |
+| restart `50+50` vs `100` | CPU 逐位一致；HIP 流场最大相对差约 `1.6e-14`，res/aero 输出精度内一致 |
 | 固定开销 | ≈1.9 s/run（100 steps 时占 wall 约 20%；10 steps 时占 80%，故 10-step 比值无意义） |
 
 当前 loop 分项（ms/step）：`update_residuals 27.0`（gradient 12.7 / reconstruction 9.0 /
@@ -103,7 +108,6 @@ HIP kernel 1.0 / residual_metrics 0.6）、`mpi_interface 13.1`、`update_flowfi
 
 | 项 | 状态与原因 |
 |---|---|
-| **restart 等价性** | 未做端到端实测（q 权威且当前、residual 已在 dump 镜像；缺"50 步→重启→再 50 步 vs 连续 100 步"） |
 | **DeviceDirect** | probe 通过但实测慢 1.59x（MPI 内部仍 host staging）→ 保持关闭 |
 | **多卡 8:1 核卡比** | 缺 ≥64-zone fixture；`simutask=Partition` 在本 build 抛 "not implemented"，需外部 METIS 分区或 owner 提供 |
 | **跨节点 8:1 比值** | 正确性 PASS，但分配固定 7+1、2 卡 4 核/卡；portal 不接受 `--ntasks-per-node` |
@@ -112,10 +116,9 @@ HIP kernel 1.0 / residual_metrics 0.6）、`mpi_interface 13.1`、`update_flowfi
 ### 7. 下一步（按序，含验收）
 
 1. **接口紧凑布局**：`swap_upload+swap_download ≈ 4.3 ms/step` 是 `SwapBcGrad` 为接口 storage 做的随机 gather/scatter；让交换直接消费 endpoint 布局。验收：CPU 5/5、3-step trace、200-step residual、A/B ≥3%。
-2. **restart 等价性**：`nFieldSave=50` 跑 50 步→重启再 50 步 vs 连续 100 步；比较 `res.dat`（≤1e-12）、`aero.dat`（≤1e-10）、exit code。
-3. **gradient_mirror 3.5 / reconstruction 9.0** 的进一步去搬运（不要动数值语义与时序）。
-4. **64-zone fixture**（并行请求）→ 16-zone 双卡 → 多卡 8:1。
-5. 受限路径闭环后再选生产能力扩展：层流 NS → RANS/SA。
+2. **gradient_mirror 3.5 / reconstruction 9.0** 的进一步去搬运（不要动数值语义与时序）。
+3. **64-zone fixture**（并行请求）→ 16-zone 双卡 → 多卡 8:1。
+4. 受限路径闭环后再选生产能力扩展：层流 NS → RANS/SA。
 
 ### 8. 复现（Kunshan）
 
@@ -131,6 +134,338 @@ ONEFLOW_F2_STABILITY_RUN_DIR=<run> bash f2-main-solver-stability.slurm  # 50-ste
 bash f2-main-solver-multizone-timing.sh                                  # 100-step 配对/交臂
 ```
 所有原始日志、私有 fixture、ownership manifest 留在集群 artifacts，不进仓库。
+
+## 2026-10-23 受限 inviscid HIP 收口：restart 等价性与多配置端到端
+
+**结论**：交接文档描述的七阶段受限 inviscid 路径（fused flux/residual、interface、
+gradient、reconstruction、state update、boundary、resident time-step）在 `52fe404d`
+上仍是 backend-only 默认，本轮没有发现新的 HIP 化缺口，也没有修改数值代码。此前
+唯一未实测的正确性项——restart 等价性——已补齐；同时给出 1/4/8-zone 三种分区
+数量和 1D Euler 五个网格规模的同 basis 数据，用来避免只引用单点。
+
+### 复核门禁（backend-only，不带 `ONEFLOW_ENABLE_UNS_HIP_*`）
+
+| 项 | 结果 |
+|---|---|
+| 8-zone 3-step trace | `MULTIZONE_TRACE_PASS`，8/8 rank 有 solver work，每 rank 36 records |
+| resident contract | `records=24 failures=0 max_abs_diff=0` |
+| HIP vs legacy 最大绝对差 | `2.2837e-13`（face/reconstruction 量级，metadata 差为 0） |
+| 100-step CPU/HIP | 全部 `exit_code=0`，`ONEFLOW_FAIL_ON_NONPHYSICAL=1`，rank utilization 全 PASS |
+| 环境 | DTK 26.04 / `gfx906`；CPU 与 HIP 同一作业内交替运行，固定 CFL `0.01` |
+
+### restart 等价性（1-zone，50 步 → 重启 → 再 50 步 vs 连续 100 步）
+
+| backend | 最终 `flow.dat` | 最终 `res.dat` | 最终 `aero.dat` | 判定 |
+|---|---|---|---|---|
+| CPU | SHA-256 完全一致 | 相对差 `0`（输出精度内） | 相对差 `0`（输出精度内） | PASS |
+| HIP | 非逐位一致；20 个数组中有 10 个流场数组不同 | 相对差 `0`（输出精度内） | 相对差 `0`（输出精度内） | PASS |
+
+HIP 流场数组的最大相对差为 `1.63e-14`（同一基线的另一次独立运行得到 `1.51e-14`；绝对差同量级），残差数组逐位一致。
+这满足交接文档的 restart 判据（`res` ≤1e-12、`aero` ≤1e-10），但**不能**写成
+“HIP restart 逐位一致”；逐位一致目前只在 CPU 路径成立。已加入可复现 runner：
+`ci/kunshan/f2-main-solver-restart-equivalence.sh`（env 驱动，不内置集群路径）。
+
+### 端到端：分区数量扫描（m6wing，100 steps，warmup 1，repeats 2，fixed CFL 0.01）
+
+同节点行在同一 DCU 节点、同一作业内交替运行；`zone8` 的规范行来自独立的 CPU
+队列作业（`kshcnormal`，8 核），与 HIP 行不是同一节点。表中为 2 个正式 repeat
+的均值（warmup 不计）。`zone8` 是规范 8:1 槽；`zone4`/`zone1` 分别是 4 核/DCU 与
+1 核/DCU，只用于观察“分区数量/单点差异”，不能当作 8:1 核卡比。
+
+| 配置 | 资源 | CPU mean | HIP mean | CPU/HIP |
+|---|---|---:|---:|---:|
+| 8-zone / 8 ranks | 8C（`kshcnormal`） vs 8C+1DCU | 21599.9 ms | 9079.6 ms | **2.38x** |
+| 8-zone / 8 ranks | 同节点 8C vs 8C+1DCU（隔离加卡） | 28400.8 ms | 9079.6 ms | **3.13x** |
+| 4-zone / 4 ranks | 4C vs 4C+1DCU（非 8:1） | 41795.9 ms | 8822.2 ms | 4.74x |
+| 1-zone / 1 rank | 1C vs 1C+1DCU（非 8:1） | 129670.3 ms | 13029.2 ms | 9.95x |
+
+样本（正式 repeat）：8-zone CPU `21686.1 / 21513.8`（CPU 队列）、`28966.9 / 27834.8`
+（DCU 节点）；8-zone HIP `9303.4 / 8855.8`；4-zone CPU `41693.7 / 41898.0`、HIP
+`8790.6 / 8853.8`；1-zone CPU `129967.2 / 129373.3`、HIP `13043.3 / 13015.0`（ms）。
+分区数量越少、CPU 侧活跃核越少，比值越大；因此 1-zone 的 9.95x **不能**外推成
+8:1 槽的加速比。规范口径应引用 8-zone 的 `2.38x`（跨队列）或 `3.13x`（同节点隔离）。
+
+### 8-rank 损耗的实测（不是推测）
+
+同一套 m6wing 294,912 cell、100 steps、无中间输出、各 2 个正式 repeat：
+
+| 配置 | CPU | HIP | CPU/HIP |
+|---|---:|---:|---:|
+| 1-zone / 1 rank | 127039.8 ms | 12696.4 ms | **10.01x** |
+| 8-zone / 8 ranks | 20714.5 ms | 8143.3 ms | **2.54x** |
+
+solver loop（各 rank 顶层阶段求和，再对 rank 取均值）：
+
+| 配置 | CPU ms/step | HIP ms/step | CPU/HIP |
+|---|---:|---:|---:|
+| 1-zone / 1 rank | 1217.88 | 59.86 | **20.35x** |
+| 8-zone / 8 ranks | 239.27 | 49.21 | **4.86x** |
+
+1→8 rank 的实测扩展：
+
+| | CPU | HIP |
+|---|---:|---:|
+| wall | 127039.8 → 20714.5 = **6.13x** | 12696.4 → 8143.3 = **1.56x** |
+| loop | 1217.88 → 239.27 = **5.09x** | 59.86 → 49.21 = **1.22x** |
+| 8 核/rank 效率 | 64% | 15% |
+
+**结论：8-rank HIP 的绝对时间更快（8.14 s < 12.70 s），不是“8 rank 让 HIP 变慢”。**
+比值从 10.0x 掉到 2.54x，是因为 CPU 用 8 核拿到 5.09x loop / 6.13x wall 的扩展，
+而 1 张 DCU 被 8 个 rank 共享只拿到 1.22x loop / 1.56x wall。8 个 rank 把
+36,864 cell/rank 的 host 工作并行化，但 device 的总工作量没变，8-rank 的
+`mpi_interface` 还占 10.1 ms/step；所以这是**相对扩展效率损失**，不是绝对损耗。
+1-zone 的 10.0x 端到端也含约 6.7 s 固定开销（12.70 s wall - 5.99 s loop），
+其 loop 比值 20.35x 才是纯 solver 比值。
+
+### 输出/固定开销与 solver loop 的分解
+
+上面的 `2.38x` 是包含 `nFieldSave=50`、`nResSave=1`、`nForceSave=1` 的端到端值。
+把三个保存间隔都设为 1000（100 步内不写中间 restart；最终 postprocess 仍写 aero/res，restart 由 `nFieldSave` 门控，本次不再写）
+后，同一 8-zone、8-rank、100-step、2-repeat basis：
+
+| 项 | CPU | HIP | CPU/HIP |
+|---|---:|---:|---:|
+| 默认输出（中间 restart/aero） | 21599.9 ms（CPU 队列）/ 28400.8 ms（同节点） | 9079.6 ms | 2.38x / 3.13x |
+| 无中间输出 | 20714.5 ms（CPU 队列）/ 26414.2 ms（同节点） | 8143.3 ms | **2.54x / 3.24x** |
+| solver loop（各 rank 的顶层阶段求和） | 239.3 ms/step | 49.2 ms/step | **4.86x** |
+
+结论：端到端与 loop 的差距主要是固定开销（HIP wall `8143 ms` vs loop `4921 ms`，
+约 `3.2 s`，占 39%）；去掉 restart 写出只把 `2.38x` 提到 `2.54x`，所以它不是
+主因，但说明写出成本约 `0.9 s`（HIP）/`2.0 s`（CPU）。
+固定开销来自 MPI/设备初始化、31 MB 网格读入、最终 restart/aero 写出和进程启动。
+1D Euler 4M 的整个 lifecycle 只有约 `0.73 s`，没有逐 rank 网格读入/MPI/输出，因此
+它的比值可以很高。
+
+### 16-zone 分区尝试：能划分，但 ad-hoc 分区不是合法 HIP fixture
+
+用 `simutask=Grid`、`gridObj=3`、`npartproc=16` 在 CPU 节点上约 25 s 生成了
+`m6wing-16.ofl`（16 zone，每 zone 约 1.84 万 cell，总 cell 数仍是 294,912）。
+这证明**划分本身不是阻塞**，4/8-zone fixture 也是同一流程生成的。但把该 ad-hoc
+16-zone 直接交给 HIP 路径（16 ranks/1 DCU）会退化：
+
+| 16-zone ad-hoc | 100 steps | `mpi_interface` | `calc_time_step` |
+|---|---:|---:|---:|
+| CPU 16 ranks | 13047.7 ms | 5.52 ms/step | 2.47 ms/step |
+| HIP 16 ranks/1 DCU | 131604.0 ms | 203.7 ms/step | 32.3 ms/step |
+
+HIP 的 `mpi_interface` 和 `calc_time_step` 没有进入 8-zone 已验证的 resident/契约
+路径；最可能的原因是该 ad-hoc 16-zone 网格没有经过 8-zone fixture 的
+ownership/interface manifest 导出与验证。在取得合法 manifest 前，这条数据
+不能用于性能结论，已从数据表排除。合法扩展必须先用
+`ONEFLOW_MZ_FIXTURE_EXPORT_DIR` 导出 `rank-<rank>.json`、合并、用
+`verify-multizone-fixture.py` 验证，再跑 trace/stability；这也解释了为什么交接
+文档要求“≥64-zone fixture”而不是“随手 partition 一下”。
+另外，增加 zone 数只会把同样的 294,912 cell 切得更碎，**不会增加每个 DCU 的
+计算量**；要提高 3D 比值，需要更大的网格（更多 cell/DCU），而不是更多 zone。
+
+### 3D 与 1D 的可比性：目标不是 100–300x
+
+1D 报告里的 `157–293x`（stateful）是**单线程 CPU vs 1 DCU**的 compute-path
+微基准；同一份 1D 报告里，1 DCU vs **32-rank CPU MPI** 的应用级 lifecycle 是
+`3.85x / 5.34x / 6.80x / 9.70x`（65k → 4M）。3D 的 `2.38–2.54x` 应该和后者比，
+而不是和 `100–300x` 比。
+
+当前 3D 的位置：
+
+- **solver loop `4.86x`**：已经落在 1D 应用级 `3.85–9.70x` 的下半段；
+- **端到端 `2.54x`**：被约 `3.2 s` 固定开销和 host-staged 阶段拉低；
+- 每 rank 只有 36,864 cell（8-zone/8-rank），而 1D 4M 是 4M cell/DCU；1D 的
+  `65k → 4M` 比值从 3.85x 升到 9.70x，说明规模是最强的单一杠杆；
+- loop 内 HIP 融合 kernel 只有约 `0.9 ms/step`，`gradient 12.8`、`reconstruction 10.4`、
+  `mpi_interface 10.1`、`load_residuals 2.1`、`load_q 1.0` 仍是 host/契约编排；
+  `gradient_mirror 3.3`、`halo_ghost_sync 3.1`、`swap_upload 3.0`、`swap_download 1.7`
+  是接口紧凑布局的直接目标。
+
+因此：**3D 有希望接近 1D 的应用级 4–10x，但前提是更大网格 + 去掉 host staging；
+不可能也不应该以 1D 的 100–300x（单线程分母）为目标。** 当前 2.54x 到 4–6x 的
+主要缺口是固定开销（~3.2 s）、`mpi_interface`/`SwapBcGrad` 和 gradient/recon
+的 host 编排，而不是 HIP kernel 算力。
+
+### 补充：1D Euler 网格规模扫描（serial CPU vs 1 DCU，非 3D 主求解器）
+
+为回答“单点差异”，在同一 DCU 节点上用 standalone 1D Euler stateful backend 跑了
+五个网格规模（100 steps、warmup 1、repeats 2，`final_max_abs_error` 全为 0）。
+该二进制由当前 `52fe404d` 源码在本轮重新构建；下表是 **compute-path 微基准**：
+CPU 是单线程，HIP 是 1 张 DCU，不是 32-rank CPU 的应用级对比，也不能替换上面的
+3D 主求解器数据。它与 2026-09-13 报告中的历史 CPU 基线不可混用（当前源码的单线程
+CPU 路径更慢，HIP advance 基本不变）。
+
+| nx | CPU advance (ms) | HIP advance (ms) | HIP lifecycle (ms) | advance 比值 | CPU advance / HIP lifecycle |
+|---:|---:|---:|---:|---:|---:|
+| 16,384 | 1063.4 | 9.44 | 10.50 | 112.7x | 101.3x |
+| 65,536 | 3836.6 | 15.04 | 18.57 | 255.2x | 206.6x |
+| 262,144 | 13171.8 | 46.36 | 52.80 | 284.1x | 249.5x |
+| 1,048,576 | 50192.5 | 168.48 | 188.48 | 297.9x | 266.3x |
+| 4,194,304 | 216107.9 | 656.53 | 729.57 | 329.2x | 296.2x |
+
+`lifecycle` = `create + upload + advance + download`，与 advance 同为 repeats 总和。
+随 `nx` 增大，固定开销被摊薄，比值从 101.3x 单调升到 296.2x；小网格的 101.3x
+不能代表大网格。
+
+### 加密 3D 网格的尝试（2026-10-23，未形成可用数据点）
+
+为了直接回答“是不是网格太小”，本轮尝试了三条路，均未得到可用的 1M+ cell 3D
+性能点：
+
+- **布局生成器**：把 `minimal_cube` 的 `Dim` 从 3 改到 65，生成 65³（262,144 cell）
+  网格时出现 `62,816 cells have negative vols`；该布局的 face/line 定向在细网格上
+  不自洽，3³ 能过只是规模小。该网格不能用于求解。
+- **Plot3D 规则 box**：用规则 [0,1]³ 坐标写 `.grd`/`.inp`，再转成 `.ofl`；
+  **网格生成成功**：65³ = 262,144 cell、97³ = 912,673 cell、129³ = 2,097,152 cell
+  （边界面 24,576 / 55,296 / 98,304），`.ofl` 约 28 MB / 98 MB / 220 MB。
+  之前用 `nFieldSave/nResSave/nForceSave=1000` 时 flow case 在 setup 后不进入
+  迭代（Release exit 1，RelWithDebInfo exit 0 且无 `res.dat`）。**根因已定位为
+  该 box case 的 save cadence 配置**：把 `nResSave`/`nForceSave` 设为 1 后，
+  三套网格都正常迭代 50 步，残差约 `1e-19`（均匀流），65³/97³/129³ 的 CPU/HIP
+  曲线见下一节。调试构建过程中还发现并修掉了当前 CPU 构建的真实回归：
+  `NsSolverImp.cpp` 在 `ONEFLOW_ENABLE_HIP` 外调用了
+  `HipProductionFeatureEnabled`，导致 CPU 构建在 `NsSolverImp.cpp:270` 直接
+  编译失败（已把 `HipProductionPolicy.h` 改为无条件包含）。
+- **8-zone 单 rank**：想用 8 个 local zone 把每 DCU 的 cell 数提高到 294,912，
+  CPU 路径直接 exit 1；HIP 10 steps 为 15.9 s（1.59 s/step），也不是可用的
+  8:1 对照。
+
+因此，**目前没有一个经过 trace/positivity 验证的 1M+ cell 3D 网格**。m6wing 仓库
+里只有一套 294,912-cell 网格，没有 refinement 工具或原始 Plot3D 源；要严格证明
+规模效应，需要外部提供更大的 m6wing/其他 3D 网格，或把 box 的 BC/初始化链修通。
+
+但现有数据已经说明“网格太小”不是全部原因：同一套 294,912 cell，1-zone/1-rank
+（1C vs 1C+1DCU）是 **9.95x**，8-zone/8-rank（8C vs 8C+1DCU）是 **2.54x**。
+差别来自 8 个 rank 共享 1 DCU、MPI/halo/host staging 和约 3.2 s 固定开销，而不是
+cell 数从 295k 变成别的值。1D 的 65k→4M 比值从 3.85x 升到 9.70x 说明规模确实
+是杠杆，但 3D 当前更大的杠杆仍是接口紧凑布局与 gradient/recon 去搬运。
+
+### 加密网格实测：65³ / 97³ / 129³（1-zone，1C vs 1C+1DCU，50 steps）
+
+同一套 box 几何、1 个 zone、1 个 rank，1 核 CPU vs 1 核 + 1 DCU；`nResSave=1`、
+`nForceSave=1`、`nFieldSave` 大于步数；3 个正式 repeat 均值，50 steps：
+
+| N | cells | CPU mean | HIP mean | 端到端 CPU/HIP | CPU loop ms/step | HIP loop ms/step | loop CPU/HIP |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 65 | 262,144 | 53,922.1 ms | 5,661.1 ms | **9.53x** | 985.25 | 43.46 | **22.67x** |
+| 97 | 912,673 | 182,400.1 ms | 16,725.4 ms | **10.91x** | 3432.23 | 136.05 | **25.23x** |
+| 129 | 2,097,152 | 503,404.2 ms | 34,607.9 ms | **14.55x** | 9631.64 | 308.17 | **31.25x** |
+
+观察：
+
+- 网格从 262k 增到 2.1M（8x），**loop 的 CPU/HIP 比值从 22.67x 升到 31.25x**，
+  端到端从 9.53x 升到 14.55x；规模效应确实存在，但远没有 1D 的 100–300x 那么夸张。
+- 端到端低于 loop，是因为 fixed overhead 随网格增大：65/97/129 的 HIP wall − loop
+  分别为约 3.5 / 9.9 / 19.2 s，CPU 为约 4.7 / 10.8 / 21.8 s；主要是网格读入、
+  初始化和输出，不是 device kernel。
+- 这是 **1 core vs 1 DCU** 的口径，不是 8:1 槽。8:1 槽仍是 8 ranks 共享 1 DCU 的
+  `2.54x`；把网格放大到 2.1M 且仍用 1 zone/1 rank 只能证明“单卡单 rank 下规模
+  越大比值越高”，不能直接外推成 8 卡/8:1 的线性加速。
+- 3D 2.1M 的 loop 31.25x 仍低于 1D 4M 的 296x，原因是 3D 每 cell 有
+  gradient/reconstruction/boundary/MPI/host 编排，且 1D 路径没有这些；这不是
+  同一算法。
+
+### 全链路审计：哪些是 device，哪些还是 host
+
+“受限 inviscid HIP”不等于“3D solver 全链路 GPU 化”。当前实际分层：
+
+| 链路段 | 状态 | 证据/位置 |
+|---|---|---|
+| 网格读入、分区、wall distance | host | `FieldSimuLoadGrid`/`PrepareWallDist`；`vismodel<=1` 跳过 wall distance |
+| solver/state 创建与初始 q | host + H2D | `FieldSimuCreateSolvers`/`InitFlowField` |
+| **时间推进调度（RK stage 循环）** | **host（CPU）** | `TimeIntegral::RungeKutta` 使用 `CpuEulerDomainBackend` + `AccelBackendKind::CPU`，每个 stage 回调 host task |
+| gradient | device | `UNsGrad`/`CalcHipGradient`，但 ghost 镜像/`SwapBcGrad` 仍 host |
+| reconstruction | device | `ReconstructFaceValues`，跨 zone ghost gradient 仍 host mirror |
+| inviscid flux + residual | device | fused `CalcAndAddReconstructedFaceFlux` |
+| state update / residual chain | device | `UpdatePrimitiveState` + resident residual |
+| physical boundary | device（受限类型） | `UpdateBoundaryState`；host `bcQ`/ghost 镜像 |
+| interface/halo | **host-staged** | `InterfaceTask`/`BoundaryExchangeContract`；MPI 仍是 host buffer |
+| limiter | host / 未迁移 | `ilim!=0` 直接回退 |
+| LUSGS / multigrid / dual-time | host / 未迁移 | `time_integral!=MULTI_STAGE`、`nGrids>1` 回退 |
+| viscous/turbulence/SA | host / 未迁移 | `vismodel!=0` 回退 |
+| restart/输出/气动力 | host | `RestartTask`、`ResidualTask` 输出、`AeroForceTask`（D2H 后） |
+
+所以准确说法是：**受限 inviscid 的“空间离散 + 面通量 + 残差 + 状态更新 + 边界 + local time-step”已 device 化；时间推进调度、接口传输、IO/restart、气动力、limiter/LUSGS/multigrid/viscous 仍是 host 或未迁移。** 这不是完整 GPU-resident 的全链路。
+
+**移植方式是否最优**：当前是“正确性优先、逐 stage host 编排 + resident device state”的混合方案，不是性能最优：
+
+- 每个 stage 由 host 调度并频繁 `hipDeviceSynchronize`，没有 HIP graph/多 stream 重叠；
+- interface 仍是 host pack/MPI/host unpack，`swap_upload+swap_download` ≈ 4.7 ms/step，`gradient_mirror` ≈ 3.3，`halo_ghost_sync` ≈ 3.1；
+- 融合 kernel 只有约 0.9 ms/step，说明 device 算力不是瓶颈，瓶颈是 host 编排/传输/fixed overhead；
+- 没有针对 DTK/gfx906 做 occupancy/带宽/`__launch_bounds__`/LDS/vector load 调优；但即使 kernel 再快，也压不过 host staging。
+
+下一步优先级应是：1) 把 RK stage 调度搬到 device 或至少用 HIP graph 串起来；2) 接口紧凑布局 + 避免 `SwapBcGrad` 的 host gather/scatter；3) gradient mirror/ghost sync 去搬运；4) 在以上之后再用 DTK 文档/rocprof 调 kernel（occupancy、HBM 带宽、wavefront 64、LDS、`hipMemcpyAsync`/pinned）。直接上 DTK 微优化不会把 2.54x 变成 4–6x。
+
+### 1D vs 3D 的实现效率差异（实测 + 代码级原因）
+
+先把“算法工作量”和“实现效率”分开。1D 是一阶 Rusanov + SSP-RK3、3 方程、
+无 gradient/reconstruction；3D 是 5 方程、Green–Gauss gradient、二阶
+reconstruction、boundary、interface。3D 每 cell 更贵是应该的；但实测贵得更多：
+
+| 指标 | 1D persistent（4M cell） | 3D box（2.1M cell，1 rank） | 3D m6wing（294k，8-zone loop） |
+|---|---:|---:|---:|
+| HIP 吞吐 | 3.28 ms/step → 1.28 G cell/s（0.78 ns/cell） | 308.17 ms/step → 6.8 M cell/s（147 ns/cell） | 49.21 ms/step（总 294k）→ 5.98 M cell/s（167 ns/cell） |
+| CPU 吞吐 | 1080.5 ms/step → 3.88 M cell/s（258 ns/cell） | 9.63 s/step → 0.218 M cell/s（4.59 µs/cell） | 239.27 ms/step → 1.23 M cell/s（812 ns/cell） |
+| CPU/HIP | 329x（advance）/296x（lifecycle） | 31.25x | 4.86x |
+
+3D HIP 每 cell 比 1D HIP 慢约 **188x**，但 3D CPU 每 cell 只比 1D CPU 慢约
+**17.8x**；说明 3D 的 HIP 实现相对 CPU 明显更差，不只是算法更复杂。代码级原因：
+
+1. **gradient 用 face-based `atomicAdd`**：`GradientAccumulateKernel` 对每个面、
+   每个方程、每个分量做 6 次全局 atomicAdd（5 方程 ≈ 30 次/内面），再加
+   `GradientZero/Normalize/CopyBoundary` 三个 kernel。1D 没有 gradient，也没有
+   atomic；这是 3D 独有的串行化/带宽开销。
+2. **residual 也用 face-based scatter + atomicAdd**：`ScatterFaceFluxEulerKernel`
+   每个内面对 5 方程各 2 次 atomicAdd（≈10 次/面）；1D 的 `ResidualUpdate`
+   是规则的 cell stencil，完全无 atomic。
+3. **face-based gather 不合并**：reconstruction/flux 每个线程处理一个 face，
+   读 `leftCell[face]`/`rightCell[face]` 指向的 cell（间接、随机），而 1D 的
+   `il=face-1, ir=face` 是连续访问。
+4. **寄存器压力**：`ReconstructFaceEulerKernel` 用 `leftValue[5]`、
+   `rightValue[5]`、`leftCandidate[5]`、`rightCandidate[5]`（20 个 double）+
+   多组 gradient 读取；1D 的 `Face` 只用 3 分量和少量标量，occupancy 更高。
+5. **kernel 粒度/同步**：3D 一个 stage 要 zero/accumulate/normalize/copy gradient、
+   reconstruct、flux、scatter、boundary、state 等多个 launch，并在 host 侧
+   `hipDeviceSynchronize`；1D NoTrace 每步只有 `Face` + `ResidualUpdate` 两个
+   kernel，且整个 100 步在 device 上连续跑。
+6. **host 编排**：3D 每个 RK stage 由 host `SingleSolverSingleGridTask` 调度，
+   经过 `MRField`/virtual/task registry；1D 是 persistent device state，没有
+   host stage loop。
+7. **MPI/interface**：3D 8-zone 有 35,624 个 interface face，host pack +
+   `SwapBcGrad` + MPI；1D halo 只是一个 rank ring。
+8. **每 DCU 工作量**：3D 8:1 每 rank 36,864 cell；1D 4M 是 4M cell/DCU；
+   launch/sync/固定开销摊不薄。
+
+所以“3D 算法并行度/向量化不如 1D”这个怀疑是有代码和实测依据的，尤其是
+**face-based atomic scatter** 和 **host per-stage 编排**。但也不能简单说
+“3D 算法本身差”：3D 的 gradient/reconstruction/boundary 是 1D 没有的算法步骤，
+其中一部分成本是合理的；需要用“同算法、不同实现”的 A/B 才能把两部分完全分开。
+
+### RK 移植的预期收益
+
+当前 `TimeIntegral::RungeKutta(context)` 仍是 host：它用 `CpuEulerDomainBackend`
++ `AccelBackendKind::CPU` 驱动 stage 回调，每个 stage 调
+`LOAD_RESIDUALS → UPDATE_RESIDUALS → CALC_LHS → UPDATE_FLOWFIELD → CALC_BOUNDARY`
+（多 zone 还有 `UPDATE_INTERFACE_DATA`）。8-zone HIP 的每步顶层耗时里：
+
+- `load_residuals` 2.1 ms、`calc_lhs` 0.3、`update_flowfield` 2.8、
+  `calc_boundary` 2.8，合计约 **8.0 ms/step（16%）**；
+- `update_residuals` 27.8（gradient/recon/flux 的 device 工作）和
+  `mpi_interface` 10.1 不是 RK 调度本身。
+
+因此**只把 RK stage 调度搬到 device**，乐观估计省掉一半的 host 调度/同步，
+大约 **4–8 ms/step**，loop 49.2 → 41–45 ms（8–17%），端到端 2.54x 大约
+2.7–2.8x；若同时把 3 个 stage 的 gradient/recon 融合、避免重复 zero/mirror，
+收益才会更大。它值得做一个原型，但不是把 2.54x 推到 4–6x 的主杠杆；主杠杆仍是
+gradient/recon 的 atomic/gather 和 interface host staging。
+
+**基线问题**：目前 129³ 的 31.25x 是“均匀流 box、1 rank、50 steps、单次几何”
+的一个点，数据支持不足以当正式基线；至少还需要真实 flow、不同 steps、8-zone
+2.1M 和 CPU 多核对照。这里只把它作为“规模趋势”的证据，不写成性能结论。
+
+### 仍未闭合
+
+- **接口紧凑布局**与 **gradient_mirror / reconstruction 去搬运**仍是性能项，不是
+  正确性缺口；当前没有把 `SwapBcGrad` 的 host 打包改掉。
+- **多卡 8:1 核卡比**仍缺合法的 ≥64-zone fixture（`simutask=Partition` 未实现，
+  但 `simutask=Grid`/`gridObj=3` 可生成分区网格；缺的是 ownership/interface manifest）。
+- **limiter≠0、multigrid、LUSGS、viscous/RANS** 仍未迁移，host 回退；因此不能把
+  本轮结果写成“完整 NS 求解器已 HIP 化”。
 
 ## 2026-10-21 resident q generation contract, multi-zone device gradient + reconstruction
 
@@ -1269,7 +1604,7 @@ git show dev:doc/plans/oneflow-development-todo.md
 | 智能体入口 | 仓库 `AGENTS.md`（含文档地图、分支模型与工作规则）；`CLAUDE.md` 已于 2026-09-19 删除；技能仓库 `oneflow-dev`（已安装到本地 skills 目录） |
 | 测量口径 | 已确立：`lifecycle_*_ms` 为 repeats 总和，异口径不可比；历史 13.10× 勘误已修正为 25.55× |
 | 当前进度 | 受限 inviscid 路径（5 方程 / Lax–Friedrichs / limiter-off / 显式 RK）的七个阶段已**默认** device 化并通过门禁：fused flux+residual、interface/halo、gradient、reconstruction、state update+resident residual、device boundary、resident time-step。多 zone（8 zone/8 rank）与单 zone 均已闭合；NoTrace 残差/正性检查由设备归约标量提供。未迁移：viscous/turbulence、limiter、multigrid、LUSGS、双时间。 |
-| 最新验证 | `95830d9b`（2026-10-23，Kunshan DTK 26.04 / gfx906）：8-zone 3-step trace PASS（36 records/rank，≈2.3e-13）、resident contract `24/0/0`、8-zone 与单 zone 50-step stability 三路全 PASS、NoTrace 200-step residual vs CPU `1.094e-14`、CPU normal/strict 各 5/5、硬件 CTest 16/16。100-step HIP `9.12 s`（8.90–9.48），对优化前 `9.79 s` 为 `1.073x`（3/3 交臂对为正），loop `52.4 ms/step`；对 CPU 8 核约 `2.4–2.7x`。详细口径见文首交接摘要 §5。 |
+| 最新验证 | `52fe404d`（2026-10-23，Kunshan DTK 26.04 / gfx906）：8-zone 3-step trace `MULTIZONE_TRACE_PASS`（每 rank 36 records，最大绝对差 `2.284e-13`）、resident contract `24/0/0`、CPU/HIP 100-step 运行 `exit_code=0` 且 rank utilization PASS、restart `50+50` vs `100` 通过（CPU 逐位一致，HIP 流场最大相对差约 `1.6e-14`）。同 basis 8-zone：8C CPU `21.60 s` vs 8C+1DCU `9.08 s` = `2.38x`；同节点隔离 `28.40 s` vs `9.08 s` = `3.13x`。详细口径见 §5 与新增的 2026-10-23 收口节。 |
 
 **能力边界（不要越界声明）**：3D 主 solver 的 HIP 能力目前严格限定在
 `NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 显式多阶段 RK /

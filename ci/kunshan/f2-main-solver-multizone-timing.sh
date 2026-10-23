@@ -18,6 +18,16 @@ timeout_seconds="${ONEFLOW_MZ_TIMEOUT_SECONDS:-600}"
 # hand out an uneven split (7+1 was observed, which crashed OpenMPI's
 # coll/han communicator setup during case setup).
 map_by="${ONEFLOW_MZ_MAP_BY:-slot}"
+# The partitioned fixture name is a property of the case, not of the runner.
+# Keep the validated 8-zone default and allow other prepared fixtures (for
+# example the 4-zone mesh) to reuse the same preparation and timing contract.
+grid_file="${ONEFLOW_MZ_GRID_FILE:-grid/m6wing-8.ofl}"
+# Optional output cadence.  Leave unset to keep the case defaults; set all three
+# above the step count to measure the solver path without intermediate restart
+# or aerodynamic files (the final postprocess still runs once).
+field_save="${ONEFLOW_MZ_FIELD_SAVE:-}"
+res_save="${ONEFLOW_MZ_RES_SAVE:-}"
+force_save="${ONEFLOW_MZ_FORCE_SAVE:-}"
 
 case "$mode" in
     cpu|hip) ;;
@@ -84,6 +94,8 @@ printf 'fixture_metadata=%s\nfixture_summary=%s\n' \
     echo "mpirun=$(command -v mpirun)"
     echo "mpi=$(mpirun --version | head -1)"
     echo "map_by=$map_by"
+    echo "grid_file=$grid_file"
+    echo "field_save=${field_save:-case-default} res_save=${res_save:-case-default} force_save=${force_save:-case-default}"
     echo "OMPI_MCA_coll=${OMPI_MCA_coll:-unset}"
     echo "OMPI_MCA_coll_hcoll_enable=${OMPI_MCA_coll_hcoll_enable:-unset}"
     echo "SLURM_JOB_CPUS_PER_NODE=${SLURM_JOB_CPUS_PER_NODE:-unknown}"
@@ -101,11 +113,13 @@ prepare_case() {
         > "$case_dir/grid/bcRegionMap.txt"
     rm -rf "$case_dir/results" "$case_dir/restart" "$case_dir/log"
     mkdir -p "$case_dir/results" "$case_dir/restart" "$case_dir/log"
+    if [ -e "$case_dir/script/grid.txt" ]; then
+        sed -i -E \
+            "s/^int[[:space:]]+gridObj[[:space:]]*=.*/int gridObj = 3;/" \
+            "$case_dir/script/grid.txt"
+    fi
     sed -i -E \
-        "s/^int[[:space:]]+gridObj[[:space:]]*=.*/int gridObj = 3;/" \
-        "$case_dir/script/grid.txt"
-    sed -i -E \
-        's#^string gridFileName.*#string gridFileName = grid/m6wing-8.ofl;#' \
+        "s#^string gridFileName.*#string gridFileName = ${grid_file};#" \
         "$case_dir/script/cfd.txt"
     sed -i -E \
         "s/^int[[:space:]]+maxSteps[[:space:]]*=.*/int maxSteps = ${steps};/; \
@@ -116,6 +130,18 @@ prepare_case() {
          s/^Real[[:space:]]+cfled[[:space:]]*=.*/Real cfled = ${cfl};/; \
          s/^int[[:space:]]+ilim[[:space:]]*=.*/int ilim = 0;/" \
         "$case_dir/script/cfd.txt"
+    if [ -n "$field_save" ]; then
+        sed -i -E "s/^int[[:space:]]+nFieldSave[[:space:]]*=.*/int nFieldSave = ${field_save};/" \
+            "$case_dir/script/cfd.txt"
+    fi
+    if [ -n "$res_save" ]; then
+        sed -i -E "s/^int[[:space:]]+nResSave[[:space:]]*=.*/int nResSave = ${res_save};/" \
+            "$case_dir/script/cfd.txt"
+    fi
+    if [ -n "$force_save" ]; then
+        sed -i -E "s/^int[[:space:]]+nForceSave[[:space:]]*=.*/int nForceSave = ${force_save};/" \
+            "$case_dir/script/cfd.txt"
+    fi
     sed -i -E \
         "s/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0;/; \
          /^[[:space:]]*TurbSolver[[:space:]]*$/d" \
