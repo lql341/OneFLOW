@@ -87,12 +87,12 @@ CPU 基线只能在 `kshcnormal`（同 8 核在 DCU 节点慢 37%）；比例只
 
 | 项 | 值 |
 |---|---|
-| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.08 s**（2026-10-23 正式样本 8.86–9.30 s；此前 `95830d9b` 为 9.12 s） |
+| 100-step HIP（8 ranks/1 DCU，全默认阶段） | **9.08 s** 默认输出；无中间输出 **7.65 s**（cell-gather 后，2026-10-23） |
 | 本轮优化前后（交臂 3 对） | 9.79 s → 9.12 s，mean 1.073x，3/3 对为正 |
 | loop 求合（rank 0/4/7） | **52.4 ms/step**（优化前 57.95，−9.5%） |
-| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.38x**（默认输出；2026-10-23：21599.9 / 9079.6 ms）→ **2.54x**（无中间输出：20714.5 / 8143.3 ms） |
-| 同节点 8-zone"加卡"隔离（8C vs 8C+1DCU） | **3.13x**（默认输出）→ **3.24x**（无中间输出；26414.2 / 8143.3 ms） |
-| 8-zone solver loop（8 ranks，100 steps 均值） | CPU `239.3 ms/step` vs HIP `49.2 ms/step` = **4.86x** |
+| 端到端 8-zone vs CPU 8 核（`kshcnormal`） | **2.38x**（默认输出）→ **2.54x**（无中间输出）→ **2.71x**（cell-gather 后，20714.5 / 7649.6 ms） |
+| 同节点 8-zone"加卡"隔离（8C vs 8C+1DCU） | **3.13x**（默认输出）→ **3.24x**（无中间输出）→ **3.50x**（cell-gather 后） |
+| 8-zone solver loop（8 ranks，100 steps 均值） | CPU `238.6 ms/step` vs HIP `45.3 ms/step` = **5.27x**（cell-gather 后；旧 4.86x） |
 | 4-zone（4C vs 4C+1DCU，非 8:1） | 4.74x（41795.9 / 8822.2 ms） |
 | 1-zone（1C/1 rank vs 1C+1DCU，非 8:1） | 10.01x（无中间输出：127039.8 / 12696.4 ms） |
 | 1→8 rank 扩展（solver loop） | CPU 5.09x / HIP 1.22x；HIP 8-rank 绝对时间 8.14 s < 1-rank 12.70 s |
@@ -435,6 +435,41 @@ reconstruction、boundary、interface。3D 每 cell 更贵是应该的；但实�
 **face-based atomic scatter** 和 **host per-stage 编排**。但也不能简单说
 “3D 算法本身差”：3D 的 gradient/reconstruction/boundary 是 1D 没有的算法步骤，
 其中一部分成本是合理的；需要用“同算法、不同实现”的 A/B 才能把两部分完全分开。
+
+### 主杠杆落地：cell-based gather 替代 face-based atomic scatter（`9b5934bd`）
+
+按 1D 的 `Face → ResidualUpdate` 模式改 3D：
+
+- 新增 cell-to-face CSR（`cellFaceOffsets/cellFaceIds`），每个 topology 建一次；
+- gradient：face 并行 `atomicAdd`（5 方程 × 6 分量 ≈ 30 次/内面）+ zero/normalize
+  三个 kernel → **cell 并行 gather**，每个 cell 只写一次，无 atomic；
+- residual：fused flux 只写面通量，新增 cell 并行 gather（带 explicit boundary
+  mask），去掉 `ScatterFaceFluxEulerKernel` 的 ≈10 次 atomicAdd/内面；
+- primitive 与 reconstructed 两条 fused 路径都改为“face flux + cell gather”。
+
+正确性：HIP smoke 全 PASS、HIP CTest `16/16`、8-zone 3-step trace
+`MULTIZONE_TRACE_PASS`、resident contract `24/0/0`、HIP vs legacy 最大绝对差
+`1.806e-13`。
+
+A/B（同节点、100 steps、无中间输出、2 formal repeats）：
+
+| 项 | 旧 face-atomic | 新 cell-gather | 变化 |
+|---|---:|---:|---:|
+| 8-zone HIP wall | 8143.3 ms | **7649.6 ms** | −6.1% |
+| 8-zone HIP solver loop | 49.21 ms/step | **45.27 ms/step** | −8.0% |
+| `gradient_kernel` | 4.28 ms/step | **0.86 ms/step** | −80% |
+| 8-zone 同节点 CPU/HIP | 3.24x | **3.50x** | +8% |
+| 8-zone CPU 队列 CPU/HIP | 2.54x | **2.71x** | +6.6% |
+| 65³ box HIP wall / loop 比值 | 5661.1 ms / 22.67x | **5497.4 ms / 24.34x** | −2.9% / +7.4% |
+| 129³ box HIP wall / loop 比值 | 34607.9 ms / 31.25x | **33436.8 ms / 33.15x** | −3.4% / +6.1% |
+
+`gradient` 父项从 14.92 → 11.56 ms/step，`gradient_kernel` 4.28 → 0.86；
+`reconstruction` 7.15、`mpi_interface` 12.74、`gradient_mirror` 3.85、
+`halo_ghost_sync` 3.41、`swap_upload+swap_download` 5.90 成为新的前几项。
+**atomic 是真实瓶颈之一，但去掉后 loop 只降 8%；端到端只降 3–6%，因为 fixed
+overhead 和 interface host staging 还在。** 下一步主杠杆是接口紧凑布局 /
+`SwapBcGrad` 去 host，以及 reconstruction 的寄存器/face-based 访问；RK 仍按
+你的要求先不做。
 
 ### RK 移植的预期收益
 
