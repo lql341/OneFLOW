@@ -948,8 +948,6 @@ __global__ void ReconstructFaceEulerKernel(
     const int totalCells = nCells + nBoundaryFaces;
     const int left = leftCell[ face ];
     const int right = rightCell[ face ];
-    Real leftValue[ 5 ] = {};
-    Real rightValue[ 5 ] = {};
     Real leftCandidate[ 5 ] = {};
     Real rightCandidate[ 5 ] = {};
     const Real dxl = xFace[ face ] - xCell[ left ];
@@ -963,13 +961,13 @@ __global__ void ReconstructFaceEulerKernel(
     {
         const int qBase = eq * totalCells;
         const int gradientBase = eq * 3 * totalCells;
-        leftValue[ eq ] = q[ qBase + left ];
-        rightValue[ eq ] = q[ qBase + right ];
-        leftCandidate[ eq ] = leftValue[ eq ]
+        const Real qLeft = q[ qBase + left ];
+        const Real qRight = q[ qBase + right ];
+        leftCandidate[ eq ] = qLeft
             + gradient[ gradientBase + left ] * dxl
             + gradient[ gradientBase + totalCells + left ] * dyl
             + gradient[ gradientBase + 2 * totalCells + left ] * dzl;
-        rightCandidate[ eq ] = rightValue[ eq ]
+        rightCandidate[ eq ] = qRight
             + gradient[ gradientBase + right ] * dxr
             + gradient[ gradientBase + totalCells + right ] * dyr
             + gradient[ gradientBase + 2 * totalCells + right ] * dzr;
@@ -986,10 +984,11 @@ __global__ void ReconstructFaceEulerKernel(
     }
     for ( int eq = 0; eq < nEq; ++ eq )
     {
+        const int qBase = eq * totalCells;
         qf1[ eq * nFaces + face ] =
-            leftPhysical ? leftCandidate[ eq ] : leftValue[ eq ];
+            leftPhysical ? leftCandidate[ eq ] : q[ qBase + left ];
         qf2[ eq * nFaces + face ] =
-            rightPhysical ? rightCandidate[ eq ] : rightValue[ eq ];
+            rightPhysical ? rightCandidate[ eq ] : q[ qBase + right ];
     }
 
     const bool boundary = boundaryMask != nullptr
@@ -1013,7 +1012,8 @@ __global__ void ReconstructFaceEulerKernel(
     }
     for ( int eq = 0; eq < nEq; ++ eq )
     {
-        const Real value = 0.5 * ( leftValue[ eq ] + rightValue[ eq ] );
+        const int qBase = eq * totalCells;
+        const Real value = 0.5 * ( q[ qBase + left ] + q[ qBase + right ] );
         qf1[ eq * nFaces + face ] = value;
         qf2[ eq * nFaces + face ] = value;
     }
