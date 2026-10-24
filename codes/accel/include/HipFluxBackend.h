@@ -143,6 +143,8 @@ struct HipGradientStorage
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
     DeviceBuffer< Real > bcQ;
     DeviceBuffer< Real > boundaryFaceState;
+    // Packed [equation][ghost cell] slice used for a single D2H per stage.
+    DeviceBuffer< Real > boundaryGhostPack;
     DeviceBuffer< int > boundaryType;
     DeviceBuffer< Real > inflow;
     DeviceBuffer< Real > boundaryXNormal;

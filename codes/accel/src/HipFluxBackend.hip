@@ -685,6 +685,20 @@ __global__ void UnpackGradientFacesKernel(
         + ghostCellIds[ face ] ] = packed[ index ];
 }
 
+// Gather the ghost slice of every equation into one contiguous buffer so the
+// host can fetch it with a single blocking copy instead of one per equation.
+__global__ void PackGhostCellsKernel(
+    const Real * cellState, int nCells, int totalCells, int nEquations,
+    int nGhostCells, Real * packed )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nEquations * nGhostCells;
+    if ( index >= total ) return;
+    const int equation = index / nGhostCells;
+    const int ghost = index - equation * nGhostCells;
+    packed[ index ] = cellState[ equation * totalCells + nCells + ghost ];
+}
+
 __global__ void InviscidSpectrumZeroKernel(
     Real * spectrum, int nCells )
 {
@@ -2050,27 +2064,53 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         storage->inflow.Data(), view.faceOuterNormal, view.nCells,
         view.nBoundaryFaces, view.nEquations, view.gamma );
     CheckHip( hipGetLastError(), "boundary kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "boundary kernel synchronize" );
+    // No synchronise here: the packed ghost D2H below is blocking on the same
+    // stream, so it already waits for this kernel.
     }
 
     {
     ScopedStageTimer ghostCopyTimer( "bnd_ghost_copy" );
-    for ( int equation = 0; equation < view.nEquations; ++ equation )
+    // Both copies below used to run once per equation (two blocking D2H each,
+    // thirty per step).  Pack on the device, fetch once, scatter on the host.
+    const int nGhost = view.nBoundaryFaces;
+    const std::size_t ghostValues =
+        static_cast< std::size_t >( view.nEquations ) * nGhost;
+    if ( ghostValues > 0 )
     {
+        storage->boundaryGhostPack.Resize( ghostValues );
+        const int blockSizePack = 256;
+        hipLaunchKernelGGL(
+            PackGhostCellsKernel,
+            dim3( ( static_cast< int >( ghostValues ) + blockSizePack - 1 )
+                  / blockSizePack ),
+            dim3( blockSizePack ), 0, 0,
+            storage->cellState.Data(), view.nCells, totalCells,
+            view.nEquations, nGhost, storage->boundaryGhostPack.Data() );
+        CheckHip( hipGetLastError(), "ghost pack kernel launch" );
+        Real * ghostStaging = LocalPinnedStaging().Get( ghostValues );
         AccelRuntime::Instance().Backend().Copy(
-            view.q[ equation ] + view.nCells,
-            storage->cellState.Data()
-                + equation * totalCells + view.nCells,
-            view.nBoundaryFaces * sizeof( Real ),
-            AccelCopyKind::DeviceToHost );
-        if ( view.bcQ[ equation ] != nullptr )
+            ghostStaging, storage->boundaryGhostPack.Data(),
+            ghostValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
+            std::copy(
+                ghostStaging + static_cast< std::size_t >( equation ) * nGhost,
+                ghostStaging + static_cast< std::size_t >( equation + 1 ) * nGhost,
+                view.q[ equation ] + view.nCells );
+        }
+        if ( view.bcQ[ 0 ] != nullptr )
+        {
+            Real * faceStaging = LocalPinnedStaging().Get( ghostValues );
             AccelRuntime::Instance().Backend().Copy(
-                view.bcQ[ equation ],
-                storage->boundaryFaceState.Data()
-                    + equation * view.nBoundaryFaces,
-                view.nBoundaryFaces * sizeof( Real ),
-                AccelCopyKind::DeviceToHost );
+                faceStaging, storage->boundaryFaceState.Data(),
+                ghostValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
+            for ( int equation = 0; equation < view.nEquations; ++ equation )
+            {
+                std::copy(
+                    faceStaging + static_cast< std::size_t >( equation ) * nGhost,
+                    faceStaging + static_cast< std::size_t >( equation + 1 ) * nGhost,
+                    view.bcQ[ equation ] );
+            }
         }
     }
     }
