@@ -964,6 +964,7 @@ __global__ void ReconstructFaceEulerKernel(
     const unsigned char * boundaryMask,
     const ReconstructionBoundaryOperation * boundaryOperation,
     const Real * bcQ,
+    int bcQStride,
     int nCells,
     int nBoundaryFaces,
     int nFaces,
@@ -1036,7 +1037,7 @@ __global__ void ReconstructFaceEulerKernel(
     {
         for ( int eq = 0; eq < nEq; ++ eq )
         {
-            const Real value = bcQ[ eq * nFaces + face ];
+            const Real value = bcQ[ eq * bcQStride + face ];
             qf1[ eq * nFaces + face ] = value;
             qf2[ eq * nFaces + face ] = value;
         }
@@ -2197,10 +2198,13 @@ void HipFluxBackend::ReconstructFaceValues(
         // have solid faces, and they pay nEqu*totalFaces values per stage
         // (5.6 ms/step on those ranks, 0 on the others).
         ScopedStageTimer bcqTimer( "recon_bcq" );
-        storage->bcQ.Resize( totalValues );
+        const std::size_t bcQValues =
+            static_cast< std::size_t >( view.nEquations )
+            * view.nBoundaryFaces;
+        storage->bcQ.Resize( bcQValues );
         AccelRuntime::Instance().Backend().Copy(
             storage->bcQ.Data(), view.bcQ[ 0 ],
-            static_cast< std::size_t >( totalValues ) * sizeof( Real ),
+            bcQValues * sizeof( Real ),
             AccelCopyKind::HostToDevice );
     }
     else
@@ -2224,6 +2228,7 @@ void HipFluxBackend::ReconstructFaceValues(
         storage->boundaryMaskValid ? storage->boundaryMask.Data() : nullptr,
         storage->boundaryOperation.Data(),
         hasSolid ? storage->bcQ.Data() : nullptr,
+        view.nBoundaryFaces,
         view.nCells, view.nBoundaryFaces, view.nFaces, view.nEquations,
         view.physicality == ReconstructionPhysicalityPolicy::None ? 0 : 1,
         view.densityComponent, view.pressureComponent,

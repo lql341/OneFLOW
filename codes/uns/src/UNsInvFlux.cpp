@@ -356,13 +356,17 @@ void UNsInvFlux::CalcInvFace()
                 throw std::runtime_error(
                     "HIP reconstruction solid boundary is missing bc_q" );
             }
+            // Solid-override boundary faces are a prefix of the face array, so
+            // the wall state only needs nEquations*nBFaces values.  Packing the
+            // full nFaces stride moved ~13x more data than the kernel reads.
+            const int bcQFaces = static_cast< int >( ug.nBFaces );
             hipBoundaryQ.resize(
-                static_cast< std::size_t >( nEquations ) * nFaces );
+                static_cast< std::size_t >( nEquations ) * bcQFaces );
             for ( int equation = 0; equation < nEquations; ++ equation )
             {
-                for ( int face = 0; face < ug.nBFaces; ++ face )
+                for ( int face = 0; face < bcQFaces; ++ face )
                 {
-                    hipBoundaryQ[ equation * nFaces + face ] =
+                    hipBoundaryQ[ equation * bcQFaces + face ] =
                         ( * unsf.bc_q )[ equation ][ face ];
                 }
             }
@@ -404,8 +408,8 @@ void UNsInvFlux::CalcInvFace()
             view.qLeft[ equation ] = ( * limf->qf1 )[ equation ].data();
             view.qRight[ equation ] = ( * limf->qf2 )[ equation ].data();
             if ( hipBoundaryHasSolid )
-                view.bcQ[ equation ] =
-                    hipBoundaryQ.data() + equation * nFaces;
+                view.bcQ[ equation ] = hipBoundaryQ.data()
+                    + equation * static_cast< int >( ug.nBFaces );
         }
         const bool needFaceTrace =
             ( std::getenv( "ONEFLOW_UNS_TRACE_FILE" ) != nullptr
