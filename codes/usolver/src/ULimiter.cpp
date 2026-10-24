@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "ULimiter.h"
+#include "HipProductionPolicy.h"
 #include "UnsGrid.h"
 #include "DataBase.h"
 #include "Zone.h"
@@ -379,11 +380,17 @@ void Limiter::CalcLimiter()
         // Fill the field directly instead of allocating and releasing the
         // min/max scratch pair once per equation; the values are identical
         // (exactly one, no arithmetic), so the CPU oracle is unchanged.
+        // Repeating the fill every stage was the only per-step host loop left in
+        // the residual chain, but it also repaired the ghosts that the interface
+        // exchange overwrites.  Skip the repeat only when that exchange no
+        // longer carries the field.
+        if ( noLimiterFieldFilled ) return;
         for ( int iEqu = 0; iEqu < limf->nEqu; ++ iEqu )
         {
             RealField & limiterField = ( * limf->limiter )[ iEqu ];
             std::fill( limiterField.begin(), limiterField.end(), one );
         }
+        noLimiterFieldFilled = HipUnusedInterfaceFieldsSkipped();
         return;
     }
 

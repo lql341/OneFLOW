@@ -102,6 +102,20 @@ inline bool HipPackedGradientExchangeEnabled()
     return HipProductionBackendSelected();
 }
 
+// Fields the legacy host exchange still carries but that no consumer reads on
+// the validated inviscid device path: the limiter is meaningless with ilim=0,
+// the time-step gradient and heat flux belong to the viscous/heat-flux models,
+// visl/vist are laminar/turbulent viscosities, and dq is the LUSGS increment.
+// Skipping both their pack and their download leaves the message layout intact
+// (the storage is still exchanged) and lets the limiter be filled once instead
+// of once per RK stage.
+inline bool HipUnusedInterfaceFieldsSkipped()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_UNUSED_INTERFACE" );
+    if ( value != nullptr && value[ 0 ] == '0' ) return false;
+    return HipProductionBackendSelected();
+}
+
 inline bool HipSkipHostFieldPackRequested()
 {
     const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK" );

@@ -106,11 +106,16 @@ namespace {
 bool SkipHostFieldPackFor( const std::string & fieldName )
 {
 #ifdef ONEFLOW_ENABLE_HIP
-    if ( fieldName != "dqdx" && fieldName != "dqdy" && fieldName != "dqdz" )
+    if ( vis_model.vismodel != 0 ) return false;
+    if ( fieldName == "dqdx" || fieldName == "dqdy" || fieldName == "dqdz" )
     {
-        return false;
+        return HipDeviceGradientInterfaceEnabled( false );
     }
-    return HipDeviceGradientInterfaceEnabled( vis_model.vismodel != 0 );
+    if ( ! HipUnusedInterfaceFieldsSkipped() ) return false;
+    return fieldName == "limiter" || fieldName == "dq"
+        || fieldName == "dtdx" || fieldName == "dtdy" || fieldName == "dtdz"
+        || fieldName == "heatflux"
+        || fieldName == "visl" || fieldName == "vist";
 #else
     (void) fieldName;
     return false;
