@@ -98,10 +98,14 @@ public:
 class PartitionGridTask : public ISimuTask
 {
 public:
-    void Execute( SimuContext& /*ctx*/ ) override
+    bool NeedsSystemMap() const override { return true; }
+
+    // The partition pipeline is already owned by the grid workflow: with
+    // gridObj=Partition it reads part_uns_file, METIS-partitions it into
+    // npartproc zones and writes part_file.  The task only has to dispatch it.
+    void Execute( SimuContext& ctx ) override
     {
-        throw std::runtime_error(
-            "Task \"Partition\" is registered but not implemented in this build." );
+        GenerateGrid( ctx.CaseDir() );
     }
 };
 
