@@ -34,6 +34,8 @@ License
 #include "AccelViews.h"
 #include "AccelRuntime.h"
 #include "HipProductionPolicy.h"
+#include "Ctrl.h"
+#include "NsRhs.h"
 #include "Parallel.h"
 #ifdef ONEFLOW_ENABLE_HIP
 #include "HipFluxBackend.h"
@@ -190,6 +192,17 @@ bool RetainHipStateForBoundary()
         || HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_INTERFACE" );
 }
 
+// The device state may own the newest q for a whole RK step without a host
+// mirror.  This is only valid for the steady explicit device chain: the
+// dual-time path shifts the host history levels every step and the CPU oracle
+// must stay authoritative, so it is excluded.
+bool UseDeviceAuthoritativeHipState()
+{
+    return HipDeviceAuthoritativeStateEnabled()
+        && HipProductionBackendSelected()
+        && ctrl.startStrategy != 2;
+}
+
 }
 
 void UNsUpdate::UpdateFlowField( int solverType )
@@ -211,17 +224,27 @@ void UNsUpdate::UpdateFlowField( int solverType )
         view.rkCoefficient = 1.0;
         view.cacheKey = grid;
         view.retainResidentState = RetainHipStateForBoundary();
+        const bool deviceAuthoritative =
+            view.retainResidentState && UseDeviceAuthoritativeHipState();
+        view.deviceAuthoritative = deviceAuthoritative;
         for ( int equation = 0; equation < view.nEquations; ++ equation )
         {
             view.primitive[ equation ] = ( * unsf.q )[ equation ].data();
         }
-        HipFluxBackend::Shared().UpdatePrimitiveState( view, true );
-        for ( int cId = 0; cId < ug.nCells; ++ cId )
+        // With a device-authoritative state the primitive field stays on the
+        // device and the host mirror is refreshed on demand; the 5-equation
+        // download per stage was the single largest fixed cost.
+        HipFluxBackend::Shared().UpdatePrimitiveState(
+            view, ! deviceAuthoritative );
+        if ( ! deviceAuthoritative )
         {
-            const Real density = ( * unsf.q )[ IDX::IR ][ cId ];
-            const Real pressure = ( * unsf.q )[ IDX::IP ][ cId ];
-            ( * unsf.tempr )[ 0 ][ cId ] =
-                pressure / ( nscom.statecoef * density );
+            for ( int cId = 0; cId < ug.nCells; ++ cId )
+            {
+                const Real density = ( * unsf.q )[ IDX::IR ][ cId ];
+                const Real pressure = ( * unsf.q )[ IDX::IP ][ cId ];
+                ( * unsf.tempr )[ 0 ][ cId ] =
+                    pressure / ( nscom.statecoef * density );
+            }
         }
         this->DumpUpdatedStateTrace();
         return;
@@ -250,6 +273,9 @@ void UNsUpdate::UpdateFlowField( int solverType )
 #ifdef ONEFLOW_ENABLE_HIP
     if ( HipProductionBackendSelected() )
     {
+        // A host write is only valid when the mirror is current; refresh it
+        // first if the device owned the field.
+        NsRefreshHostStateMirror();
         HipFluxBackend::Shared().NotifyHostFieldStateModified(
             Zone::GetUnsGrid() );
     }
@@ -262,6 +288,11 @@ void UNsUpdate::DumpUpdatedStateTrace()
 {
     const char * configured = std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" );
     if ( configured == nullptr || configured[ 0 ] == 0 ) return;
+#ifdef ONEFLOW_ENABLE_HIP
+    // The trace reads the host mirror; pull the complete field back first when
+    // the device owns it.
+    NsRefreshHostStateMirror();
+#endif
     const std::string tracePath = RankAwareTracePath( configured );
     if ( unsf.q == nullptr )
     {

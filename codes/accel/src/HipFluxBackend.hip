@@ -699,6 +699,21 @@ __global__ void PackGhostCellsKernel(
     packed[ index ] = cellState[ equation * totalCells + nCells + ghost ];
 }
 
+// Gather an arbitrary set of owned cells into an [equation][cell] buffer so a
+// host reader needs one blocking D2H instead of nEquations*cellCount copies.
+__global__ void PackStateCellsKernel(
+    const Real * cellState, const int * cellIds, int cellCount,
+    int nEquations, int totalCells, Real * packed )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nEquations * cellCount;
+    if ( index >= total ) return;
+    const int equation = index / cellCount;
+    const int slot = index - equation * cellCount;
+    packed[ index ] =
+        cellState[ equation * totalCells + cellIds[ slot ] ];
+}
+
 __global__ void InviscidSpectrumZeroKernel(
     Real * spectrum, int nCells )
 {
@@ -1437,6 +1452,19 @@ ResidentStateSync RefreshResidentPrimitiveState(
         ? ResidentStateSync::FullField
         : storage.residentContract.RequiredSync( fieldGeneration );
     if ( hostPointersChanged ) sync = ResidentStateSync::FullField;
+    if ( sync == ResidentStateSync::FullField
+         && owner != nullptr
+         && storage.residentContract.Resident()
+         && ! storage.residentContract.HostMirrorCurrent() )
+    {
+        // The device advanced the field and nobody pulled it back.  Uploading
+        // the host mirror now would overwrite the newest device state with an
+        // old field, so fail loudly instead: the host writer must refresh the
+        // mirror first (ResidentStateContract::NoteHostMirrorRefresh).
+        throw std::logic_error(
+            "host primitive mirror is stale; refresh it from the device "
+            "before uploading" );
+    }
     if ( sync == ResidentStateSync::FullField )
     {
         for ( int equation = 0; equation < nEquations; ++ equation )
@@ -1617,6 +1645,25 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
         view.nCells, view.nGhostCells, view.nEquations, view.q );
     if ( owner != nullptr && ResidentContractCheckRequested() )
     {
+        // The contract diagnostic compares the resident field against the host
+        // mirror.  With a device-authoritative state the mirror is stale by
+        // design, so pull it back first; otherwise the check would flag the
+        // intended one-sided ownership as a mismatch.
+        if ( ! storage->residentContract.HostMirrorCurrent() )
+        {
+            for ( int equation = 0; equation < view.nEquations; ++ equation )
+            {
+                AccelRuntime::Instance().Backend().Copy(
+                    const_cast< Real * >( view.q[ equation ] ),
+                    storage->cellState.Data()
+                        + static_cast< std::size_t >( equation ) * totalCells,
+                    static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+                    AccelCopyKind::DeviceToHost );
+                storage->cachedStateQ[ equation ] = view.q[ equation ];
+            }
+            storage->residentContract.NoteHostMirrorRefresh(
+                fieldGeneration );
+        }
         Real maximumDifference = 0.0;
         long mismatches = 0;
         long ownedMismatches = 0;
@@ -2075,30 +2122,38 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     const int nGhost = view.nBoundaryFaces;
     const std::size_t ghostValues =
         static_cast< std::size_t >( view.nEquations ) * nGhost;
-    if ( ghostValues > 0 )
+    const bool mirrorGhostQ = ! view.deviceAuthoritativeHostMirror;
+    const bool mirrorBcQ = view.bcQ[ 0 ] != nullptr;
+    if ( ghostValues > 0 && ( mirrorGhostQ || mirrorBcQ ) )
     {
-        storage->boundaryGhostPack.Resize( ghostValues );
         const int blockSizePack = 256;
-        hipLaunchKernelGGL(
-            PackGhostCellsKernel,
-            dim3( ( static_cast< int >( ghostValues ) + blockSizePack - 1 )
-                  / blockSizePack ),
-            dim3( blockSizePack ), 0, 0,
-            storage->cellState.Data(), view.nCells, totalCells,
-            view.nEquations, nGhost, storage->boundaryGhostPack.Data() );
-        CheckHip( hipGetLastError(), "ghost pack kernel launch" );
-        Real * ghostStaging = LocalPinnedStaging().Get( ghostValues );
-        AccelRuntime::Instance().Backend().Copy(
-            ghostStaging, storage->boundaryGhostPack.Data(),
-            ghostValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
-        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        if ( mirrorGhostQ )
         {
-            std::copy(
-                ghostStaging + static_cast< std::size_t >( equation ) * nGhost,
-                ghostStaging + static_cast< std::size_t >( equation + 1 ) * nGhost,
-                view.q[ equation ] + view.nCells );
+            storage->boundaryGhostPack.Resize( ghostValues );
+            hipLaunchKernelGGL(
+                PackGhostCellsKernel,
+                dim3( ( static_cast< int >( ghostValues ) + blockSizePack - 1 )
+                      / blockSizePack ),
+                dim3( blockSizePack ), 0, 0,
+                storage->cellState.Data(), view.nCells, totalCells,
+                view.nEquations, nGhost,
+                storage->boundaryGhostPack.Data() );
+            CheckHip( hipGetLastError(), "ghost pack kernel launch" );
+            Real * ghostStaging = LocalPinnedStaging().Get( ghostValues );
+            AccelRuntime::Instance().Backend().Copy(
+                ghostStaging, storage->boundaryGhostPack.Data(),
+                ghostValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
+            for ( int equation = 0; equation < view.nEquations; ++ equation )
+            {
+                std::copy(
+                    ghostStaging
+                        + static_cast< std::size_t >( equation ) * nGhost,
+                    ghostStaging
+                        + static_cast< std::size_t >( equation + 1 ) * nGhost,
+                    view.q[ equation ] + view.nCells );
+            }
         }
-        if ( view.bcQ[ 0 ] != nullptr )
+        if ( mirrorBcQ )
         {
             Real * faceStaging = LocalPinnedStaging().Get( ghostValues );
             AccelRuntime::Instance().Backend().Copy(
@@ -2114,9 +2169,11 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         }
     }
     }
-    // The device boundary kernel wrote the ghost cells and they were mirrored
-    // to the host, so both sides now reflect the same ghost epoch.
-    storage->residentContract.NoteDeviceGhostUpdate();
+    // The device boundary kernel wrote the ghost cells.  When they were
+    // mirrored, both sides now reflect the same ghost epoch; on the
+    // device-authoritative path only the device is current.
+    storage->residentContract.NoteDeviceGhostWrite(
+        ! view.deviceAuthoritativeHostMirror );
 }
 
 
@@ -2578,9 +2635,16 @@ void HipFluxBackend::UpdatePrimitiveState(
     // The contract may only claim "device matches host" when the owned-cell
     // mirror was actually refreshed and the solver is not about to write the
     // host state itself.  Otherwise force a full refresh on the next read.
+    // A device-authoritative update keeps the field on the device and marks the
+    // host mirror stale; host readers pull back exactly what they need.
     if ( view.retainResidentState && downloadToHost )
     {
         storage.residentContract.NoteDeviceFieldUpdate(
+            owner->FieldGeneration() );
+    }
+    else if ( view.retainResidentState && view.deviceAuthoritative )
+    {
+        storage.residentContract.NoteDeviceFieldAdvance(
             owner->FieldGeneration() );
     }
     else
@@ -2754,13 +2818,23 @@ void HipFluxBackend::UploadBoundaryState(
         binding->second->TopologyGeneration();
     // Packing only reads owned cells, so a pending ghost-only refresh does not
     // force a full upload here.  A changed owned-cell generation or a new
-    // binding does.
+    // binding does -- unless the contract shows the device already owns that
+    // newer generation (device-authoritative state update).  Without this the
+    // interface exchange would overwrite the resident field with the stale
+    // host mirror once per neighbor and per stage.
+    const bool generationSatisfied =
+        storage.residentContract.Resident()
+        && storage.residentContract.FieldGeneration() == fieldGeneration;
+    const bool deviceOwnsNewerField =
+        storage.residentContract.Resident()
+        && storage.residentContract.RequiredSync( fieldGeneration )
+            == ResidentStateSync::None;
     bool sameResidentState =
         storage.residentContract.Matches(
             ownerToken, topologyGeneration, nCells, nGhostCells,
             nEquations )
         && storage.residentContract.Resident()
-        && storage.residentContract.FieldGeneration() == fieldGeneration;
+        && ( generationSatisfied || deviceOwnsNewerField );
     for ( int equation = 0; equation < nEquations; ++ equation )
     {
         if ( components[ equation ] == nullptr )
@@ -3097,6 +3171,153 @@ bool HipFluxBackend::SyncResidentGhostStateFromHost(
     }
     contract.NoteGhostSync();
     return true;
+}
+
+bool HipFluxBackend::HostMirrorStale( const void * cacheKey ) const
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return false;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return false;
+    const ResidentStateContract & contract =
+        hipState->Gradient().residentContract;
+    return contract.Resident() && ! contract.HostMirrorCurrent();
+}
+
+bool HipFluxBackend::RefreshHostPrimitiveState(
+    const void * cacheKey,
+    int nCells,
+    int nGhostCells,
+    int nEquations,
+    Real * const * components )
+{
+    if ( cacheKey == nullptr || nCells <= 0 || nGhostCells < 0
+         || nEquations <= 0 || components == nullptr )
+    {
+        throw std::invalid_argument(
+            "invalid HIP host primitive refresh request" );
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return false;
+    Ns3DDeviceState * owner = binding->second;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        owner->BackendState() );
+    if ( hipState == nullptr ) return false;
+    HipGradientStorage & storage = hipState->Gradient();
+    ResidentStateContract & contract = storage.residentContract;
+    if ( ! contract.Matches(
+             owner->OwnerToken(), owner->TopologyGeneration(),
+             nCells, nGhostCells, nEquations )
+         || ! contract.Resident() )
+    {
+        return false;
+    }
+    if ( contract.HostMirrorCurrent() ) return false;
+
+    const int totalCells = nCells + nGhostCells;
+    if ( storage.cellState.Size()
+         < static_cast< std::size_t >( nEquations ) * totalCells )
+    {
+        return false;
+    }
+    { ScopedStageTimer refreshTimer( "host_mirror_refresh" );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( components[ equation ] == nullptr )
+        {
+            throw std::invalid_argument(
+                "HIP host primitive refresh component is null" );
+        }
+        AccelRuntime::Instance().Backend().Copy(
+            components[ equation ],
+            storage.cellState.Data()
+                + static_cast< std::size_t >( equation ) * totalCells,
+            static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+            AccelCopyKind::DeviceToHost );
+        storage.cachedStateQ[ equation ] = components[ equation ];
+    }
+    }
+    contract.NoteHostMirrorRefresh( owner->FieldGeneration() );
+    return true;
+}
+
+void HipFluxBackend::MirrorPrimitiveCellsToHost(
+    const void * cacheKey,
+    int nEquations,
+    const int * cellIds,
+    int cellCount,
+    Real * const * components )
+{
+    if ( cacheKey == nullptr || nEquations <= 0 || cellIds == nullptr
+         || cellCount <= 0 || components == nullptr )
+    {
+        return;
+    }
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return;
+    HipGradientStorage & storage = hipState->Gradient();
+    const ResidentStateContract & contract = storage.residentContract;
+    if ( ! contract.Resident() || contract.HostMirrorCurrent() ) return;
+    const int totalCells = contract.Cells() + contract.GhostCells();
+    if ( totalCells <= 0
+         || storage.cellState.Size()
+             < static_cast< std::size_t >( nEquations ) * totalCells )
+    {
+        return;
+    }
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        if ( components[ equation ] == nullptr ) return;
+    }
+    const std::size_t packedValues =
+        static_cast< std::size_t >( nEquations ) * cellCount;
+    storage.stateMirrorPack.Resize( packedValues );
+    storage.stateMirrorIds.CopyFromHost( cellIds, cellCount );
+    const int blockSize = 256;
+    hipLaunchKernelGGL(
+        PackStateCellsKernel,
+        dim3( ( static_cast< int >( packedValues ) + blockSize - 1 )
+              / blockSize ),
+        dim3( blockSize ), 0, 0,
+        storage.cellState.Data(), storage.stateMirrorIds.Data(),
+        cellCount, nEquations, totalCells,
+        storage.stateMirrorPack.Data() );
+    CheckHip( hipGetLastError(), "state cell pack kernel launch" );
+    // One blocking D2H covers every equation; the scatter below is host work.
+    Real * staging = LocalPinnedStaging().Get( packedValues );
+    AccelRuntime::Instance().Backend().Copy(
+        staging, storage.stateMirrorPack.Data(),
+        packedValues * sizeof( Real ), AccelCopyKind::DeviceToHost );
+    for ( int equation = 0; equation < nEquations; ++ equation )
+    {
+        const Real * source =
+            staging + static_cast< std::size_t >( equation ) * cellCount;
+        Real * target = components[ equation ];
+        for ( int index = 0; index < cellCount; ++ index )
+        {
+            const int cell = cellIds[ index ];
+            if ( cell < 0 || cell >= contract.Cells() )
+            {
+                throw std::logic_error(
+                    "HIP host mirror cell is outside the owned range" );
+            }
+            target[ cell ] = source[ index ];
+        }
+    }
+}
+
+void HipFluxBackend::MarkResidentHostMirrorStale( const void * cacheKey )
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr ) return;
+    hipState->Gradient().residentContract.NoteHostMirrorStale();
 }
 
 

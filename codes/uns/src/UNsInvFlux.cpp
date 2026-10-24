@@ -260,11 +260,14 @@ void UNsInvFlux::CalcInvFace()
         // device-packed path the interface faces travel through the packed
         // buffer instead, which leaves the host consumers (aero forces,
         // boundary-gradient store, field dumps) as the only readers, so the
-        // mirror is requested on those steps only.
+        // mirror is requested on those steps only.  The pressure-coefficient
+        // task runs once per outer step (InnerOk) independently of nForceSave
+        // and reads the wall-adjacent gradient, so it counts as a reader too.
         const bool hostMirrorReaderThisStep =
             ! HipGradientHostMirrorOnDemand()
             || ctrl.debugFieldDump != 0
             || Iteration::ForceOk()
+            || Iteration::InnerOk()
             || Iteration::outerSteps + 1 >= Iteration::maxSteps;
         const bool mirrorBoundaryGradient =
             packedExchange

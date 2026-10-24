@@ -192,5 +192,53 @@ TEST( ResidentStateContract, InvalidateDropsEverything )
     EXPECT_FALSE( contract.Resident() );
     EXPECT_EQ( contract.HostGhostEpoch(), 0u );
     EXPECT_EQ( contract.DeviceGhostEpoch(), 0u );
+    EXPECT_FALSE( contract.HostMirrorCurrent() );
     EXPECT_EQ( contract.RequiredSync( 9 ), ResidentStateSync::FullField );
+}
+
+TEST( ResidentStateContract, DeviceAdvanceMakesTheMirrorStale )
+{
+    ResidentStateContract contract = MakeBound();
+    contract.NoteFullFieldSync( 1 );
+    EXPECT_TRUE( contract.HostMirrorCurrent() );
+
+    // A device RK stage advanced the owned cells without a download.
+    contract.NoteDeviceFieldAdvance( 2 );
+    EXPECT_TRUE( contract.Resident() );
+    EXPECT_FALSE( contract.HostMirrorCurrent() );
+    // The device is current, so no upload is requested.
+    EXPECT_EQ( contract.RequiredSync( 2 ), ResidentStateSync::None );
+}
+
+TEST( ResidentStateContract, HostMirrorRefreshRestoresBothSides )
+{
+    ResidentStateContract contract = MakeBound();
+    contract.NoteFullFieldSync( 1 );
+    contract.NoteDeviceFieldAdvance( 2 );
+    contract.NoteDeviceGhostUpdate();
+
+    contract.NoteHostMirrorRefresh( 2 );
+    EXPECT_TRUE( contract.HostMirrorCurrent() );
+    EXPECT_FALSE( contract.HostGhostPending() );
+    EXPECT_EQ( contract.RequiredSync( 2 ), ResidentStateSync::None );
+}
+
+TEST( ResidentStateContract, GhostSyncKeepsStaleOwnedCellsStale )
+{
+    ResidentStateContract contract = MakeBound();
+    contract.NoteFullFieldSync( 1 );
+    contract.NoteDeviceFieldAdvance( 2 );
+    contract.NoteHostGhostMutation();
+    contract.NoteGhostSync();
+    // Uploading ghosts does not make the old owned-cell mirror current.
+    EXPECT_FALSE( contract.HostMirrorCurrent() );
+}
+
+TEST( ResidentStateContract, DeviceFieldUpdateKeepsMirrorCurrent )
+{
+    ResidentStateContract contract = MakeBound();
+    contract.NoteFullFieldSync( 1 );
+    contract.NoteDeviceFieldUpdate( 2 );
+    EXPECT_TRUE( contract.HostMirrorCurrent() );
+    EXPECT_EQ( contract.RequiredSync( 2 ), ResidentStateSync::None );
 }

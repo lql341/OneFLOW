@@ -56,6 +56,13 @@ enum class ResidentStateSync
 // `hostGhostEpoch` when it rewrites ghost cells, the device records the epoch
 // it currently reflects in `deviceGhostEpoch`.  A ghost mismatch only requires
 // an O(nGhostCells) refresh instead of a full field upload.
+//
+// The contract also tracks *which side owns the newest field*.  A device RK
+// stage that does not download its result leaves the device current and the
+// host mirror stale; `HostMirrorCurrent()` is false from then until a host
+// reader pulls the field back with `NoteHostMirrorRefresh()`.  Host code must
+// not write the mirror while it is stale: an upload of stale host data would
+// silently overwrite the device state.
 class ResidentStateContract
 {
 public:
@@ -71,6 +78,7 @@ public:
         nEquations_ = 0;
         bound_ = false;
         resident_ = false;
+        hostMirrorCurrent_ = false;
     }
 
     // Bind the contract to one state owner.  A different owner, topology
@@ -100,6 +108,7 @@ public:
             hostGhostEpoch_ = 0;
             deviceGhostEpoch_ = 0;
             resident_ = false;
+            hostMirrorCurrent_ = false;
         }
         ownerToken_ = ownerToken;
         topologyGeneration_ = topologyGeneration;
@@ -111,6 +120,14 @@ public:
 
     bool Bound() const noexcept { return bound_; }
     bool Resident() const noexcept { return resident_; }
+
+    // True when the host mirror holds the same field as the resident device
+    // state.  False after a device-only advance (device authoritative), after
+    // an invalidation, or before the first upload.
+    bool HostMirrorCurrent() const noexcept
+    {
+        return resident_ && hostMirrorCurrent_;
+    }
 
     bool Matches( const void * ownerToken,
                   std::uint64_t topologyGeneration,
@@ -165,9 +182,11 @@ public:
         fieldGeneration_ = hostFieldGeneration;
         deviceGhostEpoch_ = hostGhostEpoch_;
         resident_ = true;
+        hostMirrorCurrent_ = true;
     }
 
-    // The device received only the ghost region.
+    // The device received only the ghost region.  The owned cells are
+    // unchanged, so the mirror keeps whatever currency it already had.
     void NoteGhostSync() noexcept
     {
         deviceGhostEpoch_ = hostGhostEpoch_;
@@ -187,14 +206,49 @@ public:
     {
         fieldGeneration_ = hostFieldGeneration;
         resident_ = true;
+        hostMirrorCurrent_ = true;
     }
 
-    // A device kernel wrote ghost cells itself (interface unpack or device
-    // boundary model) and the host mirror was refreshed from the device.
-    void NoteDeviceGhostUpdate() noexcept
+    // A device kernel writes ghost cells itself (interface unpack or device
+    // boundary model).  `hostGhostsMirrored` says whether the host mirror was
+    // updated with the same values; when it was not, the mirror is stale.
+    void NoteDeviceGhostWrite( bool hostGhostsMirrored ) noexcept
     {
         deviceGhostEpoch_ = hostGhostEpoch_;
         resident_ = true;
+        if ( ! hostGhostsMirrored ) hostMirrorCurrent_ = false;
+    }
+
+    void NoteDeviceGhostUpdate() noexcept
+    {
+        NoteDeviceGhostWrite( true );
+    }
+
+    // The device holds cells the host mirror does not reflect (for example a
+    // ghost write that was not copied back).
+    void NoteHostMirrorStale() noexcept
+    {
+        if ( resident_ ) hostMirrorCurrent_ = false;
+    }
+
+    // A device kernel advanced the owned cells and the result was *not*
+    // downloaded: the device is now authoritative and the host mirror is
+    // stale until a host reader refreshes it.
+    void NoteDeviceFieldAdvance( std::uint64_t hostFieldGeneration ) noexcept
+    {
+        fieldGeneration_ = hostFieldGeneration;
+        resident_ = true;
+        hostMirrorCurrent_ = false;
+    }
+
+    // A host reader pulled the complete resident field back into the host
+    // mirror (owned + ghost cells).  Both sides agree again.
+    void NoteHostMirrorRefresh( std::uint64_t hostFieldGeneration ) noexcept
+    {
+        fieldGeneration_ = hostFieldGeneration;
+        deviceGhostEpoch_ = hostGhostEpoch_;
+        resident_ = true;
+        hostMirrorCurrent_ = true;
     }
 
 private:
@@ -208,6 +262,7 @@ private:
     int nEquations_ = 0;
     bool bound_ = false;
     bool resident_ = false;
+    bool hostMirrorCurrent_ = false;
 };
 
 EndNameSpace

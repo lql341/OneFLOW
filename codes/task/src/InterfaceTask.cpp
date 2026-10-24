@@ -577,6 +577,13 @@ void ExchangeHipInterfaceQ(
                 ? BoundaryTransferMode::DeviceDirect
                 : BoundaryTransferMode::HostStaged,
             targetEndpointKey );
+        // The device ghosts are newer than the host mirror unless the paired
+        // host exchange rewrote the same cells.  Publish that so the next host
+        // reader pulls the field back instead of trusting a stale mirror.
+        if ( HostInterfaceSkipped() )
+        {
+            backend.MarkResidentHostMirrorStale( targetKey );
+        }
     }
     ZoneState::zid = previousZone;
     (void) context;

@@ -122,6 +122,45 @@ inline bool HipSkipHostFieldPackRequested()
     return value == nullptr || value[ 0 ] != '0';
 }
 
+// Device-authoritative primitive state.
+//
+// The explicit RK device chain (gradient, reconstruction, residual, state
+// update, boundary, local timestep) already keeps q on the device for the whole
+// stage; only the host mirror forced a 5-equation D2H per stage.  With this
+// switch the device owns the newest q: the state update no longer downloads
+// the field, the boundary stage no longer copies ghost q/bc_q back, and the
+// host-only gamma/temperature loops are skipped.  Host readers (aerodynamic
+// force, pressure coefficient, restart, visualization, diagnostics) pull back
+// exactly what they need: the boundary-adjacent cells per step, the complete
+// field on output steps.  The host mirror must never be written while it is
+// stale; the backend rejects such an upload instead of silently restoring an
+// old field.
+inline bool HipDeviceAuthoritativeStateEnabled()
+{
+    const char * value =
+        std::getenv( "ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q" );
+    if ( value != nullptr ) return value[ 0 ] != '0';
+    return HipProductionBackendSelected();
+}
+
+// Diagnostic bisection switch: keep the per-stage ghost q D2H even when the
+// device-authoritative state is on (restores the pre-round host ghost mirror
+// at the cost of the transfer).
+inline bool HipGhostQMirrorForced()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_GHOST_Q_MIRROR" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
+// Diagnostic bisection switch: skip the per-step boundary-adjacent q mirror
+// the aerodynamic force and pressure coefficient read.
+inline bool HipBoundaryStateMirrorEnabled()
+{
+    const char * value =
+        std::getenv( "ONEFLOW_HIP_BOUNDARY_STATE_MIRROR" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
 // The device gradient interface path owns dqdx/dqdy/dqdz on both sides: the
 // send side is packed once per exchange round, and the receive side is
 // unpacked on the device from a buffer uploaded once per round.  Outside this

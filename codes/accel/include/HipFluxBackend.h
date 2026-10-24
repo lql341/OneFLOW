@@ -145,6 +145,9 @@ struct HipGradientStorage
     DeviceBuffer< Real > boundaryFaceState;
     // Packed [equation][ghost cell] slice used for a single D2H per stage.
     DeviceBuffer< Real > boundaryGhostPack;
+    // Packed [equation][owned cell] slice for on-demand host readers.
+    DeviceBuffer< Real > stateMirrorPack;
+    DeviceBuffer< int > stateMirrorIds;
     DeviceBuffer< int > boundaryType;
     DeviceBuffer< Real > inflow;
     DeviceBuffer< Real > boundaryXNormal;
@@ -464,6 +467,35 @@ public:
         Real tolerance,
         Real * maxAbsoluteDifference,
         long * mismatchedValues );
+
+    // True when the resident device state is newer than the host mirror, i.e.
+    // the device is authoritative for q and host readers must pull the values
+    // back before using them.
+    bool HostMirrorStale( const void * cacheKey ) const;
+
+    // Pull the complete resident field (owned + ghost cells) back into the
+    // host q mirror.  No-op when the mirror is already current.  Returns true
+    // when values were transferred.
+    bool RefreshHostPrimitiveState(
+        const void * cacheKey,
+        int nCells,
+        int nGhostCells,
+        int nEquations,
+        Real * const * components );
+
+    // Pull the resident field at the given owned cells back into the host
+    // mirror.  Used by the per-step host readers that only touch
+    // boundary-adjacent cells (aerodynamic force, pressure coefficient).
+    void MirrorPrimitiveCellsToHost(
+        const void * cacheKey,
+        int nEquations,
+        const int * cellIds,
+        int cellCount,
+        Real * const * components );
+
+    // The device wrote cells the host mirror does not reflect (an interface
+    // unpack whose paired host exchange was skipped).
+    void MarkResidentHostMirrorStale( const void * cacheKey );
 
 private:
     DeviceBuffer< Real > qLeft_;

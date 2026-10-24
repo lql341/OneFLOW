@@ -259,6 +259,10 @@ struct BoundaryStateView
     // backend falls back to the host primitive arrays during initialization or
     // after any host-only update.
     bool preferResidentState = false;
+    // The device state owns the newest q and the host mirror is stale by
+    // design.  The backend then keeps the ghost cells on the device instead of
+    // copying them back to the host every RK stage.
+    bool deviceAuthoritativeHostMirror = false;
 };
 
 inline void ValidateBoundaryStateView( const BoundaryStateView & view )
@@ -574,6 +578,10 @@ struct CellStateUpdateView
     // Reuse the device timestep produced by the preceding timestep stage.
     // The default preserves the host-computed/uploaded path.
     bool preferResidentTimeStep = false;
+    // The backend may keep the updated field on the device without mirroring
+    // it back to the host.  Requires retainResidentState; host readers are
+    // responsible for pulling the cells they need.
+    bool deviceAuthoritative = false;
 };
 
 inline void ValidateCellStateUpdateView(
@@ -597,6 +605,12 @@ inline void ValidateCellStateUpdateView(
             throw std::invalid_argument(
                 "cell state update view has a missing primitive component" );
         }
+    }
+    if ( view.deviceAuthoritative && ! view.retainResidentState )
+    {
+        throw std::invalid_argument(
+            "device-authoritative state update requires a retained resident "
+            "state" );
     }
 }
 

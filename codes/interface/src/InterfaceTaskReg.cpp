@@ -111,6 +111,17 @@ bool SkipHostFieldPackFor( const std::string & fieldName )
     {
         return HipDeviceGradientInterfaceEnabled( false );
     }
+    // When the device owns q, the host q/tempr/gama ghosts are stale and the
+    // exchange itself runs through the resident device pack.  Packing and
+    // downloading stale host copies is pure cost (and the host q pack used to
+    // cost several milliseconds per step).
+    if ( HipSkipHostInterfaceExchange()
+         && HipDeviceAuthoritativeStateEnabled()
+         && ( fieldName == "q" || fieldName == "tempr"
+              || fieldName == "gama" ) )
+    {
+        return true;
+    }
     if ( ! HipUnusedInterfaceFieldsSkipped() ) return false;
     return fieldName == "limiter" || fieldName == "dq"
         || fieldName == "dtdx" || fieldName == "dtdy" || fieldName == "dtdz"

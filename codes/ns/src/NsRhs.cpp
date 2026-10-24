@@ -34,6 +34,11 @@ License
 #include "UNsVisFlux.h"
 #include "UNsUnsteady.h"
 #include "Ctrl.h"
+#include "FieldWrap.h"
+#include "HipProductionPolicy.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 
 #include <iostream>
 #include <memory>
@@ -98,6 +103,63 @@ void NsCalcGamaT( int flag )
 			}
 		}
 	}
+}
+
+void NsRefreshHostStateMirror()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( ! HipProductionBackendSelected() ) return;
+    UnsGrid * grid = Zone::GetUnsGrid();
+    if ( grid == nullptr ) return;
+    MRField * q = GetFieldPointer< MRField >( grid, "q" );
+    if ( q == nullptr ) return;
+    const int nEquations = static_cast< int >( q->GetNEqu() );
+    if ( nEquations <= 0 || nEquations > 5 ) return;
+    ug.Init();
+    const int nCells = ug.nCells;
+    const int nGhostCells = ug.nTCell - nCells;
+    Real * components[ 5 ] = {};
+    for ( int equation = 0; equation < nEquations; ++ equation )
+        components[ equation ] = ( * q )[ equation ].data();
+    if ( ! HipFluxBackend::Shared().RefreshHostPrimitiveState(
+             grid, nCells, nGhostCells, nEquations, components ) )
+    {
+        return;
+    }
+    // The host-only derived fields (constant gamma, temperature) were skipped
+    // while the device owned q; rebuild them from the refreshed mirror so the
+    // restart/visualization output is self-consistent.
+    NsCalcGamaT( F_INNER );
+    if ( nGhostCells > 0 ) NsCalcGamaT( F_GHOST );
+#else
+    return;
+#endif
+}
+
+void NsMirrorHostBoundaryState()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    if ( ! HipDeviceAuthoritativeStateEnabled() ) return;
+    if ( ! HipBoundaryStateMirrorEnabled() ) return;
+    UnsGrid * grid = Zone::GetUnsGrid();
+    if ( grid == nullptr || grid->nBFaces <= 0 ) return;
+    MRField * q = GetFieldPointer< MRField >( grid, "q" );
+    if ( q == nullptr ) return;
+    const int nEquations = static_cast< int >( q->GetNEqu() );
+    if ( nEquations <= 0 || nEquations > 5 ) return;
+    ug.Init();
+    if ( ug.lcf == nullptr ) return;
+    Real * components[ 5 ] = {};
+    for ( int equation = 0; equation < nEquations; ++ equation )
+        components[ equation ] = ( * q )[ equation ].data();
+    // Every boundary face's owner cell is a superset of the wall-adjacent cells
+    // the force/coefficient readers use.  Duplicate ids are harmless (the
+    // same value is written twice) and avoid a sort on the per-step path.
+    HipFluxBackend::Shared().MirrorPrimitiveCellsToHost(
+        grid, nEquations, ug.lcf->data(), grid->nBFaces, components );
+#else
+    return;
+#endif
 }
 
 void NsCalcRHS()

@@ -41,6 +41,7 @@ License
 #include "VisGrad.h"
 #include "FieldWrap.h"
 #include "NsCom.h"
+#include "NsRhs.h"
 #include "Parallel.h"
 #include "Iteration.h"
 #include "TextFileParser.h"
@@ -221,6 +222,14 @@ void CalcAeroForce(int idump_pres)
 
 	int nSolidCells = GetNumberOfSolidCells( *grid );
 	if (nSolidCells == 0) return;
+
+#ifdef ONEFLOW_ENABLE_HIP
+	// With a device-authoritative HIP state the host q mirror is stale; pull
+	// back the boundary-adjacent owned cells this loop reads (q at the owner
+	// cell of every boundary face, plus the wall-adjacent gradient mirrored by
+	// the device gradient stage).  No-op on the CPU path.
+	NsMirrorHostBoundaryState();
+#endif
 
 	if (idump_pres == 1)
 	{

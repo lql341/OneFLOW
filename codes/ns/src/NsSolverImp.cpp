@@ -173,12 +173,29 @@ void SyncHipBoundaryGhostFromHost()
     backend.SyncResidentGhostStateFromHost(
         grid, grid->nCells, nGhostCells, nEquations, components );
 }
+
+// True when this step runs the device-authoritative chain: the device owns the
+// newest q and the host mirror is only refreshed on demand.
+bool HipDeviceAuthoritativeHostMirror()
+{
+    return HipDeviceAuthoritativeStateEnabled()
+        && HipProductionBackendSelected()
+        && ctrl.startStrategy != 2;
+}
 #endif
 
 void CalcHipBoundary()
 {
 #ifdef ONEFLOW_ENABLE_HIP
     UnsGrid * grid = Zone::GetUnsGrid();
+    // Only skip the per-stage ghost mirror once the device really owns a newer
+    // field than the host.  During initialization (and before the first
+    // device advance) the host mirror is the only complete source, and the
+    // first full upload of the bound state must carry valid ghost cells.
+    const bool deviceAuthoritative =
+        HipDeviceAuthoritativeHostMirror()
+        && HipFluxBackend::Shared().HostMirrorStale( grid )
+        && ! HipGhostQMirrorForced();
     BoundaryStateView view;
     {
     ScopedStageTimer prepTimer( "bnd_prep" );
@@ -200,6 +217,11 @@ void CalcHipBoundary()
     view.faceOuterNormal = nscom.faceOuterNormal;
     view.cacheKey = grid;
     view.preferResidentState = true;
+    // The device owns the newest q: the ghost cells stay on the device while
+    // the wall state keeps its per-stage host mirror (the reconstruction
+    // consumes that host copy).  The transfer can be forced back on for
+    // bisection/diagnostics.
+    view.deviceAuthoritativeHostMirror = deviceAuthoritative;
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         view.q[ equation ] = ( * unsf.q )[ equation ].data();
@@ -285,9 +307,28 @@ void NsCalcBoundary( StringField & data )
             "ONEFLOW_ENABLE_UNS_HIP_BOUNDARY=1 is unsupported for the "
             "current solver, boundary set, or runtime" );
     }
+#ifdef ONEFLOW_ENABLE_HIP
+    // With a device-authoritative q the host mirror is stale, so the host
+    // gamma/temperature fields would be rebuilt from old values once per
+    // stage.  The device path uses the solver gamma constant, and the derived
+    // host fields are rebuilt when a host reader refreshes the mirror.
+    const bool skipHostDerivedFields =
+        requested && HipDeviceAuthoritativeHostMirror()
+        && HipFluxBackend::Shared().HostMirrorStale( Zone::GetUnsGrid() );
+#else
+    const bool skipHostDerivedFields = false;
+#endif
     {
         ScopedStageTimer timer( "boundary_gamma_inner" );
-        NsCalcGamaT( F_INNER );
+        if ( ! skipHostDerivedFields )
+        {
+#ifdef ONEFLOW_ENABLE_HIP
+            // The host model (and the derived gamma/temperature fields) reads
+            // the host q mirror; make sure it is current first.
+            if ( HipBackendSelected() ) NsRefreshHostStateMirror();
+#endif
+            NsCalcGamaT( F_INNER );
+        }
     }
     if ( vis_model.vismodel != 0 )
     {
@@ -309,7 +350,7 @@ void NsCalcBoundary( StringField & data )
     }
     {
         ScopedStageTimer timer( "boundary_gamma_ghost" );
-        NsCalcGamaT( F_GHOST );
+        if ( ! skipHostDerivedFields ) NsCalcGamaT( F_GHOST );
     }
     if ( vis_model.vismodel != 0 )
     {
