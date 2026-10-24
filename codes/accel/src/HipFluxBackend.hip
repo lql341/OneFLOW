@@ -1932,7 +1932,11 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     }
 
     const int totalCells = view.nCells + view.nGhostCells;
-    storage->cellState.Resize( view.nEquations * totalCells );
+    {
+    ScopedStageTimer resizeTimer( "bnd_resize" );
+    storage->cellState.Resize(
+        static_cast< std::size_t >( view.nEquations ) * totalCells );
+    }
     const void * ownerToken =
         owner != nullptr ? owner->OwnerToken() : view.cacheKey;
     const std::uint64_t fieldGeneration =
@@ -1943,6 +1947,7 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     // resident q only while the generation/ghost contract says it is current.
     if ( view.preferResidentState )
     {
+        ScopedStageTimer refreshTimer( "bnd_refresh" );
         RefreshResidentPrimitiveState(
             * storage, owner, ownerToken, topologyGeneration,
             fieldGeneration, view.nCells, view.nGhostCells,
@@ -1982,6 +1987,7 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         && storage->cachedBoundaryFaces == view.nBoundaryFaces;
     if ( ! boundaryGeometryMatches )
     {
+        ScopedStageTimer geometryTimer( "bnd_geometry" );
         storage->boundaryXNormal.CopyFromHost(
             view.xNormal, view.nBoundaryFaces );
         storage->boundaryYNormal.CopyFromHost(
@@ -2008,14 +2014,27 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         storage->cachedBoundaryType = view.boundaryType;
         storage->cachedBoundaryFaces = view.nBoundaryFaces;
         storage->boundaryGeometryCacheValid = true;
+        static unsigned long long geometryMisses = 0;
+        ++ geometryMisses;
+        if ( geometryMisses == 1 )
+        {
+            std::cout << "HIP_BOUNDARY_GEOMETRY_REUPLOAD first miss"
+                      << " valid=" << storage->boundaryGeometryCacheValid
+                      << std::endl;
+        }
     }
     // Inflow is a solver field and may change between calls; keep this copy
     // unconditional even when the static boundary metadata is cached.
+    {
+    ScopedStageTimer staticTimer( "bnd_static_upload" );
     storage->inflow.CopyFromHost( view.inflow, view.nEquations );
     storage->boundaryFaceState.Resize(
         view.nEquations * view.nBoundaryFaces );
+    }
 
     const int blockSize = 256;
+    {
+    ScopedStageTimer kernelTimer( "bnd_kernel" );
     hipLaunchKernelGGL(
         UpdateBoundaryPrimitiveKernel,
         dim3( ( view.nBoundaryFaces + blockSize - 1 ) / blockSize ),
@@ -2032,7 +2051,10 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
         view.nBoundaryFaces, view.nEquations, view.gamma );
     CheckHip( hipGetLastError(), "boundary kernel launch" );
     CheckHip( hipDeviceSynchronize(), "boundary kernel synchronize" );
+    }
 
+    {
+    ScopedStageTimer ghostCopyTimer( "bnd_ghost_copy" );
     for ( int equation = 0; equation < view.nEquations; ++ equation )
     {
         AccelRuntime::Instance().Backend().Copy(
@@ -2050,6 +2072,7 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
                 view.nBoundaryFaces * sizeof( Real ),
                 AccelCopyKind::DeviceToHost );
         }
+    }
     }
     // The device boundary kernel wrote the ghost cells and they were mirrored
     // to the host, so both sides now reflect the same ghost epoch.

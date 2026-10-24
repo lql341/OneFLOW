@@ -179,9 +179,11 @@ void CalcHipBoundary()
 {
 #ifdef ONEFLOW_ENABLE_HIP
     UnsGrid * grid = Zone::GetUnsGrid();
+    BoundaryStateView view;
+    {
+    ScopedStageTimer prepTimer( "bnd_prep" );
     ug.Init();
     unsf.Init();
-    BoundaryStateView view;
     view.nCells = ug.nCells;
     view.nGhostCells = ug.nTCell - ug.nCells;
     view.nBoundaryFaces = ug.nBFaces;
@@ -204,7 +206,11 @@ void CalcHipBoundary()
         if ( unsf.bc_q != nullptr )
             view.bcQ[ equation ] = ( * unsf.bc_q )[ equation ].data();
     }
+    }
+    {
+    ScopedStageTimer backendTimer( "bnd_backend" );
     HipFluxBackend::Shared().UpdateBoundaryState( view );
+    }
 #else
     throw std::runtime_error(
         "HIP boundary update was requested without HIP support" );
