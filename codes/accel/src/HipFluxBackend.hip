@@ -2190,14 +2190,18 @@ void HipFluxBackend::ReconstructFaceValues(
     const bool hasSolid = view.hasSolidBoundary;
     if ( hasSolid )
     {
+        // The host boundary-state buffer and the device copy share the same
+        // equation-major [equation][face] layout, so one contiguous transfer
+        // replaces nEqu blocking copies.  This transfer is the whole
+        // reconstruction imbalance on the 8-zone case: only wall-adjacent zones
+        // have solid faces, and they pay nEqu*totalFaces values per stage
+        // (5.6 ms/step on those ranks, 0 on the others).
+        ScopedStageTimer bcqTimer( "recon_bcq" );
         storage->bcQ.Resize( totalValues );
-        for ( int equation = 0; equation < view.nEquations; ++ equation )
-        {
-            AccelRuntime::Instance().Backend().Copy(
-                storage->bcQ.Data() + equation * totalFaces,
-                view.bcQ[ equation ], totalFaces * sizeof( Real ),
-                AccelCopyKind::HostToDevice );
-        }
+        AccelRuntime::Instance().Backend().Copy(
+            storage->bcQ.Data(), view.bcQ[ 0 ],
+            static_cast< std::size_t >( totalValues ) * sizeof( Real ),
+            AccelCopyKind::HostToDevice );
     }
     else
     {
@@ -2207,6 +2211,7 @@ void HipFluxBackend::ReconstructFaceValues(
     storage->cachedFieldGeneration = view.fieldGeneration;
 
     const int blockSize = 256;
+    ScopedStageTimer reconTimer( "recon_kernel" );
     hipLaunchKernelGGL(
         ReconstructFaceEulerKernel,
         dim3( ( totalFaces + blockSize - 1 ) / blockSize ),

@@ -48,9 +48,9 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
     return totals;
 }
 
-std::array< CategoryTotal, 54 > & Totals()
+std::array< CategoryTotal, 56 > & Totals()
 {
-    static std::array< CategoryTotal, 54 > totals = {{
+    static std::array< CategoryTotal, 56 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -105,6 +105,8 @@ std::array< CategoryTotal, 54 > & Totals()
         { "interface_ghost_sync", 0.0 },
         { "post_upload", 0.0 },
         { "post_download", 0.0 },
+        { "recon_bcq", 0.0 },
+        { "recon_kernel", 0.0 },
     }};
     return totals;
 }
