@@ -9,7 +9,7 @@
 状态更新不再回写 host，边界 ghost/墙面状态按需回拉，host-only 派生量按需重建。
 同机 paired A/B（同二进制、8 zone/8 rank/1 DCU、1000 步、50 步 warmup）：
 **38.26 → 31.64 ms/step（−6.62 ms，−17.3%，1.21×）**。门禁全绿（3 步 trace + resident
-24/0/0、200 步跨后端 residual `2.33e-18`、aero `0.0`）。
+24/0/0、200 步跨后端 residual `2.33e-18`、aero `0.0`、CPU 五算例 normal/strict 各 5/5）。
 
 ## 1. 本轮改了什么（全部有门禁）
 
@@ -113,5 +113,19 @@ python3 $SRC/test/test.py "mpirun -np 1" $BIN \
     $SRC/test/suites/cpu-serial.txt $SRC/test/baselines/residual-baseline.json <tol>
 ```
 
-`/public/home/luql/.scnet-hpc/oneflow/scripts/{devq-gate,devqab,cpureg}.slurm` 是本轮
+`/public/home/luql/.scnet-hpc/oneflow/scripts/{devq-gate,devqab,cpureg3}.slurm` 是本轮
 用过的作业脚本（集群侧，不入库）。
+
+CPU 五算例注意：`test/suites/cpu-serial.txt` 里的条目带 `cfd/` 前缀，而归档脚本里
+「保留 34950 那个算例的 restart/」的判断写的是裸名，会误删 `restart/flow.dat`，
+导致该算例报 `could not open .../restart/flow.dat`。用 `basename` 比较即可，修好后
+normal/strict 都是 5/5。
+
+## 6. 本轮门禁结果（2026-10-25）
+
+| 门禁 | 结果 |
+|---|---|
+| 3 步多区 trace（全 HIP stage 显式开）+ resident contract | `MULTIZONE_TRACE_PASS ranks=8 steps=3 ... resident_contract=1`；`RESIDENT_STATE_CONTRACT records=24 failures=0 max_abs_diff=0`；CPU↔HIP stage trace `max_abs=1.8e-13` |
+| 200 步跨后端 | `CROSS_BACKEND_RESIDUAL_PASS`：residual `2.331035e-18`（row 2, field 6）、aero `0.0` |
+| CPU 五算例 normal (`1e-8`) / strict (`1e-15`) | 5/5 PASS、5/5 PASS |
+| 50 步稳定性（同配置） | 正常退出、residual 单调（`runs/devq5-*`）|

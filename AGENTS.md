@@ -16,6 +16,7 @@ results.
 | CPU regression suite and residual baselines | [`test/README.md`](test/README.md), [`test/baselines/README.md`](test/baselines/README.md) |
 | GoogleTest contract tests | [`tests/README.md`](tests/README.md) |
 | Project state and handoff notes | [`doc/handoff/oneflow-project-handoff-20260903.md`](doc/handoff/oneflow-project-handoff-20260903.md) |
+| Current 3D HIP performance handoff (device-authoritative q) | [`doc/handoff/oneflow-3d-hip-handoff-20261025.md`](doc/handoff/oneflow-3d-hip-handoff-20261025.md) |
 
 ## Branch model
 
