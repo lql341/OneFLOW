@@ -79,6 +79,28 @@ oneflow-euler-performance-current.html
 
 不为只有 Markdown 的 handoff、plan、evidence 强行生成 HTML。
 
+## 4.5 保留、合并与删除
+
+文档目录必须长期保持精简，避免"每轮新增一份"。
+
+| 类型 | 规则 |
+|---|---|
+| 活文档（todo、长周期计划、本索引） | 只保留一份，就地更新；不建 dated 副本 |
+| 会话交接（`handoff/`） | 仓库中**至多一份**现行交接；新交接提交时在同一个 commit 里删除上一份 |
+| 一次性计划/清单（`plans/` 里的 checklist） | 目标达成即删除；其证据并入 todo 或报告 |
+| 架构审计（`architecture/`） | 每个主题只保留现行版本；被取代时删除旧审计 |
+| 证据（`evidence/`） | 只保留支撑**现行结论**的证据；结论被取代时删除 |
+| 正式报告（`reports/`） | **不删除已发布的报告**；过时报告标注 historical 并保留 Markdown/HTML |
+| 草稿（`_drafts/`） | 定稿后删除 |
+
+操作要求：
+
+1. 删除或改名必须用 `git rm` / `git mv`，并在同一提交内修复所有引用
+   （`doc/README.md`、`doc/reports/README.md`、`AGENTS.md`、`ports/`、`ci/`、代码注释）。
+2. 提交前用 `grep -rIn --exclude-dir=.git <旧文件名>` 确认零残留。
+3. Git 历史就是档案；不需要用 `_archive/` 目录堆积副本。
+4. 每轮收尾按 `doc/README.md` §5 的检查表执行。
+
 ## 5. 内容边界与禁止项
 
 文件名和已提交文档均不得包含 branch、作者、账号、主机名、节点名、作业号、私有路径、

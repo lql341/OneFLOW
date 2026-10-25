@@ -1,7 +1,8 @@
 # 3D HIP 性能交接（2026-10-25：device-authoritative q 落地）
 
 > 用法：把本文件整段贴给新的 agent 会话。规则以仓库 `AGENTS.md` 为准；
-> 上一轮状态见 `doc/handoff/oneflow-3d-hip-handoff-20261024.md`。
+> 上一轮（host 链优化）的状态与数字已并入
+> [`../plans/oneflow-development-todo.md`](../plans/oneflow-development-todo.md) 的历史章节。
 
 ## 0. 一句话现状
 

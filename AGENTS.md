@@ -15,9 +15,11 @@ results.
 | 2026-09-13 measurement method and baseline audit | [`doc/reports/performance/oneflow-euler-performance-20260913.md`](doc/reports/performance/oneflow-euler-performance-20260913.md) |
 | CPU regression suite and residual baselines | [`test/README.md`](test/README.md), [`test/baselines/README.md`](test/baselines/README.md) |
 | GoogleTest contract tests | [`tests/README.md`](tests/README.md) |
-| Project state and handoff notes | [`doc/handoff/oneflow-project-handoff-20260903.md`](doc/handoff/oneflow-project-handoff-20260903.md) |
-| Current 3D HIP performance handoff (device-authoritative q) | [`doc/handoff/oneflow-3d-hip-handoff-20261025.md`](doc/handoff/oneflow-3d-hip-handoff-20261025.md) |
-| Long-term phase plan for the accelerator main line | [`doc/plans/oneflow-development-plan.md`](doc/plans/oneflow-development-plan.md) |
+| Current state, A–G roadmap with checkboxes, per-round gates | [`doc/plans/oneflow-development-todo.md`](doc/plans/oneflow-development-todo.md) |
+| Long-term phase plan (milestones, gates, open decisions) | [`doc/plans/oneflow-development-plan.md`](doc/plans/oneflow-development-plan.md) |
+| Session handoff (the only current one) | [`doc/handoff/oneflow-3d-hip-handoff-20261025.md`](doc/handoff/oneflow-3d-hip-handoff-20261025.md) |
+| Kunshan workspace layout, job submission and cleanup rules | [`doc/runbooks/oneflow-kunshan-workspace-runbook.md`](doc/runbooks/oneflow-kunshan-workspace-runbook.md) |
+| Document index and retention policy | [`doc/README.md`](doc/README.md) |
 
 ## Branch model
 
@@ -89,3 +91,14 @@ on that branch for the current working state — it lives on `dev` only.
    lives in `ports/kunshan/oneflow_1d_hip` and is built standalone with the
    DTK toolchain; the root build is CPU-only today. Do not claim a DCU
    capability from a root-build result.
+7. **One fixed cluster workspace.** Kunshan work lives in a single
+   `<workspace>/` root: `src/OneFLOW` is overwritten each round, `build/app` is
+   the only incremental build, gate evidence goes to `evidence/<gate>/<jobid>/`,
+   job logs go to `logs/`, and deprecated material goes to `_attic/<date>/`. Do not create per-job build/run directories or
+   write logs to `$HOME`; see
+   [`doc/runbooks/oneflow-kunshan-workspace-runbook.md`](doc/runbooks/oneflow-kunshan-workspace-runbook.md).
+8. **Documents describe the current state only.** Living documents are edited
+   in place; at most one `handoff/` note is kept; one-off plans and checklists
+   are deleted when done; published reports are kept but marked historical.
+   Rules and the per-round checklist live in [`doc/README.md`](doc/README.md)
+   and [`doc/DOCUMENT_NAMING.md`](doc/DOCUMENT_NAMING.md) §4.5.

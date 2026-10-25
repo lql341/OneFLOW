@@ -1241,8 +1241,9 @@ resident contract 在每次 gradient 前比较 owned+ghost，全部 `failures=0`
 > 用途：每轮任务开始前读本文档，结束后更新本文档。让任何人或智能体
 > 接手时只读这一份就能继续推进。
 >
-> 配套入口：[`AGENTS.md`](../../../AGENTS.md)（规则与文档地图）、
-> [`ci/kunshan/README.md`](../../../ci/kunshan/README.md)（集群流程与标准套件）。
+> 配套入口：[`AGENTS.md`](../../AGENTS.md)（规则与文档地图）、
+> [`ci/kunshan/README.md`](../../ci/kunshan/README.md)（集群流程与标准套件）、
+> [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md)（固定工作区）。
 
 ## 2026-10-19 3D 多 zone 8-rank 对 8-rank paired timing
 
@@ -1750,12 +1751,11 @@ rebase。提 PR 时从 `upstream/master` 分临时分支 cherry-pick
 
 ### 提 PR 时的三个坑
 
-1. **`AGENTS.md` 不能整体覆盖。** dev 上的文档地图指向
-   `doc/handoff/oneflow-project-handoff-20260903.md`，upstream 上指向
-   `doc/reports/architecture/oneflow-project-handoff-20260903.md`——两边各自正确
-   （dev 已删除 `doc/reports/architecture/`，upstream 仍保留）。所以 `AGENTS.md`
-   只能**增量 cherry-pick**；整体覆盖会把上游那条链接改坏，且 cherry-pick 时
-   会因上下文含该行而冲突。
+1. **`AGENTS.md` 不能整体覆盖。** 两边的文档地图指向不同的入口：dev 指向
+   `doc/plans/oneflow-development-todo.md` 等 fork-only 文档，upstream 仍指向
+   `doc/reports/architecture/` 下的旧副本（dev 已按目录规范拆分该目录，upstream
+   仍保留）。两边各自正确，所以 `AGENTS.md` 只能**增量 cherry-pick**；整体覆盖会
+   把上游那条链接改坏， cherry-pick 时也会因上下文含该行而冲突。
 2. **cherry-pick 按 SHA，不要按标题。** dev 历史里同一改动存在两份（一份来自
    dev 自身，一份随 `origin/master` 合入），例如 Phase 3、FluxBackend 多方程
    Rusanov、FluxBackend↔EulerBackend 桥接测试、WENO5/EulerMethod 都有重名提交。

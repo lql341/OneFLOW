@@ -1,5 +1,11 @@
 # OneFLOW 一维 Euler 高性能 backend 优化计划
 
+> **状态：已收口（historical）。** 本计划针对 standalone 1D Euler 端口，该端口的验收与性能结果见
+> [`../reports/regression/oneflow-1d-euler-dcu-hip-contract-20260915.md`](../reports/regression/oneflow-1d-euler-dcu-hip-contract-20260915.md)
+> 与 [`../reports/performance/oneflow-euler-performance-current.md`](../reports/performance/oneflow-euler-performance-current.md)。
+> 3D 主求解器的后续计划见 [`oneflow-development-plan.md`](oneflow-development-plan.md) 与
+> [`oneflow-development-todo.md`](oneflow-development-todo.md)。本文保留作为该轮计划依据，不再更新。
+
 > 计划日期：2026-08-28
 > 当前平台：昆山 Z100 / native HIP / `gfx906`
 > 优先级：Euler 高性能 backend 优先；WENO5、二维、三维暂缓。

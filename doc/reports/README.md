@@ -1,5 +1,9 @@
 # OneFLOW project reports
 
+> Scope note: every report below covers the **standalone 1-D Euler port**.
+> The 3-D main solver has no published performance report yet; its current
+> numbers live in `doc/plans/oneflow-development-todo.md` (A–G roadmap, G7).
+
 This directory stores maintained project reports and selected historical snapshots.
 Plans, handoffs, runbooks, and validation evidence live in their dedicated sibling
 directories under `doc/`; they do not belong here. Individual CI logs, Slurm records,
@@ -7,7 +11,6 @@ and environment dumps belong in CI artifacts or isolated cluster run directories
 
 ## Regression and residuals
 
-- [Regression and residual integration (HTML)](regression/oneflow-residual-integration-20260901.html)
 - [One-dimensional Euler validation](regression/oneflow-euler-validation.md)
 - [One-dimensional Euler validation (HTML)](regression/oneflow-euler-validation.html)
 
