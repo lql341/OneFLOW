@@ -4,6 +4,7 @@
 
 > **先读本节。** 下面按日期分节的内容是历史证据，不再代表当前状态。
 > 长期方案的理由与取舍见 [`oneflow-development-plan.md`](oneflow-development-plan.md)；
+> 会话交接与环境/路径见 [`../handoff/oneflow-current-handoff.md`](../handoff/oneflow-current-handoff.md)；
 > 分支模型与门禁规则见仓库 `AGENTS.md`；集群流程见 `ci/kunshan/README.md`。
 >
 > 编号约定：本节用 §0–§7 与层条目 id（`A1`、`F7.3`、`G4`…）；文末的历史章
@@ -28,6 +29,33 @@
 | 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；CPU 五算例 normal 5/5、strict 5/5；contract gtest 16/16 |
 | 能力边界 | `NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / 1 rank 1 zone / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast |
 | 尚未覆盖 | limiter、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；3D 尚无正式性能报告 |
+
+### 1.1 工作环境与固定路径（不要另建目录）
+
+这一节是"agent 不要到处乱放"的唯一出处；路径一律写成可解析的形式，具体绝对路径
+不写进仓库（发布边界）。接手时按 [`doc/handoff/oneflow-current-handoff.md`](../handoff/oneflow-current-handoff.md)
+执行。
+
+| 位置 | 路径 | 用途 | 规则 |
+|---|---|---|---|
+| 本地仓库 | 本 checkout 根（`git rev-parse --show-toplevel`） | 源码、文档、提交 | 只在 `dev` 提交；`master` 只读，与 upstream 同步；不建第二份 clone |
+| 本地临时 | `/tmp` | 一次性脚本、打包、对比 | 不入库；结论写回文档 |
+| 集群接入 | `$HOME/.agents/skills/scnet-hpc`（**OpenAPI 优先**，SSH 次之） | 查询、提交、上传、探测 | 走技能入口；不手搓 ssh/scp 循环，不静默切换后端 |
+| 昆山工作区 | **`$HOME/oneflow/`（唯一）** | 见下方固定布局 | 不新建第二个工作区 |
+| 源码 | `$HOME/oneflow/src/OneFLOW` + `src/REVISION` | 每轮 `rsync -a --delete` 覆盖 | 不建 `OneFLOW-<hash>` 目录 |
+| 构建 | `$HOME/oneflow/build/app`（`build/port`、`build/platform` 预留） | 固定目标、增量编译 | 不建 `build/<jobid>`；**不要重新 configure** |
+| fixture | `$HOME/oneflow/fixtures/m6-8zone-cpu8/` | 唯一合法分区算例 | 只读；派生副本用 `prep-case.sh` |
+| 证据 | `$HOME/oneflow/evidence/<gate>/<jobid>/` | `gate` / `paired-ab` / `cpu-regression` | 只增不改；大二进制提取指标后可删 |
+| 快照 | `$HOME/oneflow/snapshots/*.tgz` | 保留最近 5 个 | `cleanup.sh` 轮转 |
+| 日志 | `$HOME/oneflow/logs/` | 作业 stdout/stderr | 保留 14 天，不写 `$HOME` |
+| 弃用 | `$HOME/oneflow/_attic/<date>/` | 待删物 | 观察一轮后清（`cleanup.sh`，7 天） |
+
+**禁止清单**：在 `$HOME` 根或 `softwares/projects/` 下新建 OneFLOW 目录/日志/一次性脚本；
+按 job 号或轮次新建 build/run 目录；把绝对私有路径、主机名、账号、作业号写进提交文档；
+每次会话新建 dated handoff；绕开技能直接改远端状态。
+
+作业与环境常量（`mpirun` 启动、`scripts/env.sh`、HCA、`OMPI_MCA_coll`、cmake/DTK 路径、
+1 DCU 槽 = 8 核、基准口径）见 runbook 与 living handoff，本节不重复。
 
 ### 2. 回顾（2026-08 → 2026-10-25）
 

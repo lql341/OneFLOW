@@ -258,7 +258,7 @@ Phase A（执行模型）
 | `doc/architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md` | backend-neutral 接入方案、state key、调用边界 | 把该方案升格为长期阶段主轴（Phase A4） |
 | `doc/plans/oneflow-euler-optimization-plan.md` | "stateful NoTrace 才是性能路径"（trace 2x vs 驻留 100x+） | 在 3D 复现同一结论：执行模型优先于 kernel |
 | `doc/runbooks/oneflow-dcu-porting-playbook-20260903.md` | 移植方法论（契约→或修→门禁→benchmark） | 作为每个 Phase 子项的验收流程模板 |
-| `doc/handoff/oneflow-3d-hip-handoff-20261025.md` | 本轮 device-authoritative q 的状态、坑与下一步 | 其 P0.1–P0.4 即本文 Phase A 的 A1–A3 |
+| `doc/handoff/oneflow-current-handoff.md` | 环境、固定路径、启动顺序、坑（living，每次会话就地更新） | 其 §4 任务指针与本文 Phase A 对应 |
 
 ## 6. 需要拍板的开放问题
 

@@ -54,6 +54,8 @@ oneflow-<scope>-<artifact>[-<qualifier>][-YYYYMMDD][-rN].<ext>
 长期维护、始终指向当前状态的文档不带日期，必要时使用 `current`：
 
 - `oneflow-development-todo.md`
+- `oneflow-development-plan.md`
+- `oneflow-current-handoff.md`（交接也改为 living：只有一份，就地更新）
 - `oneflow-euler-performance-current.md`
 
 它们必须在开头写明“最后更新”日期，并在同一文件中维护当前结论；不要为每次小改动
@@ -61,10 +63,10 @@ oneflow-<scope>-<artifact>[-<qualifier>][-YYYYMMDD][-rN].<ext>
 
 ### 快照、交接与证据
 
-一次性事实、阶段交接、审计和可复核证据必须带日期：
+一次性事实、审计和可复核证据必须带日期（交接不在此列，见上）：
 
-- `oneflow-main-solver-dcu-handoff-20260915.md`
-- `oneflow-main-solver-dcu-recap-20260916.md`
+- `oneflow-1d-euler-dcu-architecture-audit-20260904.md`
+- `oneflow-1d-euler-dcu-hip-contract-20260915.md`
 - `oneflow-1d-euler-dcu-mpi-smoke-evidence-20260904.md`
 
 ### Markdown 与 HTML
@@ -86,7 +88,7 @@ oneflow-euler-performance-current.html
 | 类型 | 规则 |
 |---|---|
 | 活文档（todo、长周期计划、本索引） | 只保留一份，就地更新；不建 dated 副本 |
-| 会话交接（`handoff/`） | 仓库中**至多一份**现行交接；新交接提交时在同一个 commit 里删除上一份 |
+| 会话交接（`handoff/`） | **只有一份** living 交接 `oneflow-current-handoff.md`，就地更新 §4/§5；不再新建 dated handoff |
 | 一次性计划/清单（`plans/` 里的 checklist） | 目标达成即删除；其证据并入 todo 或报告 |
 | 架构审计（`architecture/`） | 每个主题只保留现行版本；被取代时删除旧审计 |
 | 证据（`evidence/`） | 只保留支撑**现行结论**的证据；结论被取代时删除 |

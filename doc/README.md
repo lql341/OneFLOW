@@ -12,7 +12,7 @@
 |---|---|---|
 | [`architecture/`](architecture/) | 稳定的架构说明、边界审计 | 每个主题只保留**一份**现行版本；被取代的审计直接删除（git 历史即档案） |
 | [`plans/`](plans/) | 活文档：路线图、长周期计划 | 只放**living**文档（无日期后缀）；一次性 checklist 完成后删除 |
-| [`handoff/`](handoff/) | 会话交接 | **至多一份**现行 handoff；新交接提交时删除上一份 |
+| [`handoff/`](handoff/) | 交接（living） | **只有一份** `oneflow-current-handoff.md`，就地更新；不新建 dated handoff |
 | [`runbooks/`](runbooks/) | 构建、集群、移植等操作流程 | 每个流程一份；步骤变更就地更新，不建副本 |
 | [`evidence/`](evidence/) | 可复核的环境/构建事实 | 与某一轮结论绑定的证据；结论被取代后随之删除 |
 | [`reports/`](reports/) | 正式报告（performance / regression / delivery） | **不删已发布的报告**；过时报告保留但标注 historical，Markdown 与 HTML 同 stem 同步 |
@@ -25,7 +25,7 @@
 |---|---|
 | 当前状态、A–G 路线图与勾选进度、每轮门禁 | [plans/oneflow-development-todo.md](plans/oneflow-development-todo.md) |
 | 长期阶段的取舍、里程碑与开放问题 | [plans/oneflow-development-plan.md](plans/oneflow-development-plan.md) |
-| 上一次会话交接（可直接贴给新会话） | [handoff/oneflow-3d-hip-handoff-20261025.md](handoff/oneflow-3d-hip-handoff-20261025.md) |
+| 交接（living：环境、固定路径、启动顺序、坑） | [handoff/oneflow-current-handoff.md](handoff/oneflow-current-handoff.md) |
 | 昆山工作区固定路径、作业规范、清理规则 | [runbooks/oneflow-kunshan-workspace-runbook.md](runbooks/oneflow-kunshan-workspace-runbook.md) |
 | DCU 移植方法论（契约→oracle→门禁→benchmark） | [runbooks/oneflow-dcu-porting-playbook-20260903.md](runbooks/oneflow-dcu-porting-playbook-20260903.md) |
 | 主 solver 加速器架构审计与接入边界 | [architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md](architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md) |
@@ -56,7 +56,8 @@ make html     # 输出到 doc/build/html/，CI 与 Read the Docs 使用 doc/sour
 ## 5. 每轮收尾检查表
 
 1. `plans/oneflow-development-todo.md` 的勾选、状态快照与本轮证据已更新。
-2. 新交接提交后，旧的 `handoff/*` 已删除；一次性 checklist/草稿已删除。
+2. `handoff/oneflow-current-handoff.md` 的 §4（任务指针）与 §5（新坑）已就地更新；
+   没有新增 dated handoff，一次性 checklist/草稿已删除。
 3. 新增/删除/改名文档后，本索引、`doc/reports/README.md`、`AGENTS.md` 的链接
    全部有效（`grep` 一遍旧文件名应无残留）。
 4. `git diff --check` 通过；文档中不含原始 CI/Slurm 日志、主机名、账号、作业号、

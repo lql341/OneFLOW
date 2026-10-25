@@ -17,7 +17,7 @@ results.
 | GoogleTest contract tests | [`tests/README.md`](tests/README.md) |
 | Current state, A–G roadmap with checkboxes, per-round gates | [`doc/plans/oneflow-development-todo.md`](doc/plans/oneflow-development-todo.md) |
 | Long-term phase plan (milestones, gates, open decisions) | [`doc/plans/oneflow-development-plan.md`](doc/plans/oneflow-development-plan.md) |
-| Session handoff (the only current one) | [`doc/handoff/oneflow-3d-hip-handoff-20261025.md`](doc/handoff/oneflow-3d-hip-handoff-20261025.md) |
+| Session handoff (living: environment, fixed paths, traps) | [`doc/handoff/oneflow-current-handoff.md`](doc/handoff/oneflow-current-handoff.md) |
 | Kunshan workspace layout, job submission and cleanup rules | [`doc/runbooks/oneflow-kunshan-workspace-runbook.md`](doc/runbooks/oneflow-kunshan-workspace-runbook.md) |
 | Document index and retention policy | [`doc/README.md`](doc/README.md) |
 
@@ -98,7 +98,9 @@ on that branch for the current working state — it lives on `dev` only.
    write logs to `$HOME`; see
    [`doc/runbooks/oneflow-kunshan-workspace-runbook.md`](doc/runbooks/oneflow-kunshan-workspace-runbook.md).
 8. **Documents describe the current state only.** Living documents are edited
-   in place; at most one `handoff/` note is kept; one-off plans and checklists
-   are deleted when done; published reports are kept but marked historical.
+   in place: the handoff is a single `doc/handoff/oneflow-current-handoff.md`
+   (update its §4/§5 each session, never add a dated one), one-off plans and
+   checklists are deleted when done, and published reports are kept but marked
+   historical.
    Rules and the per-round checklist live in [`doc/README.md`](doc/README.md)
    and [`doc/DOCUMENT_NAMING.md`](doc/DOCUMENT_NAMING.md) §4.5.

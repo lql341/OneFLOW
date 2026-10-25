@@ -6,8 +6,10 @@
 
 ## 1. 固定路径
 
-工作区根固定为集群上的 `<workspace>/`（具体绝对路径只写在集群侧工作区 README，
-不进仓库）。除既有的共享工具链前缀外，不得在别处新建 OneFLOW 工作区：
+工作区根固定为集群上的 `$HOME/oneflow/`（仓库里写成 `<workspace>/`，绝对路径只出现
+在集群侧工作区 README，不进仓库）。远端操作走 `$HOME/.agents/skills/scnet-hpc`
+（OpenAPI 优先、SSH 次之），不要手搓 ssh/scp 循环。除既有的共享工具链前缀外，不得在
+别处新建 OneFLOW 工作区：
 
 - 旧的按日期命名的实验目录（`softwares/projects/OneFLOW_*`，2026-08/09）已在
   2026-10-25 删除——源码在 Git 历史，证据在 `doc/`，不要再按那种方式建目录。
