@@ -1,8 +1,10 @@
 # OneFLOW 长期分阶段开发计划（accelerator 主线）
 
 > 最后更新：2026-10-25。本文是长期路线图（living），按季度/阶段维护；
-> 每一轮的细碎任务、证据和 A/B 数据仍记在
-> [`oneflow-development-todo.md`](oneflow-development-todo.md) 与 `doc/handoff/`。
+> **执行进度、勾选与证据以
+> [`oneflow-development-todo.md`](oneflow-development-todo.md) 文首
+> §4 的 A–G（含插入层 H/I）勾选树为准**，本文只说明取舍与阶段边界；
+> 每一轮的 A/B 数据与细节记在 `doc/handoff/`。
 > 规则以根目录 `AGENTS.md` 为准；集群流程见 `ci/kunshan/README.md`。
 
 ## 0. 结论先行
@@ -107,7 +109,7 @@ task 通过全局 `ug / unsf / nscom / ctrl / ZoneState::zid` 隐式定位到"�
 5. **fixture 稀缺**：唯一合法可分区网格是 8 zone m6wing（294,912 cell）；
    `partition_type=0`(GenerateLink) 仍失败；≥1M cell 的多卡结论无法产出。
 6. **口径/文档债**：3D 性能从未发布为正式报告（现有 `performance/` 都是 1D 端口）；
-   `oneflow-development-todo.md` 的摘要仍停在 2026-10-23 的 `3.89x`。
+   3D 数字已在 todo 文首 §0–§2 更新，但正式报告仍缺。
 
 ## 2. 阶段划分
 
@@ -208,6 +210,17 @@ Phase A（执行模型）
 | F2 | CI 矩阵：CPU normal/strict、DCU 单卡、DCU 多卡、nightly 长跑；PR 分支自跑门禁 |
 | F3 | 文档：`doc/plans/oneflow-development-todo.md` 摘要与 §2 现状、`ci/kunshan/README.md`、Sphinx 教程 |
 | F4 | 交付：GUI/示例算例、发行说明、对外能力矩阵（哪些 solver/scheme 在设备上已验证） |
+
+## 2.1 阶段与 todo 条目 id 的对应
+
+| 本文阶段 | todo 层/条目 | 说明 |
+|---|---|---|
+| Phase A 执行模型 | `F7.1`–`F7.5` | 固定开销三刀 + 单轮 halo + 融合 + `Advance` |
+| Phase B 数值能力 | `F8.1`–`F8.6` | scheme → limiter → 粘性 → SA → LU-SGS → multigrid |
+| Phase C 真实算例/IO | `F9.1`–`F9.3` | 旗舰算例、IO 路径、≥1M 单卡 |
+| Phase D 多卡 | `G4`–`G6` | fixture → 3D GPU-aware/DeviceDirect → 映射与负载 |
+| Phase E 架构通用化 | `H2`–`H6`（`H1` 已完成） | capability 表、去 globals、NS 泛化、backend 入口 |
+| Phase F 产品化 | `G7`、`I1`–`I4` | 3D 报告、CI 矩阵、文档与能力矩阵、发行 |
 
 ## 3. 里程碑与判定口径
 
