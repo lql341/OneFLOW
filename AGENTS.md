@@ -17,6 +17,7 @@ results.
 | GoogleTest contract tests | [`tests/README.md`](tests/README.md) |
 | Project state and handoff notes | [`doc/handoff/oneflow-project-handoff-20260903.md`](doc/handoff/oneflow-project-handoff-20260903.md) |
 | Current 3D HIP performance handoff (device-authoritative q) | [`doc/handoff/oneflow-3d-hip-handoff-20261025.md`](doc/handoff/oneflow-3d-hip-handoff-20261025.md) |
+| Long-term phase plan for the accelerator main line | [`doc/plans/oneflow-development-plan.md`](doc/plans/oneflow-development-plan.md) |
 
 ## Branch model
 
