@@ -196,7 +196,8 @@
 | 设备权威 q（默认开） | `ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=0` 回退旧行为；`ONEFLOW_HIP_GHOST_Q_MIRROR=1` 只把 ghost q 的 D2H 加回（bisect） |
 | 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
 | 诊断 | `ONEFLOW_STAGE_BREAKDOWN_FILE`、`ONEFLOW_UNS_STAGE_TRACE_FILE`、`ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1`、`ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` |
-| 门禁脚本 | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
+| 门禁脚本（仓库内） | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
+| 标准作业脚本（集群固定工作区） | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}`，规则见 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) |
 | 基准口径 | 1000 步、50 步 warmup、`nFieldSave/nResSave/nForceSave=100000`、CFL 0.01、`ilim=0`、`ischeme=5`、`time_integral=1`、`rk_stage=3`、`vismodel=0` |
 
 ### 7. 口径纪律（不遵守的结论一律作废）
@@ -206,6 +207,42 @@
 3. 探索性单作业数据只进本文档或集群 artifacts，不进正式报告。
 4. 任何性能改动先过：3 步多区 trace → 200 步跨后端 → CPU 五算例（normal/strict）→ 50 步稳定性。
 5. 正式报告的 Markdown 与 HTML 必须同 stem 同步更新。
+
+## 2026-10-25 文档与昆山工作区规范化
+
+**结论**：文档与集群工作区都收敛到"只描述当前状态"的形态——`doc/handoff/` 只留
+一份现行交接，删掉 10 份被取代的交接与 2 份一次性计划；昆山工作区固定为一个根，
+源码覆盖更新、构建增量、证据按门/作业归档。
+
+### 文档
+
+| 动作 | 内容 |
+|---|---|
+| 删除 | 10 份被取代的 `handoff/`（1D 端口进度补充、main-solver 多轮交接、host 优化、HIP-MPI、development prompt、项目总交接及其 HTML、上一轮 3D 交接）、`plans/oneflow-1d-euler-dcu-porting-checklist-20260904.md`、`reports/regression/oneflow-residual-integration-20260901.html` |
+| 新增 | `doc/README.md` 重写为索引（目录保留策略、现行入口、fork/upstream 归属、每轮检查表）；`doc/runbooks/oneflow-kunshan-workspace-runbook.md`（固定布局、作业规范、故障对照） |
+| 规则 | `DOCUMENT_NAMING.md` 增加 §4.5 保留/合并/删除；`AGENTS.md` 增加两条工作规则（唯一集群工作区、文档只描述当前状态）；1D 优化计划标注 historical |
+| 去重 | `todo` 里重复的 A–G 状态表改为指向文首勾选树；`ci/kunshan/README.md` 的工作区一节改为固定布局 |
+
+### 昆山工作区
+
+| 项 | 之前 | 之后 |
+|---|---|---|
+| 工作区根 | 两个（隐藏目录 + 散落在 home 根目录的日志） | 一个固定根，home 根目录只留非 OneFLOW 文件 |
+| 源码 | 118 个按提交命名的快照目录 | 一个 `src/OneFLOW`（每轮覆盖）+ `snapshots/*.tgz` |
+| 构建 | 164 个按轮次命名的 `root-*` / `port-*` 目录 | `build/app` 一个增量构建（路径已重写并验证可编译） |
+| 运行产物 | 464 个 `runs/<name>-<jobid>` | `evidence/<gate>/<jobid>/`，只保留指标与日志 |
+| 脚本 | 200 个一次性 slurm | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}` |
+| 散落日志 | home 根目录数千个作业日志与 `*.out/*.err` | 统一进 `logs/`，14 天后清理 |
+| core dump | 多处未清理的 core 文件 | 已删除，并在清理脚本中保留 `core.*` 检查 |
+
+`cleanup.sh` 负责日志/快照/attic 轮转；工作区 README 与 runbook 使用同一套规则。
+
+### 规范化后的门禁复跑
+
+用新脚本从固定布局复跑同一门禁，证明迁移没有改变结果：3 步多区 trace
+`MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual
+`2.331035e-18`、aero `0.0`；1000 步端到端 `30.70–31.05 ms/step`（与原布局的
+`31.64` 一致，差异在节点波动内）。
 
 ## 2026-10-23 受限 inviscid HIP 收口：restart 等价性与多配置端到端
 
