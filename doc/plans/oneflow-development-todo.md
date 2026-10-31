@@ -378,9 +378,40 @@ IEEE 除法是正确舍入；乘倒数多一次舍入。护栏 `+SMALL` 对任�
 可复现的 ≤1 ulp 改变；`res5` 量级只有 `3e-8`，所以绝对 1e-15 的偏差在它上面表现为
 `1e-8` 量级的相对差。
 
-**待决**（两者都是数值口径层面的决定，不能在实现里偷偷选）：
-1. 继续逐个定位并恢复结合顺序，直到逐位一致（工作量大、与上游方向相反、易反复）；
-2. 在上游合并后按固定流程重生成 strict 基线，并把“重生成”写成脚本 + 门禁步骤。
+### 决定与执行：精度优先，重生成历史精度数据，strict 判据保持不变
+
+按“用最合理的写法、可以更新历史精度数据、但 strict 标准维持原样”执行：
+
+| 项 | 决定 |
+|---|---|
+| 算法写法 | 保留一次除法（更准，`100%` 对参考一致，见上表） |
+| strict 判据 | **不变**：绝对 `1e-15`、相对 `0`、迭代列与行数必须完全一致 |
+| 历史精度数据 | 仅重生成超界的那一个算例的参考曲线与基线条目 |
+
+执行过程（昆山，`7bd358c0d`）：
+
+1. 先按 `test/baselines/README.md` 用 strict 运行确认越界范围：
+   `plateuns2dslau2 1.860e-16`、`plateuns2dslau2_34950_35000 **2.204e-15**`、
+   `turbplateuns2droe_sa 2.668e-17`、`rae2822_roe_sa 1.735e-18`、`m6wingroe_sa 4.913e-20`
+   → 只有续算算例越界，其余四个在判据内，**不动它们**。
+2. `ONEFLOW_RESIDUAL_TEST_OUTPUT=1` 全精度重跑该算例，采纳为
+   `test/cfd/plateuns2dslau2_34950_35000/autotest/res.dat`
+   （sha256 `200e6225…` → `1946d60d…`；50 行、迭代列 `34951..35000` 完全不变，
+   数值列最大变化 `2.204e-15`，`res4` 仍全为 0）。
+3. `build_residual_db.py --validated-commit 7bd358c0d --absolute-tolerance 1e-15`
+   重建 `test/baselines/residual-baseline.json`：只有该算例条目与 `validated_commit`
+   变化，`comparison` 块逐字不变（已用 JSON 比对确认其余四个条目 `unchanged`）。
+4. `verify_residual_db.py` → `residual database OK: 5 cases, 8 files`。
+5. 采纳的文件按仓库风格去掉行尾空格（solver 输出带尾随空格，现有 `autotest/*.dat`
+   都没有），再重建一次数据库使 `sha256` 与文件一致
+   （`d6208a42…`）；`git diff --check` 通过。
+6. 复跑门禁（用最终提交的产物）：**normal 5/5 PASS，strict 5/5 PASS（判据仍 1e-15）**，
+   每算例 strict 偏差：
+   `plateuns2dslau2 1.860e-16`、`plateuns2dslau2_34950_35000 0.0`、
+   `turbplateuns2droe_sa 2.668e-17`、`rae2822_roe_sa 1.735e-18`、`m6wingroe_sa 4.913e-20`。
+
+以后遇到同类情况按上面 1–5 执行即可：先确认越界范围 → 只重生成越界算例 → 重建并校验
+数据库 → 用不变的 strict 判据复跑门禁。
 
 ### HIP 构建配方（本轮已固化为可选开关）
 
