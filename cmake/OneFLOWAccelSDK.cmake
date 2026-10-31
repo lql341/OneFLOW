@@ -1,12 +1,19 @@
 # Unified build-time accelerator SDK interface.
 #
-# OneFLOW keeps two independent axes:
+# Two independent axes:
 #
-#   ONEFLOW_ACCEL_BACKEND      runtime selection  (AUTO, CPU, HIP, CUDA, KOKKOS)
-#   ONEFLOW_ACCEL_SDK[_ROOT]   build-time SDK     (auto, hip, cuda) + its prefix
+#   ONEFLOW_ACCEL_BACKEND   runtime selection          (AUTO, CPU, HIP, CUDA, KOKKOS)
+#   ONEFLOW_ACCEL_SDK_ROOT  build-time vendor SDK root (empty: configure no SDK)
 #
-# This file owns the second axis so that adding a vendor SDK does not mean
-# rediscovering environment variables:
+# The SDK *kind* is inferred rather than asked for: from ONEFLOW_ENABLE_HIP /
+# ONEFLOW_ENABLE_CUDA when they are set, otherwise from the contents of the root
+# (llvm/bin/clang++ -> hip, bin/nvcc -> cuda). Only two optional knobs remain:
+#
+#   ONEFLOW_ACCEL_SDK_ROOT    prefix (DTK/ROCm for HIP, CUDA Toolkit for CUDA)
+#   ONEFLOW_ACCEL_SDK_ARCH    gfx906 / sm_80      (empty: keep device detection)
+#   ONEFLOW_ACCEL_SDK_FLAGS   extra SDK compiler flags (empty: none)
+#
+# Usage:
 #
 #     cmake -S . -B build -DONEFLOW_ENABLE_HIP=ON \
 #           -DONEFLOW_ACCEL_SDK_ROOT=/path/to/dtk
@@ -14,8 +21,8 @@
 #     cmake -S . -B build -DONEFLOW_ENABLE_CUDA=ON \
 #           -DONEFLOW_ACCEL_SDK_ROOT=/path/to/cuda -DONEFLOW_ACCEL_SDK_ARCH=sm_80
 #
-# Nothing happens unless a root (or an explicit kind for an eventual
-# system-installed SDK) is given, so CPU and CI configurations are unaffected.
+# Nothing happens when the root is empty, so CPU and CI configurations are
+# unaffected.
 #
 # Why a resolver is needed at all
 # -------------------------------
@@ -30,12 +37,8 @@
 #     CMAKE_TRY_COMPILE_PLATFORM_VARIABLES.
 # Both are derived here from ONEFLOW_ACCEL_SDK_ROOT.
 
-set ( ONEFLOW_ACCEL_SDK "" CACHE STRING
-      "Accelerator SDK to configure (auto, hip, cuda). Empty: do not configure one." )
-set_property ( CACHE ONEFLOW_ACCEL_SDK PROPERTY STRINGS "" auto hip cuda )
-
 set ( ONEFLOW_ACCEL_SDK_ROOT "" CACHE PATH
-      "Accelerator SDK prefix (DTK/ROCm for hip, CUDA Toolkit for cuda)" )
+      "Accelerator SDK prefix (DTK/ROCm for hip, CUDA Toolkit for cuda). Empty: no SDK." )
 
 set ( ONEFLOW_ACCEL_SDK_ARCH "" CACHE STRING
       "Target architecture(s) for the SDK, e.g. gfx906 or sm_80 (empty: keep detection)" )
@@ -43,41 +46,21 @@ set ( ONEFLOW_ACCEL_SDK_ARCH "" CACHE STRING
 set ( ONEFLOW_ACCEL_SDK_FLAGS "" CACHE STRING
       "Extra compiler flags for the SDK compiler, e.g. --gcc-toolchain=<host gcc> (empty: none)" )
 
-# Backward-compatible alias from the first DTK-only implementation.
-set ( ONEFLOW_DTK_ROOT "" CACHE PATH
-      "Deprecated alias for ONEFLOW_ACCEL_SDK_ROOT when ONEFLOW_ACCEL_SDK=hip" )
-
 function ( _OneFLOW_ResolveSDKKind out_var )
-    set ( kind "${ONEFLOW_ACCEL_SDK}" )
-    string ( TOLOWER "${kind}" kind )
-
-    if ( kind STREQUAL "" )
-        if ( ONEFLOW_ENABLE_HIP OR ONEFLOW_HIP_EXPLICIT )
-            set ( kind "hip" )
-        elseif ( ONEFLOW_ENABLE_CUDA )
-            set ( kind "cuda" )
-        endif ()
-    endif ()
-
-    if ( kind STREQUAL "auto" )
-        set ( kind "" )
-        if ( IS_DIRECTORY "${ONEFLOW_ACCEL_SDK_ROOT}/lib/cmake/hip"
-             OR EXISTS "${ONEFLOW_ACCEL_SDK_ROOT}/llvm/bin/clang++" )
-            set ( kind "hip" )
-        elseif ( EXISTS "${ONEFLOW_ACCEL_SDK_ROOT}/bin/nvcc" )
-            set ( kind "cuda" )
-        endif ()
-        if ( kind STREQUAL "" )
-            message ( FATAL_ERROR
-                "ONEFLOW_ACCEL_SDK=auto could not identify the SDK under "
-                "'${ONEFLOW_ACCEL_SDK_ROOT}'. Pass ONEFLOW_ACCEL_SDK=hip or cuda." )
-        endif ()
-    endif ()
-
-    if ( NOT kind STREQUAL "hip" AND NOT kind STREQUAL "cuda" )
+    if ( ONEFLOW_ENABLE_HIP OR ONEFLOW_HIP_EXPLICIT )
+        set ( kind "hip" )
+    elseif ( ONEFLOW_ENABLE_CUDA )
+        set ( kind "cuda" )
+    elseif ( EXISTS "${ONEFLOW_ACCEL_SDK_ROOT}/llvm/bin/clang++"
+             OR IS_DIRECTORY "${ONEFLOW_ACCEL_SDK_ROOT}/lib/cmake/hip" )
+        set ( kind "hip" )
+    elseif ( EXISTS "${ONEFLOW_ACCEL_SDK_ROOT}/bin/nvcc" )
+        set ( kind "cuda" )
+    else ()
         message ( FATAL_ERROR
-            "Unsupported ONEFLOW_ACCEL_SDK='${ONEFLOW_ACCEL_SDK}'. "
-            "Expected auto, hip, or cuda." )
+            "Cannot identify the accelerator SDK under '${ONEFLOW_ACCEL_SDK_ROOT}'. "
+            "Set ONEFLOW_ENABLE_HIP/ONEFLOW_ENABLE_CUDA, or point "
+            "ONEFLOW_ACCEL_SDK_ROOT at a DTK/ROCm or CUDA Toolkit prefix." )
     endif ()
 
     set ( ${out_var} "${kind}" PARENT_SCOPE )
@@ -150,9 +133,7 @@ function ( _OneFLOW_ConfigureCudaSDK root )
     message ( STATUS "OneFLOW accel SDK      = cuda (${root})" )
 
     # find_package(CUDAToolkit) honours this instead of a PATH hunt.
-    if ( IS_DIRECTORY "${root}" )
-        set ( CUDAToolkit_ROOT "${root}" CACHE PATH "CUDA Toolkit root" FORCE )
-    endif ()
+    set ( CUDAToolkit_ROOT "${root}" CACHE PATH "CUDA Toolkit root" FORCE )
 
     if ( NOT CMAKE_CUDA_COMPILER AND EXISTS "${root}/bin/nvcc" )
         set ( CMAKE_CUDA_COMPILER "${root}/bin/nvcc" CACHE FILEPATH
@@ -173,16 +154,10 @@ endfunction ()
 
 function ( OneFLOW_ConfigureAccelSDK )
     set ( sdk_root "${ONEFLOW_ACCEL_SDK_ROOT}" )
-    if ( sdk_root STREQUAL "" AND NOT ONEFLOW_DTK_ROOT STREQUAL "" )
-        message ( STATUS
-            "ONEFLOW_DTK_ROOT is deprecated; use ONEFLOW_ACCEL_SDK_ROOT" )
-        set ( sdk_root "${ONEFLOW_DTK_ROOT}" )
-        set ( ONEFLOW_ACCEL_SDK "hip" )
-    endif ()
 
-    # Autodetect a prefix from the usual vendor environment variables when the
-    # caller asked for a backend but did not name a root.
-    if ( sdk_root STREQUAL "" AND ONEFLOW_ACCEL_SDK STREQUAL "" )
+    # Fall back to the vendor environment variable when a backend was requested
+    # but no root was named.
+    if ( sdk_root STREQUAL "" )
         if ( ( ONEFLOW_ENABLE_HIP OR ONEFLOW_HIP_EXPLICIT ) AND NOT "$ENV{ROCM_PATH}" STREQUAL "" )
             set ( sdk_root "$ENV{ROCM_PATH}" )
         elseif ( ONEFLOW_ENABLE_CUDA AND NOT "$ENV{CUDAToolkit_ROOT}" STREQUAL "" )
@@ -192,11 +167,11 @@ function ( OneFLOW_ConfigureAccelSDK )
         endif ()
     endif ()
 
-    if ( sdk_root STREQUAL "" AND ONEFLOW_ACCEL_SDK STREQUAL "" )
-        return()   # nothing requested, nothing to do
+    if ( sdk_root STREQUAL "" )
+        return()   # no SDK requested, nothing to do
     endif ()
 
-    if ( NOT sdk_root STREQUAL "" AND NOT IS_DIRECTORY "${sdk_root}" )
+    if ( NOT IS_DIRECTORY "${sdk_root}" )
         message ( FATAL_ERROR
             "ONEFLOW_ACCEL_SDK_ROOT is not a directory: ${sdk_root}" )
     endif ()

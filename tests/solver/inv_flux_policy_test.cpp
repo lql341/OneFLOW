@@ -206,6 +206,30 @@ TEST( InvFluxPolicy, IdealGasSoundSpeedGuardDoesNotChangeNormalState )
         std::sqrt( 1.4 * 101325.0 / 1.25 ) );
 }
 
+// A single division is correctly rounded; multiplying by a reciprocal rounds twice
+// and could drift by 1 ulp. Pin that the sound speed stays on the long-double
+// reference across the physical range instead of silently depending on the form.
+TEST( InvFluxPolicy, IdealGasSoundSpeedMatchesLongDoubleReference )
+{
+    long mismatches = 0;
+    for ( int i = 0; i < 2000; ++i )
+    {
+        const Real density  = 1.0e-3 + 0.9997 * static_cast< Real >( i );
+        const Real pressure = 1.0e-3 + 13.7 * static_cast< Real >( i );
+        const Real gama     = 1.4;
+
+        const Real actual = IdealGasSoundSpeedFromPressure( density, pressure, gama );
+        const long double exact =
+            sqrtl( fabsl( (long double)gama * pressure / (long double)density ) );
+
+        if ( actual != static_cast< Real >( exact ) )
+        {
+            ++mismatches;
+        }
+    }
+    EXPECT_EQ( mismatches, 0 );
+}
+
 TEST( InvFluxPolicy, IdealGasPrimToConservativeMatchesManual )
 {
     Real qr, qu, qv, qw, qe;

@@ -5,7 +5,7 @@
 # This is the build-time half of the accelerator interface:
 #
 #   runtime backend   ONEFLOW_ACCEL_BACKEND = AUTO | CPU | HIP | CUDA | KOKKOS
-#   build-time SDK    ONEFLOW_ACCEL_SDK = auto | hip | cuda   (+ ONEFLOW_ACCEL_SDK_ROOT)
+#   build-time SDK    ONEFLOW_ACCEL_SDK_ROOT (+ optional _ARCH / _FLAGS), kind inferred
 #
 # Plain CPU/CI builds never need this script; without an SDK root the CMake
 # resolver does nothing. With a root, cmake/OneFLOWAccelSDK.cmake derives
@@ -14,8 +14,11 @@
 # CMAKE_TRY_COMPILE_PLATFORM_VARIABLES that enable_language(HIP) needs), so a
 # DCU build is one command instead of a rediscovered set of variables.
 #
+# The SDK kind is inferred (ONEFLOW_ENABLE_HIP/CUDA, or the prefix contents), so
+# there is no kind argument to get wrong.
+#
 # Usage:
-#   scripts/build-accel.sh --sdk <auto|hip|cuda> [--sdk-root <prefix>]
+#   scripts/build-accel.sh [--sdk-root <prefix>]
 #                          [--arch <gfx906|sm_80>] [--flags "<compiler flags>"]
 #                          [--no-sdk-tests] [--jobs N] [--build-dir <dir>]
 #                          [--configure-only]
@@ -33,7 +36,6 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
-sdk=""
 sdk_root="${ONEFLOW_ACCEL_SDK_ROOT:-}"
 arch=""
 sdk_flags="${ONEFLOW_ACCEL_SDK_FLAGS:-}"
@@ -48,13 +50,12 @@ die() {
 }
 
 usage() {
-    sed -n '2,29p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n "2,30p" "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 0
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --sdk) sdk="${2:?--sdk needs a value}"; shift 2 ;;
         --sdk-root) sdk_root="${2:?--sdk-root needs a path}"; shift 2 ;;
         --arch) arch="${2:?--arch needs a value}"; shift 2 ;;
         --flags) sdk_flags="${2:?--flags needs a value}"; shift 2 ;;
@@ -67,38 +68,21 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-if [ -z "$sdk" ]; then
-    if [ -n "${ONEFLOW_ENABLE_HIP:-}" ] && [ "$ONEFLOW_ENABLE_HIP" != "OFF" ]; then
-        sdk="hip"
-    elif [ -n "${ONEFLOW_ENABLE_CUDA:-}" ] && [ "$ONEFLOW_ENABLE_CUDA" != "OFF" ]; then
-        sdk="cuda"
-    else
-        sdk="auto"
-    fi
-fi
-
 # Resolve the prefix from the vendor variable when the caller did not name one.
 if [ -z "$sdk_root" ]; then
-    case "$sdk" in
-        hip) sdk_root="${ROCM_PATH:-}" ;;
-        cuda) sdk_root="${CUDAToolkit_ROOT:-${CUDA_HOME:-}}" ;;
-        *) sdk_root="${ROCM_PATH:-${CUDAToolkit_ROOT:-${CUDA_HOME:-}}}" ;;
-    esac
+    sdk_root="${ROCM_PATH:-${CUDAToolkit_ROOT:-${CUDA_HOME:-}}}"
 fi
 
 [ -n "$sdk_root" ] || die "no SDK root: set ONEFLOW_ACCEL_SDK_ROOT, export ROCM_PATH / CUDA_HOME, or pass --sdk-root <path>"
 [ -d "$sdk_root" ] || die "SDK root is not a directory: $sdk_root"
 
-# Probe for the compilers we know how to drive, and turn an "auto" guess into a
-# concrete kind so the CMake call is explicit.
-if [ "$sdk" = "auto" ]; then
-    if [ -x "$sdk_root/llvm/bin/clang++" ] || [ -d "$sdk_root/lib/cmake/hip" ]; then
-        sdk="hip"
-    elif [ -x "$sdk_root/bin/nvcc" ]; then
-        sdk="cuda"
-    else
-        die "cannot identify the SDK under $sdk_root; pass --sdk hip or --sdk cuda"
-    fi
+# Infer the kind from the prefix, so the CMake call sets the matching enable flag.
+if [ -x "$sdk_root/llvm/bin/clang++" ] || [ -d "$sdk_root/lib/cmake/hip" ]; then
+    sdk="hip"
+elif [ -x "$sdk_root/bin/nvcc" ]; then
+    sdk="cuda"
+else
+    die "cannot identify the SDK under $sdk_root (no llvm/bin/clang++ or bin/nvcc)"
 fi
 
 case "$sdk" in
@@ -112,7 +96,7 @@ case "$sdk" in
         enable_var="-DONEFLOW_ENABLE_CUDA=ON"
         tests_var="-DONEFLOW_ACCEL_BACKEND=CUDA"
         ;;
-    *) die "unsupported --sdk '$sdk' (expected auto, hip, or cuda)" ;;
+    *) die "unsupported SDK '$sdk' (expected hip or cuda)" ;;
 esac
 
 if [ -z "$jobs" ]; then
@@ -122,7 +106,6 @@ fi
 cmake_args=(
     "$enable_var"
     "$tests_var"
-    -DONEFLOW_ACCEL_SDK="$sdk"
     -DONEFLOW_ACCEL_SDK_ROOT="$sdk_root"
 )
 
