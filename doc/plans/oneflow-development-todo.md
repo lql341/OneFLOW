@@ -311,10 +311,62 @@ f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30
 4. `ActionMapReadFileTest.DuplicateNameKeepsFirstRegisteredId` 在 `ctest -j16` 全量并发
    下偶然失败，单跑与连续 3 次并发均通过 → 测试隔离问题（共享临时目录），待单独修。
 
-### HIP 构建配方（此前没记录，本轮补齐）
+### 修正尝试：补回 SMALL 护栏（已做）+ 仍未逐位还原（重要）
 
-`build/app` 重新 configure 之所以过去会失败，不是 DTK 坏了，而是缺三个条件；补齐后
-在 `kshdnormal`（`dcu:1`）上 configure + 全量编译均成功（`make rc=0`，1078 个测试）：
+按“strict 不算太紧、零密度护栏必须留着”的要求，把 `f7ae944c0` 丢掉的护栅补回去了，
+并对 AUSM 双侧路径恢复历史写法（乘倒数而非直接除），同时补了 4 个契约测试：
+
+```cpp
+// IdealGasSoundSpeedFromPressure：加回 (density + SMALL)
+// IdealGasBilateralSoundSpeeds：gama * p * (1/(rho+SMALL))，保持旧结合顺序
+```
+
+昆山实测（`build/app`，HIP 构建，标准 `cpu-regression.slurm`）：
+
+| 项 | 结果 |
+|---|---|
+| GoogleTest | **1082 个测试，1 失败**（`HIP.MainSolverFluxOneCall`，既有问题） |
+| CPU 五算例 normal(1e-8) | **5/5 通过** |
+| CPU 五算例 strict(1e-15) | **4/5**，`plateuns2dslau2_34950_35000`：`max_abs` 从 `2.204e-15` 降到 `1.779e-15` |
+
+**朝向基线但没还原**，说明除声速那处外还有别的贡献者。在打了上述补丁的前提下再二分：
+
+```
+6ca93f57c  ns: pure face spectral radius and local time-step contracts   (2026-10-30)
+```
+
+且探针数值是**非单调**的（多数提交 `1.44e-15`，中间提交又回到 `0.0`）——多处末位扰动
+在相互抵消。据此判断：
+
+- 不是容差定得太紧的问题，而是这一系列“pure … contracts”重构**不保证逐位可复现**；
+- 靠改一两个公式回到逐位一致不成立：贡献者多于两处、且非单调，逐个改等于逆着上游
+  重构方向走，且每次上游合并都会再破。
+- 现状 strict 的“绝对 1e-15”对量级 `3e-8` 的 `res5` 相当于 1e-7 相对、对 `1e-2` 的通道
+  却是 1e-13 相对；同一绝对阈值在不同通道上宽严不一致，这是该判据本身的形态问题。
+
+**待决**（两者都是数值口径层面的决定，不能在实现里偷偷选）：
+1. 继续逐个定位并恢复结合顺序，直到逐位一致（工作量大、与上游方向相反、易反复）；
+2. 在上游合并后按固定流程重生成 strict 基线，并把“重生成”写成脚本 + 门禁步骤。
+
+### HIP 构建配方（本轮已固化为可选开关）
+
+
+
+过去每次都要手拼变量。现在固化进仓库，**只 `source env.sh` 加一条命令**（昆山实测
+`build-dcu rc=0`，`ONEFLOW_BUILD_HIP=ON`，configure 10s 内完成）：
+
+```bash
+bash src/OneFLOW/scripts/build-dcu.sh --dtk "$ROCM_PATH" --arch gfx906 \
+  --build-dir "$ONEFLOW_ROOT/build/app" --hip-flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
+```
+
+- 开关：`-DONEFLOW_DTK_ROOT=<prefix>`（或 `-DONEFLOW_DTK_AUTODETECT=ON` 读 `$ROCM_PATH`），
+  不设就什么都不做 → CPU/CI 构建完全不受影响（已本地验证：CPU configure 仍为
+  `ONEFLOW_BUILD_HIP=OFF`，1066 个测试全过）。
+- 依赖目录（METIS/CGNS/MPI/DTK 前缀）统一进集群 `scripts/env.sh`，不再每个作业手拼。
+
+之所以过去会失败，不是 DTK 坏了，而是缺三个条件；补齐后在 `kshdnormal`（`dcu:1`）上
+configure + 全量编译均成功：
 
 1. 必须在 **DCU 节点**上（`/dev/kfd`、`HIP_VISIBLE_DEVICES` 可见）；
 2. `export ROCM_PATH=<DTK>`：`hip-targets.cmake` 用

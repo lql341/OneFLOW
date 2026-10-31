@@ -101,18 +101,19 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
 8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
    ≥1M 带 `.skl` 的网格，`partition_type=0`(GenerateLink) 仍失败。
-9. **HIP 构建必须带 `ROCM_PATH`**：DTK 的 `hip-targets.cmake` 用
-   `set(_IMPORT_PREFIX "${ROCM_PATH}/hip" "/opt/dtk/hip")`，不设 `ROCM_PATH` 就去找
-   `/opt/rocm` 的 `libgalaxyhip`，报 “install faulty”；`enable_language(HIP)` 还要
-   `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR`。
-   完整配方见 runbook §1.2；`build/app` 已按此配方重建到当前代码。
-10. **strict（1e-15）基线对当前 master 已过期**：`plateuns2dslau2_34950_35000` 的
-   `res5` 偏离 `2.2e-15`（rel `6.7e-8`）。bisect 定位到 `f7ae944c0`
-   “ns: pure bilateral sound speeds for AUSM-family schemes”（把
-   `gama*p*(1/(rho+SMALL))` 换成 `sqrt(ABS(gama*p/rho))`：数学等价，但少了一次
-   倒数乘法、且丢掉了 `+SMALL` 的零密度护栅，末位必然变）；HIP 与 CPU-only 两种构建
-   给出**完全相同**的偏离值，所以是代码而非构建。要用 1e-15 门禁，须先重生成该算例的
-   `autotest/res.dat` 与 `test/baselines/residual-baseline.json`（数值口径变更，单独评审）。
+9. **HIP 构建用仓库里的可选开关，别再手拼**：`-DONEFLOW_DTK_ROOT=<prefix>`（或读
+   `$ROCM_PATH`）会一次性配好 `ROCM_PATH`、`CMAKE_PREFIX_PATH`、`amd_comgr_DIR`
+   /`AMDDeviceLibs_DIR`/`hsa-runtime64_DIR` 与 `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`；
+   不设则该逻辑完全不生效，CPU/CI 构建不受影响。一键入口：
+   `scripts/build-dcu.sh --dtk "$ROCM_PATH" --arch gfx906 --hip-flags "$ONEFLOW_DTK_HIP_FLAGS"`。
+   原理与故障对照见 runbook §1.2 / §4。
+10. **strict（1e-15）当前仍 4/5，且不止一处贡献者**：`plateuns2dslau2_34950_35000`
+   的 `res5` 偏离已从 `2.204e-15` 降到 `1.779e-15`（补回 `+SMALL` 护栏、恢复 AUSM 双侧
+   的历史结合顺序之后），但**未回到逐位一致**。已定位两处上游重构：
+   `f7ae944c0`（双边声速）与 `6ca93f57c`（面谱半径/局部时间步）；探针数值非单调
+   （中间提交会回到 `0.0`），说明多处末位扰动互相抵消。结论：这一系列“pure …
+   contracts”重构不保证逐位可复现，靠补公式无法还原；要恢复 1e-15 只能按流程重生成
+   基线（或改判据形态），属数值口径决定，等 owner 拍板。
 11. **`HIP.MainSolverFluxOneCall` 的 boundary contract 一直是红的**：
    `reconstruction 8.600e+00`、`stale-op 3.000e+00`，且旧代码 `a42ab5ce` 给出**一模一样**的
    失败值 → 既有问题，不是本轮合并引入；其余 HIP 子项均 PASS。DCU 门禁要用到该测试时
