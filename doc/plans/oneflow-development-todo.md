@@ -344,6 +344,24 @@ f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30
 - 现状 strict 的“绝对 1e-15”对量级 `3e-8` 的 `res5` 相当于 1e-7 相对、对 `1e-2` 的通道
   却是 1e-13 相对；同一绝对阈值在不同通道上宽严不一致，这是该判据本身的形态问题。
 
+### 是不是编译器的 fast-math 在乱重排？（已排除）
+
+项目自己在 `codes/CMakeLists.txt:152` 给全局加了 `-Ofast`（fast-math），一度怀疑是编译器
+把除法/开方重排。固定同一套 CPU-only 构建、只改这一个开关，四组对照（都要先把
+`system/` 拷到二进制旁，否则 solver 起不来，会得到 `files_checked=0` 的假 `0.0`）：
+
+| 代码 | 编译标志 | `max_abs` |
+|---|---|---|
+| 当前代码 | `-Ofast` | `1.778709301357682e-15` |
+| 当前代码 | `-Ofast -fno-fast-math` | `1.778709301357682e-15`（**完全相同**） |
+| 旧代码 a42ab5ce | `-Ofast` | `0.0` |
+| 旧代码 a42ab5ce | `-Ofast -fno-fast-math` | `0.0` |
+
+**结论**：与 fast-math 无关，也不含不确定性。差异完全来自源码里的运算结合顺序
+（`p*(1/rho)` → `p/rho`、`MAX`/`sqrt` 的重组、时间步与谱半径的重新分组），是确定性的、
+可复现的 ≤1 ulp 改变；`res5` 量级只有 `3e-8`，所以绝对 1e-15 的偏差在它上面表现为
+`1e-8` 量级的相对差。
+
 **待决**（两者都是数值口径层面的决定，不能在实现里偷偷选）：
 1. 继续逐个定位并恢复结合顺序，直到逐位一致（工作量大、与上游方向相反、易反复）；
 2. 在上游合并后按固定流程重生成 strict 基线，并把“重生成”写成脚本 + 门禁步骤。
@@ -352,17 +370,31 @@ f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30
 
 
 
-过去每次都要手拼变量。现在固化进仓库，**只 `source env.sh` 加一条命令**（昆山实测
-`build-dcu rc=0`，`ONEFLOW_BUILD_HIP=ON`，configure 10s 内完成）：
+过去每次都要手拼变量。现在固化进仓库，做成**后端无关的加速器 SDK 接口**，
+**只 `source env.sh` 加一条命令**（昆山实测：全新目录 configure 28s、`build/app` 增量重建
+`rc=0`、`ONEFLOW_BUILD_HIP=ON`）：
 
 ```bash
-bash src/OneFLOW/scripts/build-dcu.sh --dtk "$ROCM_PATH" --arch gfx906 \
-  --build-dir "$ONEFLOW_ROOT/build/app" --hip-flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
+bash src/OneFLOW/scripts/build-accel.sh --sdk auto --sdk-root "$ROCM_PATH" \
+  --arch gfx906 --build-dir build/app --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
 ```
 
-- 开关：`-DONEFLOW_DTK_ROOT=<prefix>`（或 `-DONEFLOW_DTK_AUTODETECT=ON` 读 `$ROCM_PATH`），
-  不设就什么都不做 → CPU/CI 构建完全不受影响（已本地验证：CPU configure 仍为
-  `ONEFLOW_BUILD_HIP=OFF`，1066 个测试全过）。
+两条轴是分开的：
+
+| 轴 | 参数 | 取值 | 作用 |
+|---|---|---|---|
+| 运行时 | `ONEFLOW_ACCEL_BACKEND` | `AUTO/CPU/HIP/CUDA/KOKKOS` | 选择运行期后端 |
+| 构建 | `ONEFLOW_ACCEL_SDK` | `auto/hip/cuda`（空=不配置） | 选择构建期 SDK |
+| 构建 | `ONEFLOW_ACCEL_SDK_ROOT` | 厂商前缀 | DTK/ROCm 或 CUDA Toolkit |
+| 构建 | `ONEFLOW_ACCEL_SDK_ARCH` | `gfx906` / `sm_80` | 目标架构 |
+| 构建 | `ONEFLOW_ACCEL_SDK_FLAGS` | 任意 | 传给该 SDK 编译器的额外参数 |
+
+- 解析在 `cmake/OneFLOWAccelSDK.cmake`：`hip` 分支派生 `ROCM_PATH`、厂商包前缀、
+  `amd_comgr`/`AMDDeviceLibs`/`hsa-runtime64` 与 `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`；
+  `cuda` 分支派生 `CUDAToolkit_ROOT`/`CMAKE_CUDA_COMPILER`/`CMAKE_CUDA_ARCHITECTURES`。
+- **不请求就不生效** → CPU/CI 构建完全不受影响（本地验证：CPU configure 仍
+  `ONEFLOW_BUILD_HIP=OFF`，1066 测试全过）。CUDA 分支尚无 NVIDIA 机器实测，只有显式
+  `--sdk cuda` 才会进入，缺 `nvcc` 会直接报错而不是静默降级。
 - 依赖目录（METIS/CGNS/MPI/DTK 前缀）统一进集群 `scripts/env.sh`，不再每个作业手拼。
 
 之所以过去会失败，不是 DTK 坏了，而是缺三个条件；补齐后在 `kshdnormal`（`dcu:1`）上

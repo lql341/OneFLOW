@@ -38,34 +38,35 @@
    同步更新 `src/REVISION`。不要在 `src/` 下保留多个修订目录。
 2. **构建**：`build/app` 是唯一生产（HIP）构建目录，按目标固定、增量编译。
    - 日常增量：`scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW/fast`）。
-   - 上游改动 `CMakeLists.txt` 后 `make` 会自动 reconfigure；它能成功，**但必须满足
-     下面三个条件**（此前记录的“不能 reconfigure”是缺了这些变量造成的，见 §4）：
+   - 上游改动 `CMakeLists.txt` 后 `make` 会自动 reconfigure。**不要再手拼 cmake 变量**，
+     统一走仓库里的加速器 SDK 接口（`cmake/OneFLOWAccelSDK.cmake` +
+     `scripts/build-accel.sh`）；它把下面三条一次配齐：
      1. 作业要在 **DCU 节点**（`kshdnormal`，`dcu:1`；`/dev/kfd` 与
-        `HIP_VISIBLE_DEVICES` 可见）；
-     2. 必须 `export ROCM_PATH=<DTK>`：DTK 的 `hip-targets.cmake` 用
+        `HIP_VISIBLE_DEVICES` 可见）——CPU 队列上没有设备，检测不到架构；
+     2. `ROCM_PATH`：DTK 的 `hip-targets.cmake` 用
         `set(_IMPORT_PREFIX "${ROCM_PATH}/hip" "/opt/dtk/hip")` 定位
         `libgalaxyhip`，不设就落到 `/opt/rocm` → 报 “install faulty /
         not all the files it references”；
-     3. 必须把 `amd_comgr` / `AMDDeviceLibs` / `hsa-runtime64` 传给 cmake，并用
+     3. `amd_comgr` / `AMDDeviceLibs` / `hsa-runtime64` 要传给 cmake，**且**用
         `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES` 让 `enable_language(HIP)` 的
-        try_compile 子工程也能继承，否则报 “Could not find amd_comgr”。
+        try_compile 子工程继承，否则报 “Could not find amd_comgr”。
 
      ```bash
-     source $ONEFLOW_ROOT/scripts/env.sh
-     export ROCM_PATH=/public/software/compiler/rocm/dtk-26.04
-     $CMAKE -S $ONEFLOW_SRC -B $ONEFLOW_ROOT/build/app \
-       -DCMAKE_BUILD_TYPE=Release \
-       -DCMAKE_PREFIX_PATH="$ROCM_PATH/dcc/lib64/cmake/AMDDeviceLibs;$ROCM_PATH/dcc/comgr/lib64/cmake;$ROCM_PATH;$ROCM_PATH/.hyhal" \
-       -Damd_comgr_DIR=$ROCM_PATH/dcc/comgr/lib64/cmake/amd_comgr \
-       -DAMDDeviceLibs_DIR=$ROCM_PATH/dcc/lib64/cmake/AMDDeviceLibs \
-       -Dhsa-runtime64_DIR=$ROCM_PATH/.hyhal/lib/cmake/hsa-runtime64 \
-       -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES="CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR" \
-       -DCMAKE_HIP_COMPILER=$ROCM_PATH/llvm/bin/clang++ \
-       -DCMAKE_HIP_ARCHITECTURES=gfx906 \
-       -DCMAKE_HIP_FLAGS="--gcc-toolchain=/public/software/compiler/gcc-9.3.0 -stdlib=libstdc++ -L$GCC16/lib64" \
-       -DONEFLOW_ENABLE_HIP=ON -DONEFLOW_ENABLE_HIP_TESTS=ON
-     make -C $ONEFLOW_ROOT/build/app -j16
+     source $ONEFLOW_ROOT/scripts/env.sh          # 提供 ROCM_PATH 与 ONEFLOW_DTK_HIP_FLAGS
+
+     # 全新配置（例如预留目录）
+     bash $ONEFLOW_SRC/scripts/build-accel.sh --sdk auto --sdk-root "$ROCM_PATH" \
+       --arch gfx906 --build-dir $ONEFLOW_ROOT/build/platform_hip \
+       --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
+
+     # 增量更新生产构建
+     bash $ONEFLOW_SRC/scripts/build-accel.sh --sdk hip --sdk-root "$ROCM_PATH" \
+       --arch gfx906 --build-dir $ONEFLOW_ROOT/build/app \
+       --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
      ```
+
+     `--sdk auto` 会按前缀内容识别 `hip`/`cuda`；`--configure-only` 只配置不编译。
+     CUDA 侧用同一接口：`--sdk cuda --sdk-root <CUDA Toolkit> --arch sm_80`。
 
    - CPU-only 备用构建（不涉及 HIP 时可用，可在 CPU 节点配置）：`build/platform`。
      CPU 门禁可以指向它：
