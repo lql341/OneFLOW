@@ -200,6 +200,10 @@ iteration to the next.
 5. **Cluster work follows the standard suites.** Use the four suites defined in
    `ci/kunshan/README.md` (`cpu-regression`, `dcu-single`, `cpu-mpi`,
    `dcu-mpi`) with the documented workspace layout and resource tuples.
+6. **Keep the port and the main solver separate.** The 1D Euler HIP code lives
+   in `ports/kunshan/oneflow_1d_hip` and is built standalone with the DTK
+   toolchain; the root build is CPU-only today. Do not claim a DCU capability
+   from a root-build result.
 7. **One fixed cluster workspace.** Kunshan work lives in a single
    `<workspace>/` root: `src/OneFLOW` is overwritten each round, `build/app` is
    the only incremental build, gate evidence goes to `evidence/<gate>/<jobid>/`,
