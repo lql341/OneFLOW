@@ -37,13 +37,38 @@
 1. **源码**：把仓库快照覆盖到 `src/OneFLOW/`（`rsync -a --delete` 或解压覆盖），
    同步更新 `src/REVISION`。不要在 `src/` 下保留多个修订目录。
 2. **构建**：`build/app` 是唯一生产（HIP）构建目录，按目标固定、增量编译。
-   - **不要重新 configure**：DTK 26.04 的 `hip-targets.cmake` 引用了安装里不存在的
-     文件，登录节点与计算节点重新 configure 都会失败。需要恢复时，把上一个
-     `build/app` 从 `snapshots/` 或 `_attic/` 取回。
-   - 用 `scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW/fast`）。
-   - 上游改动 `CMakeLists.txt` 后 `build/app` 没办法再增量跟进（make 会触发
-     reconfigure 并停在 hip 校验）。此时 **CPU 门禁改走预留的 `build/platform`**
-     （CPU-only root build，可正常 configure）：
+   - 日常增量：`scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW/fast`）。
+   - 上游改动 `CMakeLists.txt` 后 `make` 会自动 reconfigure；它能成功，**但必须满足
+     下面三个条件**（此前记录的“不能 reconfigure”是缺了这些变量造成的，见 §4）：
+     1. 作业要在 **DCU 节点**（`kshdnormal`，`dcu:1`；`/dev/kfd` 与
+        `HIP_VISIBLE_DEVICES` 可见）；
+     2. 必须 `export ROCM_PATH=<DTK>`：DTK 的 `hip-targets.cmake` 用
+        `set(_IMPORT_PREFIX "${ROCM_PATH}/hip" "/opt/dtk/hip")` 定位
+        `libgalaxyhip`，不设就落到 `/opt/rocm` → 报 “install faulty /
+        not all the files it references”；
+     3. 必须把 `amd_comgr` / `AMDDeviceLibs` / `hsa-runtime64` 传给 cmake，并用
+        `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES` 让 `enable_language(HIP)` 的
+        try_compile 子工程也能继承，否则报 “Could not find amd_comgr”。
+
+     ```bash
+     source $ONEFLOW_ROOT/scripts/env.sh
+     export ROCM_PATH=/public/software/compiler/rocm/dtk-26.04
+     $CMAKE -S $ONEFLOW_SRC -B $ONEFLOW_ROOT/build/app \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_PREFIX_PATH="$ROCM_PATH/dcc/lib64/cmake/AMDDeviceLibs;$ROCM_PATH/dcc/comgr/lib64/cmake;$ROCM_PATH;$ROCM_PATH/.hyhal" \
+       -Damd_comgr_DIR=$ROCM_PATH/dcc/comgr/lib64/cmake/amd_comgr \
+       -DAMDDeviceLibs_DIR=$ROCM_PATH/dcc/lib64/cmake/AMDDeviceLibs \
+       -Dhsa-runtime64_DIR=$ROCM_PATH/.hyhal/lib/cmake/hsa-runtime64 \
+       -DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES="CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR" \
+       -DCMAKE_HIP_COMPILER=$ROCM_PATH/llvm/bin/clang++ \
+       -DCMAKE_HIP_ARCHITECTURES=gfx906 \
+       -DCMAKE_HIP_FLAGS="--gcc-toolchain=/public/software/compiler/gcc-9.3.0 -stdlib=libstdc++ -L$GCC16/lib64" \
+       -DONEFLOW_ENABLE_HIP=ON -DONEFLOW_ENABLE_HIP_TESTS=ON
+     make -C $ONEFLOW_ROOT/build/app -j16
+     ```
+
+   - CPU-only 备用构建（不涉及 HIP 时可用，可在 CPU 节点配置）：`build/platform`。
+     CPU 门禁可以指向它：
 
      ```bash
      export ONEFLOW_CPU_BIN=$ONEFLOW_ROOT/build/platform/bin/OneFLOW
@@ -52,6 +77,7 @@
 
      `cpu-regression.slurm` 默认仍用 `$ONEFLOW_BIN`（`build/app`），只在显式设置
      `ONEFLOW_CPU_BIN` 时切换，并把 `system/` 拷到被测二进制同目录。
+     实测两种构建对 CPU 五算例给出**完全相同的残差**，可互为对照。
 3. **fixture**：`fixtures/m6-8zone-cpu8/` 只读。派生算例用
    `scripts/prep-case.sh <dest> <steps>` 写到 `evidence/.../<jobid>/` 或
    `$TMPDIR`，作业结束随手清掉。
@@ -102,7 +128,8 @@ $WORKSPACE/scripts/cleanup.sh                         # 日志/快照轮转 + �
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `no ROCm-capable device is detected` | 节点未分配到 DCU / 卡被占用 | 检查 `--gres=dcu:N` 与节点，重投 |
-| `hip-targets.cmake` 校验失败 / `An install or uninstall procedure did not complete successfully` | 在该节点重新 configure（DTK 26.04 安装自带的引用缺失） | 不要 reconfigure；`build/app` 用既有目录增量 make，CPU 门禁改用 `build/platform`（`ONEFLOW_CPU_BIN`） |
+| `The imported target "hip::galaxyhip" references "/opt/rocm/hip/lib/libgalaxyhip..." but this file does not exist` | 没设 `ROCM_PATH`，DTK 的 `hip-targets.cmake` 前缀回落 `/opt/rocm` | `export ROCM_PATH=<DTK>` 后重新 configure（见 §1 配方） |
+| `Could not find a package configuration file provided by "amd_comgr"` | `enable_language(HIP)` 的 try_compile 子工程没继承目录 | 传 `-Damd_comgr_DIR/-DAMDDeviceLibs_DIR/-Dhsa-runtime64_DIR` **且** `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES="CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR"` |
 | `/bin/sh: .../cmake-3.30.5-linux-x86_64/bin/cmake: No such file` | `make` 用缓存里的旧 cmake 路径，且 `cmake` 未在 `PATH` | `source scripts/env.sh`（已把 `$CMAKE` 的目录前置到 `PATH`） |
 | `ldd` 找不到 `libmpi.so.40` | 未 source `scripts/env.sh` | 所有作业脚本第一行 source |
 | `srun` 下 MPI size=1 | `srun` 不做 MPI 启动 | 改用 `mpirun` |

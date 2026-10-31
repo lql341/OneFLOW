@@ -266,22 +266,64 @@ strict 失败量级：`res.dat` 的 `res5` 通道（量级 `3.29e-8`）
 ### A/B 判定：不是构建配置，是代码变化
 
 同构建配置（CPU-only、同 `-Ofast` 组合）下换回旧代码 `a42ab5ce`，只跑该算例的
-strict：`max_abs = 0.0`（与基线**逐位一致**）。因此：
+strict：`max_abs = 0.0`（与基线**逐位一致**）。补一句更硬的对照：把 `build/app`
+按 HIP 配方重建后，用 **HIP-enabled 二进制**跑同一算例，得到**完全相同**的
+`2.204022027463493e-15`。因此：
 
-- `build/platform` 与基线的数值基准等价（不是我用 CPU-only 构建造成的偏差）；
+- 差异与构建基础无关（CPU-only 与 HIP 两种构建给出同一数值）；
 - 差异来自 `a42ab5ce → 638276499` 的代码变化，且只落在 **restart 续算**这条路径
   （同物理、同 `ilim=0` 的从头算算例 `plateuns2dslau2` 仍逐位一致）；
 - 上游 CI 只跑 `ci-serial`（= `cpu-serial` + `grid-serial`）的 1e-8 口径，**不跑 1e-15**，
   所以上游绿 CI 不能覆盖这个偏差。
 
+### 二分：具体是哪个上游提交
+
+在该区间上 `git bisect`（每次现配现编 CPU-only + 只跑该算例）定位到：
+
+```
+f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30, eric)
+```
+
+探针序列也一致：该提交之前 5 次 `max_abs = 0.0`，之后 `1.96e-15` → `2.25e-15`。
+改动本身是把五个 AUSM 族函数里重复的声速计算抽成 `IdealGasBilateralSoundSpeeds`：
+
+```cpp
+// 旧： c2 = gama * p * (1.0/(rho + SMALL));  c = sqrt(c2)
+// 新： c  = sqrt( ABS(gama * p / rho) )        // IdealGasSoundSpeedFromPressure
+```
+
+判断：**数学等价，不是物理/格式错误**。两处差异都只影响末位：
+(1) `x*(1/rho)` 改为 `x/rho`（差 ≤1 ulp）；(2) 丢掉了 `+SMALL` 的零密度护栅
+（rho=0 时从 1e20 变成 inf，属防御性代码退步，建议提给上游，但不影响有效状态）。
+`-Ofast` 下这种末位差经过 50 步续算后，在量级 `3e-8` 的 `res5` 通道上表现为
+`6.7e-8` 的相对偏离——是“残差通道本身很小”，不是真的大偏差。
+
 ### 结论与待决
 
 1. normal 门禁仍然绿，合并没有破坏验收口径；1062 单测与 Linux GCC 16 上全过。
 2. **strict 基线对当前 master 已过期**：要恢复 1e-15 门禁，必须重生成该算例的
-   `autotest/res.dat` 与 `test/baselines/residual-baseline.json` 条目。这是数值口径
-   变更（等于承认新代码的续算结果），需单独评审提交，不在本轮擅自改。
-3. 若要追到具体上游提交，可在 `codes/ns|uns|usolver` 的重构提交上做二分（本轮只
-   定位到路径，没做二分）。
+   `autotest/res.dat` 与 `test/baselines/residual-baseline.json` 条目；或把 strict
+   从“绝对 1e-15”改成正则化（相对）判据。两种都是数值口径变更，需评审，不在本轮
+   擅自改。
+3. **DCU 侧的既有红灯**（与本次合并无关）：`HIP.MainSolverFluxOneCall` 的
+   boundary contract 一直失败（`reconstruction 8.600e+00`、`stale-op 3.000e+00`），
+   旧代码 `a42ab5ce` 给出**相同**失败值；其余 HIP 子项 PASS。要用 DCU 门禁需先修它。
+4. `ActionMapReadFileTest.DuplicateNameKeepsFirstRegisteredId` 在 `ctest -j16` 全量并发
+   下偶然失败，单跑与连续 3 次并发均通过 → 测试隔离问题（共享临时目录），待单独修。
+
+### HIP 构建配方（此前没记录，本轮补齐）
+
+`build/app` 重新 configure 之所以过去会失败，不是 DTK 坏了，而是缺三个条件；补齐后
+在 `kshdnormal`（`dcu:1`）上 configure + 全量编译均成功（`make rc=0`，1078 个测试）：
+
+1. 必须在 **DCU 节点**上（`/dev/kfd`、`HIP_VISIBLE_DEVICES` 可见）；
+2. `export ROCM_PATH=<DTK>`：`hip-targets.cmake` 用
+   `set(_IMPORT_PREFIX "${ROCM_PATH}/hip" "/opt/dtk/hip")`，不设就找 `/opt/rocm`；
+3. 传 `amd_comgr`/`AMDDeviceLibs`/`hsa-runtime64` 目录，**并**用
+   `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES="CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR"`
+   让 `enable_language(HIP)` 的 try_compile 子工程继承。
+
+完整命令写在 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) §1.2。
 
 ### 本轮顺带修掉的工作区问题
 

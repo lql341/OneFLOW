@@ -101,17 +101,23 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
 8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
    ≥1M 带 `.skl` 的网格，`partition_type=0`(GenerateLink) 仍失败。
-9. **`build/app` 已经不能 reconfigure**：DTK 26.04 的 `hip-targets.cmake` 引用了安装里
-   不存在的文件，`cmake -S src/OneFLOW -B build/app` 直接失败。后果：上游一旦改
-   `CMakeLists.txt`，`build/app` 就无法靠增量 make 跟进。CPU 门禁走预留的
-   `build/platform`（`ONEFLOW_CPU_BIN=$ONEFLOW_ROOT/build/platform/bin/OneFLOW`）；
-   DCU 门禁在 DTK 修好或重建之前是阻塞状态。
+9. **HIP 构建必须带 `ROCM_PATH`**：DTK 的 `hip-targets.cmake` 用
+   `set(_IMPORT_PREFIX "${ROCM_PATH}/hip" "/opt/dtk/hip")`，不设 `ROCM_PATH` 就去找
+   `/opt/rocm` 的 `libgalaxyhip`，报 “install faulty”；`enable_language(HIP)` 还要
+   `-DCMAKE_TRY_COMPILE_PLATFORM_VARIABLES=CMAKE_PREFIX_PATH;amd_comgr_DIR;AMDDeviceLibs_DIR`。
+   完整配方见 runbook §1.2；`build/app` 已按此配方重建到当前代码。
 10. **strict（1e-15）基线对当前 master 已过期**：`plateuns2dslau2_34950_35000` 的
-   `res5` 偏离 `2.2e-15`（rel `6.7e-8`），A/B 证调用旧代码逐位为 0，差异来自
-   restart 续算路径的代码变化，不是构建配置。要用 1e-15 门禁，须先重生成该算例的
-   `autotest/res.dat` 与 `test/baselines/residual-baseline.json`（属数值口径变更，
-   单独评审）。上游 CI 只跑 1e-8，不覆盖这条。
-11. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+   `res5` 偏离 `2.2e-15`（rel `6.7e-8`）。bisect 定位到 `f7ae944c0`
+   “ns: pure bilateral sound speeds for AUSM-family schemes”（把
+   `gama*p*(1/(rho+SMALL))` 换成 `sqrt(ABS(gama*p/rho))`：数学等价，但少了一次
+   倒数乘法、且丢掉了 `+SMALL` 的零密度护栅，末位必然变）；HIP 与 CPU-only 两种构建
+   给出**完全相同**的偏离值，所以是代码而非构建。要用 1e-15 门禁，须先重生成该算例的
+   `autotest/res.dat` 与 `test/baselines/residual-baseline.json`（数值口径变更，单独评审）。
+11. **`HIP.MainSolverFluxOneCall` 的 boundary contract 一直是红的**：
+   `reconstruction 8.600e+00`、`stale-op 3.000e+00`，且旧代码 `a42ab5ce` 给出**一模一样**的
+   失败值 → 既有问题，不是本轮合并引入；其余 HIP 子项均 PASS。DCU 门禁要用到该测试时
+   必须先处理它。
+12. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则
