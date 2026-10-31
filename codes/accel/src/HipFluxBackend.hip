@@ -2311,12 +2311,23 @@ void HipFluxBackend::ReconstructFaceValues(
     const bool hasSolid = view.hasSolidBoundary;
     if ( hasSolid )
     {
-        // The host boundary-state buffer and the device copy share the same
-        // equation-major [equation][face] layout, so one contiguous transfer
-        // replaces nEqu blocking copies.  This transfer is the whole
-        // reconstruction imbalance on the 8-zone case: only wall-adjacent zones
-        // have solid faces, and they pay nEqu*totalFaces values per stage
-        // (5.6 ms/step on those ranks, 0 on the others).
+        // Solid-override faces are a prefix of the face array. Callers pack
+        // bcQ as one contiguous equation-major buffer of
+        // nEquations*nBoundaryFaces values so this can be one transfer.
+        // Indexing that buffer with a full-face stride reads the wrong
+        // equation for every face after the first.
+        for ( int equation = 1; equation < view.nEquations; ++ equation )
+        {
+            if ( view.bcQ[ equation ]
+                 != view.bcQ[ 0 ]
+                    + static_cast< std::ptrdiff_t >( equation )
+                        * view.nBoundaryFaces )
+            {
+                throw std::invalid_argument(
+                    "HIP reconstruction bcQ must be contiguous and "
+                    "equation-major with stride nBoundaryFaces" );
+            }
+        }
         ScopedStageTimer bcqTimer( "recon_bcq" );
         const std::size_t bcQValues =
             static_cast< std::size_t >( view.nEquations )

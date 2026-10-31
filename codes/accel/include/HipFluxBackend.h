@@ -294,6 +294,9 @@ public:
     // Reconstruct face primitive values into state-owned device buffers. The
     // host view supplies metadata and optional diagnostic destinations; the
     // numerical path consumes q/gradient/geometry already resident on device.
+    // When hasSolidBoundary is set, bcQ must be one contiguous equation-major
+    // buffer with stride nBoundaryFaces. Solid-override faces are a prefix,
+    // so the kernel indexes that buffer by face.
     void ReconstructFaceValues(
         const CellFaceReconstructionView & view,
         bool downloadToHost = false );
