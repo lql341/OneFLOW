@@ -146,10 +146,12 @@ MultiSolverMultiGridTask(name)
 
 ## 8. 放置说明
 
-建议提交路径（与 `AGENTS.md` 文档地图一致）：
+上游提交路径为 `doc/reports/architecture/oneflow-hexin-main-path-handoff-20260915.md`。
+本仓库不保留 `doc/reports/architecture/` 目录（见 `doc/README.md` §3），同步该文件时
+按映射表落到本文件当前位置：
 
 ```text
-doc/reports/architecture/oneflow-hexin-main-path-handoff-20260915.md
+doc/plans/oneflow-hexin-main-path-handoff-20260915.md
 ```
 
 若仓库已有 `doc/reports/README.md` 的索引表，请在同一变更中追加本文件条目。

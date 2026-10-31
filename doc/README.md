@@ -13,7 +13,7 @@
 | 目录 | 放什么 | 保留策略 |
 |---|---|---|
 | [`architecture/`](architecture/) | 稳定的架构说明、边界审计 | 每个主题只保留**一份**现行版本；被取代的审计直接删除（git 历史即档案） |
-| [`plans/`](plans/) | 活文档：路线图、长周期计划 | 只放**living**文档（无日期后缀）；一次性 checklist 完成后删除 |
+| [`plans/`](plans/) | 活文档：路线图、长周期计划 | 只放**living**文档（无日期后缀）；一次性 checklist 完成后删除；从 upstream `reports/architecture/` 映射过来的快照例外（见 §3） |
 | [`handoff/`](handoff/) | 交接（living） | **只有一份** `oneflow-current-handoff.md`，就地更新；不新建 dated handoff |
 | [`runbooks/`](runbooks/) | 构建、集群、移植等操作流程 | 每个流程一份；步骤变更就地更新，不建副本 |
 | [`evidence/`](evidence/) | 可复核的环境/构建事实 | 与某一轮结论绑定的证据；结论被取代后随之删除 |
