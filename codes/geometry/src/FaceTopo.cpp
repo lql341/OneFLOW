@@ -33,6 +33,9 @@ License
 #include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
+#include <vector>
+#include <utility>
 
 
 BeginNameSpace( ONEFLOW )
@@ -91,41 +94,19 @@ const IntField & GetInterfaceChildFaceIds(
     }
 
     const IntField & childFaceIds = childFaces[ globalFaceId ];
-    const LinkField & childNodeIds = splitTable.childFaceNodeIds;
-    const LinkField & childNodeFlags = splitTable.childFaceNodeFlags;
 
-    for ( int childIndex = 0; childIndex < childFaceIds.size(); ++ childIndex )
-    {
-        const int childFaceId = childFaceIds[ childIndex ];
-        if ( childFaceId < 0 ||
-             static_cast< size_t >( childFaceId ) >= childNodeIds.size() ||
-             static_cast< size_t >( childFaceId ) >= childNodeFlags.size() )
-        {
-            throw std::out_of_range(
-                "GetInterfaceChildFaceIds: child face ID is out of range" );
-        }
-        if ( childNodeIds[ childFaceId ].size() !=
-             childNodeFlags[ childFaceId ].size() )
-        {
-            throw std::logic_error(
-                "GetInterfaceChildFaceIds: child face node IDs and flags have different sizes" );
-        }
-    }
-
+    // This accessor resolves parent-to-child identity only. The split table
+    // does not carry the global face count, so child ID bounds are checked by
+    // consumers that have access to the global face registry.
     return childFaceIds;
 }
 
 const IntField & GetInterfaceChildFaceIds(
     const IFaceLink & interfaceLink, int zoneId, int localInterfaceFaceId )
 {
-    if ( ! interfaceLink.face_search )
-    {
-        throw std::logic_error(
-            "GetInterfaceChildFaceIds: face search is not initialized" );
-    }
     return GetInterfaceChildFaceIds(
-        interfaceLink.l2g,
-        interfaceLink.face_search->interfaceSplit,
+        interfaceLink.GetLocalToGlobalMap(),
+        interfaceLink.GetInterfaceSplit(),
         zoneId,
         localInterfaceFaceId );
 }
@@ -339,253 +320,142 @@ void FaceTopo::SetNewFace2Node( IFaceLink & iFaceLink )
             "FaceTopo::SetNewFace2Node: face, face-type, and boundary-face counts are inconsistent" );
     }
 
-    int nBFaces = static_cast< int >( nBoundaryFaces );
-    this->rebuildFaces.resize( 0 );
+    const int nBFaces = static_cast< int >( nBoundaryFaces );
+    const int nFacesInt = static_cast< int >( nFaces );
+    const IntField & bcType = this->bcManager->bcRecord->bcType;
 
-    int localInterfaceFaceId = 0;
-    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
-    {
-        int bcType = this->bcManager->bcRecord->bcType[ iFace ];
+    LinkField childGlobalIdsPerInterfaceLocal;
+    CollectBoundaryInterfaceChildFaceIds(
+        bcType,
+        nBFaces,
+        iFaceLink.GetLocalToGlobalMap(),
+        iFaceLink.MutableInterfaceSplit(),
+        this->GetGrid().id,
+        childGlobalIdsPerInterfaceLocal );
 
-        int nFNode = this->faces[ iFace ].size();
-        IntField resolvedFaceNodes;
+    const bool hasNodeMesh = static_cast< bool >( this->GetGrid().nodeMesh );
+    const HXSize_t nodeMeshCount = hasNodeMesh
+        ? this->GetGrid().nodeMesh->GetNumberOfNodes()
+        : 0;
 
-        if ( BC::IsInterfaceBc( bcType ) )
-        {
-            const IntField & childFaceIds = GetInterfaceChildFaceIds( iFaceLink.l2g, iFaceLink.face_search->interfaceSplit, this->GetGrid().id, localInterfaceFaceId );
-            int nCFace = childFaceIds.size();
+    std::vector< LinkField > childNodeIdsPerInterfaceLocal;
+    std::vector< LinkField > childNodeFlagsPerInterfaceLocal;
+    CollectBoundaryInterfaceChildNodeMappings(
+        bcType,
+        nBFaces,
+        iFaceLink.GetLocalToGlobalMap(),
+        iFaceLink.MutableInterfaceSplit(),
+        this->GetGrid().id,
+        childNodeIdsPerInterfaceLocal,
+        childNodeFlagsPerInterfaceLocal );
 
-            if ( nCFace > 0 )
-            {
-                for ( int iCFace = 0; iCFace < nCFace; ++ iCFace )
-                {
-                    //this->lCellNew.push_back( this->lCell[ iFace ] );
-
-                    const int cFid = childFaceIds[ iCFace ];
-                    const bool hasNodeMesh = static_cast< bool >( this->GetGrid().nodeMesh );
-                    const HXSize_t nodeMeshCount = hasNodeMesh
-                        ? this->GetGrid().nodeMesh->GetNumberOfNodes()
-                        : 0;
-                    resolvedFaceNodes = ResolveChildFaceNodeIds(
-                        this->faces[ iFace ],
-                        iFaceLink.face_search->interfaceSplit.childFaceNodeIds[ cFid ],
-                        iFaceLink.face_search->interfaceSplit.childFaceNodeFlags[ cFid ],
-                        hasNodeMesh,
-                        nodeMeshCount );
-                    this->rebuildFaces.push_back( resolvedFaceNodes );
-                }
-            }
-            else
-            {
-                for ( int iNode = 0; iNode < nFNode; ++ iNode )
-                {
-                    int nodeIndex = this->faces[ iFace ][ iNode ];
-                    resolvedFaceNodes.push_back( nodeIndex );
-                }
-                this->rebuildFaces.push_back( resolvedFaceNodes );
-            }
-            ++ localInterfaceFaceId;
-        }
-        else
-        {
-            for ( int iNode = 0; iNode < nFNode; ++ iNode )
-            {
-                int nodeIndex = this->faces[ iFace ][ iNode ];
-                resolvedFaceNodes.push_back( nodeIndex );
-            }
-            this->rebuildFaces.push_back( resolvedFaceNodes );
-        }
-    }
-
-    //Inner Face
-    for ( int iFace = nBFaces; iFace < nFaces; ++ iFace )
-    {
-        int nFNode = this->faces[ iFace ].size();
-        IntField resolvedFaceNodes;
-        for ( int iNode = 0; iNode < nFNode; ++ iNode )
-        {
-            int nId = this->faces[ iFace ][ iNode ];
-            resolvedFaceNodes.push_back( nId );
-        }
-        this->rebuildFaces.push_back( resolvedFaceNodes );
-    }
+    RebuildFaceNodeListsAfterInterfaceSplit(
+        this->faces,
+        bcType,
+        nBFaces,
+        nFacesInt,
+        childGlobalIdsPerInterfaceLocal,
+        childNodeIdsPerInterfaceLocal,
+        childNodeFlagsPerInterfaceLocal,
+        hasNodeMesh,
+        nodeMeshCount,
+        this->rebuildFaces );
 }
 
 void FaceTopo::SetNewFace2Cell( IFaceLink & iFaceLink )
 {
-    int nBFaces = this->bcManager->bcRecord->GetBoundaryFaceCount();
+    const int nBFaces = this->bcManager->bcRecord->GetBoundaryFaceCount();
+    const int nFaces = static_cast< int >( this->GetFaceCount() );
+    const IntField & bcType = this->bcManager->bcRecord->bcType;
 
-    int localInterfaceFaceId = 0;
+    IntField childCountPerInterfaceLocal;
+    CollectBoundaryInterfaceChildCounts(
+        bcType,
+        nBFaces,
+        iFaceLink.GetLocalToGlobalMap(),
+        iFaceLink.MutableInterfaceSplit(),
+        this->GetGrid().id,
+        childCountPerInterfaceLocal );
 
-    this->rebuildLeftCells.resize( 0 );
-    this->rebuildRightCells.resize( 0 );
-
-    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
-    {
-        int bcType = this->bcManager->bcRecord->bcType[ iFace ];
-
-        if ( BC::IsInterfaceBc( bcType ) )
-        {
-            const IntField & childFaceIds = GetInterfaceChildFaceIds( iFaceLink.l2g, iFaceLink.face_search->interfaceSplit, this->GetGrid().id, localInterfaceFaceId );
-            int nCFace = childFaceIds.size();
-
-            if ( nCFace > 0 )
-            {
-                for ( int iChildFace = 0; iChildFace < nCFace; ++ iChildFace )
-                {
-                    this->rebuildLeftCells.push_back( this->lCells[ iFace ] );
-                }
-            }
-            else
-            {
-                this->rebuildLeftCells.push_back( this->lCells[ iFace ] );
-            }
-            ++ localInterfaceFaceId;
-        }
-        else
-        {
-            this->rebuildLeftCells.push_back( this->lCells[ iFace ] );
-        }
-    }
-
-    int nBFaceNew = this->rebuildLeftCells.size();
-
-    int nCells = this->GetGrid().nCells;
-
-    for ( int iFace = 0; iFace < nBFaceNew; ++ iFace )
-    {
-        this->rebuildRightCells.push_back( iFace + nCells );
-    }
-
-    int nFaces = this->GetFaceCount();
-
-    for ( int iFace = nBFaces; iFace < nFaces; ++ iFace )
-    {
-        this->rebuildLeftCells.push_back( this->lCells[ iFace ] );
-        this->rebuildRightCells.push_back( this->rCells[ iFace ] );
-    }
+    RebuildFaceCellSidesAfterInterfaceSplit(
+        bcType,
+        this->lCells,
+        this->rCells,
+        nBFaces,
+        nFaces,
+        childCountPerInterfaceLocal,
+        this->GetGrid().nCells,
+        this->rebuildLeftCells,
+        this->rebuildRightCells );
 }
 
 
 void FaceTopo::ModifyBoundaryInformation( IFaceLink & iFaceLink )
 {
-    //find the new number of boundary faces
-    int nBFaces = this->bcManager->bcRecord->GetBoundaryFaceCount();
+    const int zoneId = this->GetGrid().id;
 
-    int localIid = 0;
+    // Live parent globals and split bookkeeping go through IFaceLink so zone
+    // bounds and nChild sizing stay next to the dual-map tables.
+    const IntField & parentGlobalFaceIds = iFaceLink.GetL2gForZone( zoneId );
+    const int nIFaces = static_cast< int >( parentGlobalFaceIds.size() );
 
-    IntField localI2B;
-
-    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
-    {
-        int bcType = this->bcManager->bcRecord->bcType[ iFace ];
-        if ( BC::IsInterfaceBc( bcType ) )
-        {
-            localI2B.push_back( iFace );
-            ++ localIid;
-        }
-    }
-
-    int nBFaceNew = 0;
-
-    int nIFaces = localI2B.size();
-
-    int nIFaceNew = nIFaces;
-
-    iFaceLink.nChild.resize( iFaceLink.l2g.size() );
-    iFaceLink.nChild[ this->GetGrid().id ].assign( nIFaces, 0 );
-
+    LinkField childGlobalIdsPerParent;
+    childGlobalIdsPerParent.resize( static_cast< size_t >( nIFaces ) );
     for ( int iFid = 0; iFid < nIFaces; ++ iFid )
     {
-        const IntField & childFaceIds = GetInterfaceChildFaceIds( iFaceLink.l2g, iFaceLink.face_search->interfaceSplit, this->GetGrid().id, iFid );
-        const int gFid = iFaceLink.l2g[ this->GetGrid().id ][ iFid ];
-        int nCFace = childFaceIds.size();
-
-        if ( nCFace > 0 )
-        {
-            iFaceLink.nChild[ this->GetGrid().id ][ iFid ] = nCFace;
-            for ( int iCFace = 0; iCFace < nCFace; ++ iCFace )
-            {
-                int cFid = childFaceIds[ iCFace ];
-                iFaceLink.l2gNew[ this->GetGrid().id ].push_back( cFid );
-
-                iFaceLink.nChild[ this->GetGrid().id ].push_back( 0 );
-            }
-            ++ nIFaceNew;
-        }
-        else
-        {
-            iFaceLink.l2gNew[ this->GetGrid().id ].push_back( gFid );
-        }
+        childGlobalIdsPerParent[ iFid ] = GetInterfaceChildFaceIds(
+            iFaceLink.GetLocalToGlobalMap(),
+            iFaceLink.MutableInterfaceSplit(),
+            zoneId,
+            iFid );
     }
+
+    iFaceLink.EnsureSplitBookkeepingMatchesZones();
+
+    RebuildZoneL2gNewAfterInterfaceSplit(
+        parentGlobalFaceIds,
+        childGlobalIdsPerParent,
+        iFaceLink.MutableL2gNewForZone( zoneId ),
+        iFaceLink.MutableNChildForZone( zoneId ) );
 
     this->ResetNumberOfBoundaryCondition( iFaceLink );
 }
 
 void FaceTopo::ResetNumberOfBoundaryCondition( IFaceLink & iFaceLink )
 {
-    int nBFaces = this->bcManager->bcRecord->GetBoundaryFaceCount();
+    const int nBFaces = this->bcManager->bcRecord->GetBoundaryFaceCount();
+    const IntField & bcType = this->bcManager->bcRecord->bcType;
+    const IntField & bcNameId = this->bcManager->bcRecord->bcNameId;
 
-    this->bcManager->bcRecordNew->bcType.resize( 0 );
-    this->bcManager->bcRecordNew->bcNameId.resize( 0 );
+    // Child counts in boundary-interface order (same walk as ExpandBcRecord...).
+    IntField childCountPerInterfaceLocal;
+    CollectBoundaryInterfaceChildCounts(
+        bcType,
+        nBFaces,
+        iFaceLink.GetLocalToGlobalMap(),
+        iFaceLink.MutableInterfaceSplit(),
+        this->GetGrid().id,
+        childCountPerInterfaceLocal );
 
-    int localIid = 0;
-    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
-    {
-        int bcRegion = this->bcManager->bcRecord->bcNameId[ iFace ];
-        int bcType = this->bcManager->bcRecord->bcType[ iFace ];
-        if ( BC::IsInterfaceBc( bcType ) )
-        {
-            const IntField & childFaceIds = GetInterfaceChildFaceIds( iFaceLink.l2g, iFaceLink.face_search->interfaceSplit, this->GetGrid().id, localIid );
-            int nCFace = childFaceIds.size();
-
-            if ( nCFace > 0 )
-            {
-                for ( int iCFace = 0; iCFace < nCFace; ++ iCFace )
-                {
-                    this->bcManager->bcRecordNew->bcType.push_back( bcType );
-                    this->bcManager->bcRecordNew->bcNameId.push_back( bcRegion );
-                }
-            }
-            else
-            {
-                this->bcManager->bcRecordNew->bcType.push_back( bcType );
-                this->bcManager->bcRecordNew->bcNameId.push_back( bcRegion );
-            }
-
-            ++ localIid;
-        }
-        else
-        {
-            this->bcManager->bcRecordNew->bcType.push_back( bcType );
-            this->bcManager->bcRecordNew->bcNameId.push_back( bcRegion );
-        }
-    }
+    ExpandBcRecordForSplitInterfaces(
+        bcType,
+        bcNameId,
+        childCountPerInterfaceLocal,
+        this->bcManager->bcRecordNew->bcType,
+        this->bcManager->bcRecordNew->bcNameId );
 
     this->ConstructNewInterfaceMap( iFaceLink );
 }
 
 void FaceTopo::ConstructNewInterfaceMap( IFaceLink & iFaceLink )
 {
-    int nIFaceNew = iFaceLink.l2gNew[ this->GetGrid().id ].size();
+    const int zoneId = this->GetGrid().id;
 
-    for ( int localIFid = 0; localIFid < nIFaceNew; ++ localIFid )
-    {
-        int gIFid = iFaceLink.l2gNew[ this->GetGrid().id ][ localIFid ];
-        int oldSize = iFaceLink.gI2ZidNew.size();
-        int newSize = ONEFLOW::MAX( gIFid + 1, oldSize );
-
-        iFaceLink.gI2ZidNew.resize( newSize );
-        iFaceLink.g2lNew.resize( newSize );
-
-        int nFZone = iFaceLink.gI2ZidNew[ gIFid ].size();
-
-        if ( nFZone < 2 )
-        {
-            iFaceLink.gI2ZidNew[ gIFid ].push_back( this->GetGrid().id );
-            iFaceLink.g2lNew   [ gIFid ].push_back( localIFid );
-        }
-    }
+    BuildInverseInterfaceMapForZone(
+        zoneId,
+        iFaceLink.MutableL2gNewForZone( zoneId ),
+        iFaceLink.MutableGlobalToZoneIdsNew(),
+        iFaceLink.MutableGlobalToLocalIdsNew() );
 }
 
 void FaceTopo::UpdateOtherTopologyTerm()
@@ -769,6 +639,12 @@ void ValidateBoundaryBcLayout( const FaceTopo & faceTopo )
     }
 }
 
+void ReorderBoundaryFirstAndValidate( FaceTopo & faceTopo )
+{
+    faceTopo.ReorderLink();
+    ValidateBoundaryBcLayout( faceTopo );
+}
+
 void FaceTopo::ReorderLink()
 {
     const HXSize_t nFaces = this->GetFaceCount();
@@ -818,6 +694,719 @@ void FaceTopo::ReorderLink()
 
     // Cell-to-face adjacency stores face indices and must be rebuilt after reordering.
     this->c2f.clear();
+}
+
+
+void ExpandBcRecordForSplitInterfaces(
+    const IntField & bcType,
+    const IntField & bcNameId,
+    const IntField & childCountPerInterfaceLocal,
+    IntField & outBcType,
+    IntField & outBcNameId )
+{
+    if ( bcType.size() != bcNameId.size() )
+    {
+        throw std::logic_error(
+            "ExpandBcRecordForSplitInterfaces: bcType and bcNameId size mismatch" );
+    }
+
+    outBcType.clear();
+    outBcNameId.clear();
+
+    int interfaceLocal = 0;
+    for ( std::size_t iFace = 0; iFace < bcType.size(); ++ iFace )
+    {
+        const int bc = bcType[ iFace ];
+        const int nameId = bcNameId[ iFace ];
+        if ( BC::IsInterfaceBc( bc ) )
+        {
+            if ( interfaceLocal < 0 ||
+                 static_cast< std::size_t >( interfaceLocal ) >=
+                     childCountPerInterfaceLocal.size() )
+            {
+                throw std::out_of_range(
+                    "ExpandBcRecordForSplitInterfaces: interface child-count index out of range" );
+            }
+            const int nCFace = childCountPerInterfaceLocal[ interfaceLocal ];
+            ++ interfaceLocal;
+            const int nEmit = ( nCFace > 0 ) ? nCFace : 1;
+            for ( int i = 0; i < nEmit; ++ i )
+            {
+                outBcType.push_back( bc );
+                outBcNameId.push_back( nameId );
+            }
+        }
+        else
+        {
+            outBcType.push_back( bc );
+            outBcNameId.push_back( nameId );
+        }
+    }
+}
+
+
+void BuildInverseInterfaceMapForZone(
+    int zoneId,
+    const IntField & l2gNewForZone,
+    LinkField & gI2ZidNew,
+    LinkField & g2lNew )
+{
+    if ( zoneId < 0 )
+    {
+        throw std::out_of_range(
+            "BuildInverseInterfaceMapForZone: zone ID is negative" );
+    }
+    if ( gI2ZidNew.size() != g2lNew.size() )
+    {
+        throw std::logic_error(
+            "BuildInverseInterfaceMapForZone: gI2ZidNew and g2lNew size mismatch" );
+    }
+
+    // Validate all input IDs and existing rows before changing either table.
+    // One zone must not register the same global face more than once: otherwise
+    // the duplicate could be mistaken for a remote participant during lookup.
+    std::unordered_set< int > seenGlobalFaceIds;
+    seenGlobalFaceIds.reserve( l2gNewForZone.size() );
+    for ( const int gIFid : l2gNewForZone )
+    {
+        if ( gIFid < 0 )
+        {
+            throw std::out_of_range(
+                "BuildInverseInterfaceMapForZone: global face id is negative" );
+        }
+        if ( ! seenGlobalFaceIds.insert( gIFid ).second )
+        {
+            throw std::logic_error(
+                "BuildInverseInterfaceMapForZone: duplicate global face ID in zone mapping" );
+        }
+
+        if ( static_cast< std::size_t >( gIFid ) < gI2ZidNew.size() &&
+             gI2ZidNew[ gIFid ].size() != g2lNew[ gIFid ].size() )
+        {
+            throw std::logic_error(
+                "BuildInverseInterfaceMapForZone: per-face zone/local lists differ in size" );
+        }
+    }
+
+    for ( int localIFid = 0; localIFid < static_cast< int >( l2gNewForZone.size() ); ++ localIFid )
+    {
+        const int gIFid = l2gNewForZone[ localIFid ];
+        const std::size_t need = static_cast< std::size_t >( gIFid ) + 1;
+        if ( gI2ZidNew.size() < need )
+        {
+            gI2ZidNew.resize( need );
+            g2lNew.resize( need );
+        }
+
+        // Rebuild buffers start with the live inverse maps. Refresh this
+        // zone's slot when the global face already exists; otherwise a stale
+        // local index or duplicate self-participant would survive the rebuild.
+        IntField & zoneIds = gI2ZidNew[ gIFid ];
+        IntField & localFaceIds = g2lNew[ gIFid ];
+        bool foundZone = false;
+        for ( std::size_t slot = 0; slot < zoneIds.size(); ++ slot )
+        {
+            if ( zoneIds[ slot ] == zoneId )
+            {
+                localFaceIds[ slot ] = localIFid;
+                foundZone = true;
+                break;
+            }
+        }
+
+        // Keep the legacy two-participant capacity. A third distinct zone is
+        // ignored, but a zone already in the row must be refreshed above.
+        if ( ! foundZone && zoneIds.size() < 2 )
+        {
+            zoneIds.push_back( zoneId );
+            localFaceIds.push_back( localIFid );
+        }
+    }
+}
+
+
+void RebuildZoneL2gNewAfterInterfaceSplit(
+    const IntField & parentGlobalFaceIds,
+    const LinkField & childGlobalIdsPerParent,
+    IntField & l2gNewForZone,
+    IntField & nChildForZone )
+{
+    if ( parentGlobalFaceIds.size() != childGlobalIdsPerParent.size() )
+    {
+        throw std::logic_error(
+            "RebuildZoneL2gNewAfterInterfaceSplit: parent and child tables differ in size" );
+    }
+
+    // Validate the complete replacement map before changing either output.
+    // Negative global IDs cannot identify a valid face and must not leak into
+    // the candidate mapping for later inverse-map construction.
+    for ( std::size_t iFid = 0; iFid < parentGlobalFaceIds.size(); ++ iFid )
+    {
+        if ( parentGlobalFaceIds[ iFid ] < 0 )
+        {
+            throw std::out_of_range(
+                "RebuildZoneL2gNewAfterInterfaceSplit: parent global face ID is negative" );
+        }
+        for ( const int childGlobalFaceId : childGlobalIdsPerParent[ iFid ] )
+        {
+            if ( childGlobalFaceId < 0 )
+            {
+                throw std::out_of_range(
+                    "RebuildZoneL2gNewAfterInterfaceSplit: child global face ID is negative" );
+            }
+        }
+    }
+
+    l2gNewForZone.clear();
+    nChildForZone.assign( parentGlobalFaceIds.size(), 0 );
+
+    for ( std::size_t iFid = 0; iFid < parentGlobalFaceIds.size(); ++ iFid )
+    {
+        const IntField & childFaceIds = childGlobalIdsPerParent[ iFid ];
+        const int gFid = parentGlobalFaceIds[ iFid ];
+        const int nCFace = static_cast< int >( childFaceIds.size() );
+
+        if ( nCFace > 0 )
+        {
+            nChildForZone[ iFid ] = nCFace;
+            for ( int iCFace = 0; iCFace < nCFace; ++ iCFace )
+            {
+                l2gNewForZone.push_back( childFaceIds[ iCFace ] );
+                nChildForZone.push_back( 0 );
+            }
+        }
+        else
+        {
+            l2gNewForZone.push_back( gFid );
+        }
+    }
+}
+
+
+void RebuildFaceCellSidesAfterInterfaceSplit(
+    const IntField & bcType,
+    const IntField & leftCells,
+    const IntField & rightCells,
+    int nBFaces,
+    int nFaces,
+    const IntField & childCountPerInterfaceLocal,
+    int nCells,
+    IntField & outLeftCells,
+    IntField & outRightCells )
+{
+    if ( nBFaces < 0 || nFaces < 0 || nBFaces > nFaces )
+    {
+        throw std::logic_error(
+            "RebuildFaceCellSidesAfterInterfaceSplit: invalid face counts" );
+    }
+    if ( static_cast< std::size_t >( nBFaces ) > bcType.size() ||
+         static_cast< std::size_t >( nFaces ) > leftCells.size() ||
+         static_cast< std::size_t >( nFaces ) > rightCells.size() )
+    {
+        throw std::logic_error(
+            "RebuildFaceCellSidesAfterInterfaceSplit: arrays shorter than face counts" );
+    }
+
+    outLeftCells.clear();
+    outRightCells.clear();
+
+    int interfaceLocal = 0;
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        int nEmit = 1;
+        if ( BC::IsInterfaceBc( bcType[ iFace ] ) )
+        {
+            if ( interfaceLocal < 0 ||
+                 static_cast< std::size_t >( interfaceLocal ) >=
+                     childCountPerInterfaceLocal.size() )
+            {
+                throw std::out_of_range(
+                    "RebuildFaceCellSidesAfterInterfaceSplit: interface child-count index out of range" );
+            }
+            const int nCFace = childCountPerInterfaceLocal[ interfaceLocal ];
+            ++ interfaceLocal;
+            nEmit = ( nCFace > 0 ) ? nCFace : 1;
+        }
+        for ( int i = 0; i < nEmit; ++ i )
+        {
+            outLeftCells.push_back( leftCells[ iFace ] );
+        }
+    }
+
+    const int nBFaceNew = static_cast< int >( outLeftCells.size() );
+    for ( int iFace = 0; iFace < nBFaceNew; ++ iFace )
+    {
+        outRightCells.push_back( iFace + nCells );
+    }
+
+    for ( int iFace = nBFaces; iFace < nFaces; ++ iFace )
+    {
+        outLeftCells.push_back( leftCells[ iFace ] );
+        outRightCells.push_back( rightCells[ iFace ] );
+    }
+}
+
+
+void CollectBoundaryInterfaceChildFaceIds(
+    const IntField & bcType,
+    int nBFaces,
+    const LinkField & zoneToLocalToGlobal,
+    const InterfaceFaceSplitTable & splitTable,
+    int zoneId,
+    LinkField & outChildGlobalIdsPerInterfaceLocal )
+{
+    if ( nBFaces < 0 || static_cast< std::size_t >( nBFaces ) > bcType.size() )
+    {
+        throw std::logic_error(
+            "CollectBoundaryInterfaceChildFaceIds: invalid boundary face count" );
+    }
+
+    outChildGlobalIdsPerInterfaceLocal.clear();
+    int interfaceLocal = 0;
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        if ( ! BC::IsInterfaceBc( bcType[ iFace ] ) )
+        {
+            continue;
+        }
+        outChildGlobalIdsPerInterfaceLocal.push_back(
+            GetInterfaceChildFaceIds(
+                zoneToLocalToGlobal, splitTable, zoneId, interfaceLocal ) );
+        ++ interfaceLocal;
+    }
+}
+
+void CollectBoundaryInterfaceChildNodeMappings(
+    const IntField & bcType,
+    int nBFaces,
+    const LinkField & zoneToLocalToGlobal,
+    const InterfaceFaceSplitTable & splitTable,
+    int zoneId,
+    std::vector< LinkField > & outNodeIdsPerInterfaceLocal,
+    std::vector< LinkField > & outNodeFlagsPerInterfaceLocal )
+{
+    if ( nBFaces < 0 || static_cast< std::size_t >( nBFaces ) > bcType.size() )
+    {
+        throw std::logic_error(
+            "CollectBoundaryInterfaceChildNodeMappings: invalid boundary face count" );
+    }
+    if ( zoneId < 0 || static_cast< std::size_t >( zoneId ) >= zoneToLocalToGlobal.size() )
+    {
+        throw std::out_of_range(
+            "CollectBoundaryInterfaceChildNodeMappings: zone ID is out of range" );
+    }
+
+    // Build both outputs off to the side. A malformed later parent must not
+    // leave callers with a partial set of node mappings.
+    std::vector< LinkField > nodeIdsByInterfaceLocal;
+    std::vector< LinkField > nodeFlagsByInterfaceLocal;
+    const bool hasParentSpecificTables =
+        ! splitTable.childFaceNodeIdsByParent.empty() ||
+        ! splitTable.childFaceNodeFlagsByParent.empty();
+    bool anyParentSpecificMapping = false;
+    if ( hasParentSpecificTables )
+    {
+        if ( splitTable.childFaceNodeIdsByParent.size() !=
+             splitTable.childFaceNodeFlagsByParent.size() )
+        {
+            throw std::logic_error(
+                "CollectBoundaryInterfaceChildNodeMappings: parent-specific tables are misaligned" );
+        }
+        for ( std::size_t parentIndex = 0;
+              parentIndex < splitTable.childFaceNodeIdsByParent.size();
+              ++ parentIndex )
+        {
+            if ( ! splitTable.childFaceNodeIdsByParent[ parentIndex ].empty() ||
+                 ! splitTable.childFaceNodeFlagsByParent[ parentIndex ].empty() )
+            {
+                anyParentSpecificMapping = true;
+                break;
+            }
+        }
+    }
+
+    int interfaceLocal = 0;
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        if ( ! BC::IsInterfaceBc( bcType[ iFace ] ) ) continue;
+
+        const IntField & childIds = GetInterfaceChildFaceIds(
+            zoneToLocalToGlobal, splitTable, zoneId, interfaceLocal );
+        const int globalParentId = zoneToLocalToGlobal[ zoneId ][ interfaceLocal ];
+        if ( childIds.empty() )
+        {
+            // An unsplit interface face needs no node mapping. Keep the empty
+            // row so the rebuild stage can preserve its parent face unchanged.
+            nodeIdsByInterfaceLocal.emplace_back();
+            nodeFlagsByInterfaceLocal.emplace_back();
+            ++ interfaceLocal;
+            continue;
+        }
+
+        if ( hasParentSpecificTables )
+        {
+            if ( globalParentId < 0 ||
+                 static_cast< std::size_t >( globalParentId ) >= splitTable.childFaceNodeIdsByParent.size() )
+            {
+                throw std::logic_error(
+                    "CollectBoundaryInterfaceChildNodeMappings: parent-specific tables do not contain the parent" );
+            }
+
+            const LinkField & nodeIds = splitTable.childFaceNodeIdsByParent[ globalParentId ];
+            const LinkField & nodeFlags = splitTable.childFaceNodeFlagsByParent[ globalParentId ];
+            if ( ! nodeIds.empty() || ! nodeFlags.empty() )
+            {
+                if ( nodeIds.size() != childIds.size() ||
+                     nodeFlags.size() != childIds.size() )
+                {
+                    throw std::logic_error(
+                        "CollectBoundaryInterfaceChildNodeMappings: parent-specific rows do not match child count" );
+                }
+                nodeIdsByInterfaceLocal.push_back( nodeIds );
+                nodeFlagsByInterfaceLocal.push_back( nodeFlags );
+                ++ interfaceLocal;
+                continue;
+            }
+
+            // Once any parent-specific mapping has been published, an empty
+            // row for a split parent is missing data, not a legacy fallback.
+            if ( anyParentSpecificMapping )
+            {
+                throw std::logic_error(
+                    "CollectBoundaryInterfaceChildNodeMappings: missing parent-specific mapping for split parent" );
+            }
+        }
+
+        // Older callers and serialized test fixtures may leave all
+        // parent-specific rows empty and populate only child-global rows.
+        // Use the compatibility representation only when no parent-specific
+        // mapping has been published anywhere.
+        LinkField nodeIdsByChild;
+        LinkField nodeFlagsByChild;
+        for ( const int childFaceId : childIds )
+        {
+            if ( childFaceId < 0 ||
+                 static_cast< std::size_t >( childFaceId ) >= splitTable.childFaceNodeIds.size() ||
+                 static_cast< std::size_t >( childFaceId ) >= splitTable.childFaceNodeFlags.size() )
+            {
+                throw std::out_of_range(
+                    "CollectBoundaryInterfaceChildNodeMappings: child face ID is out of range" );
+            }
+            const IntField & nodeIds = splitTable.childFaceNodeIds[ childFaceId ];
+            const IntField & nodeFlags = splitTable.childFaceNodeFlags[ childFaceId ];
+            if ( nodeIds.size() != nodeFlags.size() )
+            {
+                throw std::logic_error(
+                    "CollectBoundaryInterfaceChildNodeMappings: child node IDs and flags have different sizes" );
+            }
+            nodeIdsByChild.push_back( nodeIds );
+            nodeFlagsByChild.push_back( nodeFlags );
+        }
+        nodeIdsByInterfaceLocal.push_back( nodeIdsByChild );
+        nodeFlagsByInterfaceLocal.push_back( nodeFlagsByChild );
+        ++ interfaceLocal;
+    }
+
+    outNodeIdsPerInterfaceLocal.swap( nodeIdsByInterfaceLocal );
+    outNodeFlagsPerInterfaceLocal.swap( nodeFlagsByInterfaceLocal );
+}
+
+void CollectBoundaryInterfaceChildCounts(
+    const IntField & bcType,
+    int nBFaces,
+    const LinkField & zoneToLocalToGlobal,
+    const InterfaceFaceSplitTable & splitTable,
+    int zoneId,
+    IntField & outChildCountPerInterfaceLocal )
+{
+    LinkField childGlobalIdsPerInterfaceLocal;
+    CollectBoundaryInterfaceChildFaceIds(
+        bcType,
+        nBFaces,
+        zoneToLocalToGlobal,
+        splitTable,
+        zoneId,
+        childGlobalIdsPerInterfaceLocal );
+
+    outChildCountPerInterfaceLocal.clear();
+    outChildCountPerInterfaceLocal.reserve( childGlobalIdsPerInterfaceLocal.size() );
+    for ( std::size_t i = 0; i < childGlobalIdsPerInterfaceLocal.size(); ++ i )
+    {
+        outChildCountPerInterfaceLocal.push_back(
+            static_cast< int >( childGlobalIdsPerInterfaceLocal[ i ].size() ) );
+    }
+}
+
+
+void RebuildFaceNodeListsAfterInterfaceSplit(
+    const LinkField & faces,
+    const IntField & bcType,
+    int nBFaces,
+    int nFaces,
+    const LinkField & childGlobalIdsPerInterfaceLocal,
+    const LinkField & childFaceNodeIds,
+    const LinkField & childFaceNodeFlags,
+    bool hasNodeMesh,
+    HXSize_t nodeMeshCount,
+    LinkField & outFaces )
+{
+    if ( nBFaces < 0 || nFaces < 0 || nBFaces > nFaces )
+    {
+        throw std::logic_error(
+            "RebuildFaceNodeListsAfterInterfaceSplit: invalid face counts" );
+    }
+    if ( static_cast< std::size_t >( nFaces ) > faces.size() ||
+         static_cast< std::size_t >( nBFaces ) > bcType.size() )
+    {
+        throw std::logic_error(
+            "RebuildFaceNodeListsAfterInterfaceSplit: arrays shorter than face counts" );
+    }
+
+    // Adapt the legacy child-global tables to the parent-local row layout.
+    // The second overload owns the single face-list reconstruction algorithm.
+    std::vector< LinkField > childNodeIdsPerInterfaceLocal;
+    std::vector< LinkField > childNodeFlagsPerInterfaceLocal;
+    int interfaceLocal = 0;
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        if ( ! BC::IsInterfaceBc( bcType[ iFace ] ) ) continue;
+        if ( static_cast< std::size_t >( interfaceLocal ) >=
+             childGlobalIdsPerInterfaceLocal.size() )
+        {
+            throw std::out_of_range(
+                "RebuildFaceNodeListsAfterInterfaceSplit: interface child list index out of range" );
+        }
+
+        const IntField & childFaceIds =
+            childGlobalIdsPerInterfaceLocal[ interfaceLocal ];
+        ++ interfaceLocal;
+        LinkField nodeIdsByChild;
+        LinkField nodeFlagsByChild;
+        for ( const int childFaceId : childFaceIds )
+        {
+            if ( childFaceId < 0 ||
+                 static_cast< std::size_t >( childFaceId ) >= childFaceNodeIds.size() ||
+                 static_cast< std::size_t >( childFaceId ) >= childFaceNodeFlags.size() )
+            {
+                throw std::out_of_range(
+                    "RebuildFaceNodeListsAfterInterfaceSplit: child face id out of range" );
+            }
+            nodeIdsByChild.push_back( childFaceNodeIds[ childFaceId ] );
+            nodeFlagsByChild.push_back( childFaceNodeFlags[ childFaceId ] );
+        }
+        childNodeIdsPerInterfaceLocal.push_back( nodeIdsByChild );
+        childNodeFlagsPerInterfaceLocal.push_back( nodeFlagsByChild );
+    }
+
+    RebuildFaceNodeListsAfterInterfaceSplit(
+        faces,
+        bcType,
+        nBFaces,
+        nFaces,
+        childGlobalIdsPerInterfaceLocal,
+        childNodeIdsPerInterfaceLocal,
+        childNodeFlagsPerInterfaceLocal,
+        hasNodeMesh,
+        nodeMeshCount,
+        outFaces );
+}
+
+void RebuildFaceNodeListsAfterInterfaceSplit(
+    const LinkField & faces,
+    const IntField & bcType,
+    int nBFaces,
+    int nFaces,
+    const LinkField & childGlobalIdsPerInterfaceLocal,
+    const std::vector< LinkField > & childNodeIdsPerInterfaceLocal,
+    const std::vector< LinkField > & childNodeFlagsPerInterfaceLocal,
+    bool hasNodeMesh,
+    HXSize_t nodeMeshCount,
+    LinkField & outFaces )
+{
+    if ( nBFaces < 0 || nFaces < 0 || nBFaces > nFaces )
+    {
+        throw std::logic_error(
+            "RebuildFaceNodeListsAfterInterfaceSplit: invalid face counts" );
+    }
+    if ( static_cast< std::size_t >( nFaces ) > faces.size() ||
+         static_cast< std::size_t >( nBFaces ) > bcType.size() )
+    {
+        throw std::logic_error(
+            "RebuildFaceNodeListsAfterInterfaceSplit: arrays shorter than face counts" );
+    }
+    if ( childNodeIdsPerInterfaceLocal.size() != childGlobalIdsPerInterfaceLocal.size() ||
+         childNodeFlagsPerInterfaceLocal.size() != childGlobalIdsPerInterfaceLocal.size() )
+    {
+        throw std::logic_error(
+            "RebuildFaceNodeListsAfterInterfaceSplit: parent mapping count differs from child list count" );
+    }
+
+    LinkField rebuiltFaces;
+    int interfaceLocal = 0;
+    for ( int iFace = 0; iFace < nBFaces; ++ iFace )
+    {
+        if ( ! BC::IsInterfaceBc( bcType[ iFace ] ) )
+        {
+            rebuiltFaces.push_back( faces[ iFace ] );
+            continue;
+        }
+        if ( static_cast< std::size_t >( interfaceLocal ) >= childGlobalIdsPerInterfaceLocal.size() )
+        {
+            throw std::out_of_range(
+                "RebuildFaceNodeListsAfterInterfaceSplit: interface child list index out of range" );
+        }
+
+        const IntField & childFaceIds = childGlobalIdsPerInterfaceLocal[ interfaceLocal ];
+        const LinkField & childNodeIds = childNodeIdsPerInterfaceLocal[ interfaceLocal ];
+        const LinkField & childNodeFlags = childNodeFlagsPerInterfaceLocal[ interfaceLocal ];
+        ++ interfaceLocal;
+
+        if ( childFaceIds.empty() )
+        {
+            rebuiltFaces.push_back( faces[ iFace ] );
+            continue;
+        }
+        if ( childNodeIds.size() != childFaceIds.size() ||
+             childNodeFlags.size() != childFaceIds.size() )
+        {
+            throw std::logic_error(
+                "RebuildFaceNodeListsAfterInterfaceSplit: parent mapping rows do not match child IDs" );
+        }
+        for ( std::size_t childIndex = 0; childIndex < childFaceIds.size(); ++ childIndex )
+        {
+            if ( childNodeIds[ childIndex ].size() != childNodeFlags[ childIndex ].size() )
+            {
+                throw std::logic_error(
+                    "RebuildFaceNodeListsAfterInterfaceSplit: child node IDs and flags have different sizes" );
+            }
+            rebuiltFaces.push_back(
+                ResolveChildFaceNodeIds(
+                    faces[ iFace ],
+                    childNodeIds[ childIndex ],
+                    childNodeFlags[ childIndex ],
+                    hasNodeMesh,
+                    nodeMeshCount ) );
+        }
+    }
+    for ( int iFace = nBFaces; iFace < nFaces; ++ iFace )
+    {
+        rebuiltFaces.push_back( faces[ iFace ] );
+    }
+    outFaces.swap( rebuiltFaces );
+}
+
+
+
+void RunSymmetricInterfaceSplitMappingPipeline(
+    const LinkField & l2gIn,
+    const LinkField & gI2ZidIn,
+    const LinkField & g2lIn,
+    const IntField & parentGlobalFaceIds,
+    const LinkField & childGlobalIdsPerParent,
+    const IntField & bcType,
+    const IntField & bcNameId,
+    const IntField & childCountPerInterfaceLocal,
+    InterfaceSplitMappingPipelineResult & out )
+{
+    if ( l2gIn.empty() )
+    {
+        throw std::invalid_argument(
+            "RunSymmetricInterfaceSplitMappingPipeline: l2gIn must not be empty" );
+    }
+    if ( childGlobalIdsPerParent.size() != parentGlobalFaceIds.size() )
+    {
+        throw std::invalid_argument(
+            "RunSymmetricInterfaceSplitMappingPipeline: parent/child table size mismatch" );
+    }
+
+    // Build a complete candidate result. A failed stage must not publish a
+    // mixture of new child counts / BC records and old interface maps.
+    InterfaceSplitMappingPipelineResult next;
+    LinkField gI2ZidNew, g2lNew, l2gNew;
+    InitNewInterfaceMappingBuffers(
+        gI2ZidIn, g2lIn, l2gIn, gI2ZidNew, g2lNew, l2gNew );
+
+    next.nChild.resize( l2gIn.size() );
+
+    for ( std::size_t zid = 0; zid < l2gIn.size(); ++ zid )
+    {
+        RebuildZoneL2gNewAfterInterfaceSplit(
+            parentGlobalFaceIds,
+            childGlobalIdsPerParent,
+            l2gNew[ zid ],
+            next.nChild[ zid ] );
+    }
+
+    for ( std::size_t zid = 0; zid < l2gIn.size(); ++ zid )
+    {
+        BuildInverseInterfaceMapForZone(
+            static_cast< int >( zid ),
+            l2gNew[ zid ],
+            gI2ZidNew,
+            g2lNew );
+    }
+
+    ExpandBcRecordForSplitInterfaces(
+        bcType, bcNameId, childCountPerInterfaceLocal,
+        next.outBcType, next.outBcNameId );
+
+    next.l2g = l2gIn;
+    next.gI2Zid = gI2ZidIn;
+    next.g2l = g2lIn;
+    CommitInterfaceMappingBuffers(
+        next.gI2Zid, next.g2l, next.l2g,
+        gI2ZidNew, g2lNew, l2gNew,
+        "RunSymmetricInterfaceSplitMappingPipeline" );
+
+    out = std::move( next );
+}
+
+
+void CollectUnreferencedGlobalInterfaceFaces(
+    const LinkField & localToGlobal,
+    std::size_t globalFaceRowCount,
+    IntField & outUnreferencedSorted )
+{
+    // Validate fully before mutating the output (strong exception guarantee).
+    for ( const IntField & row : localToGlobal )
+    {
+        for ( const int gid : row )
+        {
+            if ( gid < 0 )
+            {
+                throw std::out_of_range(
+                    "CollectUnreferencedGlobalInterfaceFaces: negative global face id" );
+            }
+            if ( static_cast< std::size_t >( gid ) >= globalFaceRowCount )
+            {
+                throw std::out_of_range(
+                    "CollectUnreferencedGlobalInterfaceFaces: global face id exceeds row count" );
+            }
+        }
+    }
+
+    outUnreferencedSorted.clear();
+    if ( globalFaceRowCount == 0 )
+    {
+        return;
+    }
+
+    std::vector< char > referenced( globalFaceRowCount, 0 );
+    for ( const IntField & row : localToGlobal )
+    {
+        for ( const int gid : row )
+        {
+            referenced[ static_cast< std::size_t >( gid ) ] = 1;
+        }
+    }
+
+    for ( std::size_t gid = 0; gid < globalFaceRowCount; ++ gid )
+    {
+        if ( ! referenced[ gid ] )
+        {
+            outUnreferencedSorted.push_back( static_cast< int >( gid ) );
+        }
+    }
 }
 
 EndNameSpace

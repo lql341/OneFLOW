@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "Prj.h"
+#include "SimulationCommandLine.h"
 #include "Fatal.h"
 #include "OStream.h"
 #include "FileUtils.h"
@@ -101,13 +102,14 @@ std::string Prj::flowOutputBaseDir = "";
 
 void Prj::ProcessCmdLineArgs( std::vector<std::string> & args )
 {
-    CmdLineOptions opt = Prj::ParseCmdLineArgs( args );
+    SimulationCommandLineOptions options =
+        ParseSimulationCommandLineOptions( args );
 
-    Prj::hx_debug = opt.debug;
-    Prj::run_from_ide = opt.debug;
+    Prj::hx_debug = options.debug;
+    Prj::run_from_ide = options.debug;
 
     // Process-level path initialization is performed once by Simulation.
-    Prj::SetPrjBaseDir( opt.caseDir );
+    Prj::SetPrjBaseDir( options.caseDirectories.front() );
 }
 
 bool Prj::IsSystemRoot( const std::filesystem::path & path )
@@ -225,6 +227,17 @@ std::string Prj::ResolveCaseDir( const std::string & caseDir )
     }
 
     return resolvedDir;
+}
+
+bool Prj::AreSameDirectoryPath(
+    const std::string & left, const std::string & right )
+{
+    if ( left.empty() || right.empty() )
+    {
+        return false;
+    }
+
+    return FormatDirectoryPath( left ) == FormatDirectoryPath( right );
 }
 
 void Prj::SetPrjBaseDir( const std::string & prjName )

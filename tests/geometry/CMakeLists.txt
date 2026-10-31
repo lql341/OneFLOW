@@ -81,12 +81,14 @@ set ( SRC_DIRS
     ${CMAKE_SOURCE_DIR}/codes/basic/src/Word.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/Prj.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/PrjCmdLineArgs.cpp
+    ${CMAKE_SOURCE_DIR}/codes/io/src/SimulationCommandLine.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/CommentLine.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/TextFileParser.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/FileO.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/FileUtils.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/LogFile.cpp
     ${CMAKE_SOURCE_DIR}/codes/io/src/PIO.cpp
+    ${CMAKE_SOURCE_DIR}/codes/io/src/PIOFileAccess.cpp
     ${CMAKE_SOURCE_DIR}/codes/special/src/ClassicGridWorkflow.cpp
     ${CMAKE_SOURCE_DIR}/codes/special/src/ClassicGridGeneration.cpp
     ${CMAKE_SOURCE_DIR}/codes/special/src/GridCreate.cpp
@@ -253,9 +255,39 @@ target_compile_definitions(GridLayoutGenerationTest PRIVATE ONEFLOW_SOURCE_DIR="
 
 add_oneflow_gtest(CellTopoConnectivityTest CellTopoConnectivityTest.cpp)
 add_oneflow_gtest(ElementHomeTest ElementHomeTest.cpp)
-add_oneflow_gtest(InterfaceNeighborMappingTest InterfaceNeighborMappingTest.cpp)
 add_oneflow_gtest(FaceSearchBasicTest FaceSearchBasicTest.cpp)
 add_oneflow_gtest(FaceSolverStageTest FaceSolverStageTest.cpp)
 add_oneflow_gtest(RegionNameRegistryTest RegionNameRegistryTest.cpp)
 add_oneflow_gtest(BcTypeMapTest BcTypeMapTest.cpp)
 add_oneflow_gtest(FaceTopoReorderLinkTest FaceTopoReorderLinkTest.cpp)
+add_oneflow_gtest(HXLookupTest HXLookupTest.cpp)
+add_oneflow_gtest(BcClassificationTest BcClassificationTest.cpp)
+add_oneflow_gtest(InterfaceChildFaceIdsTest InterfaceChildFaceIdsTest.cpp)
+add_oneflow_gtest(QuadDiagonalSplitTest QuadDiagonalSplitTest.cpp)
+add_oneflow_gtest(GlobalFaceMappingTest GlobalFaceMappingTest.cpp)
+add_oneflow_gtest(RegisterLocalInterfaceFaceTest RegisterLocalInterfaceFaceTest.cpp)
+add_oneflow_gtest(ExpandBcRecordSplitTest ExpandBcRecordSplitTest.cpp)
+add_oneflow_gtest(BuildInverseInterfaceMapTest BuildInverseInterfaceMapTest.cpp)
+add_oneflow_gtest(RebuildZoneL2gNewTest RebuildZoneL2gNewTest.cpp)
+add_oneflow_gtest(RebuildFaceCellSidesTest RebuildFaceCellSidesTest.cpp)
+add_oneflow_gtest(CollectBoundaryInterfaceChildCountsTest CollectBoundaryInterfaceChildCountsTest.cpp)
+add_oneflow_gtest(RebuildFaceNodeListsTest RebuildFaceNodeListsTest.cpp)
+add_oneflow_gtest(FindRemoteInterfacePartnerTest FindRemoteInterfacePartnerTest.cpp)
+add_oneflow_gtest(CountInterfaceFacesMissingPartnerTest CountInterfaceFacesMissingPartnerTest.cpp)
+add_oneflow_gtest(InitNewInterfaceMappingBuffersTest InitNewInterfaceMappingBuffersTest.cpp)
+add_oneflow_gtest(FaceNodesContainedInVertexSetTest FaceNodesContainedInVertexSetTest.cpp)
+add_oneflow_gtest(CollectBoundaryBcEntriesTest CollectBoundaryBcEntriesTest.cpp)
+add_oneflow_gtest(BindCellToFaceSidesTest BindCellToFaceSidesTest.cpp)
+add_oneflow_gtest(FillUnsetStagedBcSlotsTest FillUnsetStagedBcSlotsTest.cpp)
+add_oneflow_gtest(IsEligibleForStagedBcAssignmentTest IsEligibleForStagedBcAssignmentTest.cpp)
+add_oneflow_gtest(ReorderBoundaryFirstAndValidateTest ReorderBoundaryFirstAndValidateTest.cpp)
+add_oneflow_gtest(IFaceLinkMapAccessorsTest IFaceLinkMapAccessorsTest.cpp)
+add_oneflow_gtest(IFaceLinkPointLocatorInjectionTest IFaceLinkPointLocatorInjectionTest.cpp)
+add_oneflow_gtest(MultiZoneInterfaceSplitE2ETest MultiZoneInterfaceSplitE2ETest.cpp)
+add_oneflow_gtest(CollectUnreferencedGlobalInterfaceFacesTest CollectUnreferencedGlobalInterfaceFacesTest.cpp)
+add_oneflow_gtest(ComputeSegmentMidpointTest ComputeSegmentMidpointTest.cpp)
+add_oneflow_gtest(LineSplitPureStagesTest LineSplitPureStagesTest.cpp)
+add_oneflow_gtest(IFaceLinkSplitBookkeepingTest IFaceLinkSplitBookkeepingTest.cpp)
+add_oneflow_gtest(TwoParentSharedChildMappingTest TwoParentSharedChildMappingTest.cpp)
+add_oneflow_gtest(RequireSoleZoneIdForGlobalFaceTest RequireSoleZoneIdForGlobalFaceTest.cpp)
+add_oneflow_gtest(IFaceLinkFaceSearchAccessorsTest IFaceLinkFaceSearchAccessorsTest.cpp)

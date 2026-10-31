@@ -23,6 +23,10 @@ License
 // Delegates to existing globals (compatibility layer for phase 2).
 
 #include "SimuContext.h"
+#include "SimulationCommandLine.h"
+#include "SimuCaseLifecycle.h"
+#include "SimuContextParameter.h"
+#include "SimuContextIO.h"
 #include "SimuTask.h"
 #include "Prj.h"
 #include "ParaFile.h"
@@ -36,6 +40,7 @@ License
 #include "Zone.h"
 #include "FieldManager.h"
 #include "DataBase.h"
+#include "DataBaseType.h"
 #include "HeatFlux.h"
 #include "NsCom.h"
 #include "NsSolver.h"
@@ -49,6 +54,7 @@ License
 #include <iostream>
 #include <exception>
 #include <filesystem>
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
 
@@ -62,27 +68,33 @@ SimuContext::SimuContext( const std::string& caseDir, bool debug )
 void SimuContext::ProcessCommandLine()
 {
     // Keep the selected case directory as explicit case input.
-    const CmdLineOptions opt = Prj::ParseCmdLineArgs( args_ );
+    const SimulationCommandLineOptions options =
+        ParseSimulationCommandLineOptions( args_ );
     // Store the resolved path in the case context so it remains valid even
     // when a later case updates the legacy Prj static state.
-    caseDir_ = Prj::ResolveCaseDir( opt.caseDir );
+    caseDir_ = Prj::ResolveCaseDir( options.caseDirectories.front() );
 
     // Command-line mode is process-wide; case directory binding belongs to
     // SetupCaseEnvironment() so each case owns its legacy IO binding.
-    Prj::hx_debug = opt.debug;
-    Prj::run_from_ide = opt.debug;
+    Prj::hx_debug = options.debug;
+    Prj::run_from_ide = options.debug;
 }
 
 void SimuContext::SetupProcessEnvironment()
 {
-    std::cout << " OneFLOW is running\n";
-    ONEFLOW::SetUpParallelEnvironment();
+    processLifecycle_.Start();
+    SimuCaseLifecycleDetail::ExecuteWithRollback(
+        [&]()
+        {
+            std::cout << " OneFLOW is running\n";
+            ONEFLOW::SetUpParallelEnvironment();
 
-    rank_ = Parallel::GetPid();
-    size_ = Parallel::GetNProc();
+            rank_ = Parallel::GetPid();
+            size_ = Parallel::GetNProc();
 
-    ONEFLOW::InitializeAccelRuntime( rank_, size_ );
-    processReady_ = true;
+            ONEFLOW::InitializeAccelRuntime( rank_, size_ );
+        },
+        [&]() { FinalizeEnvironment(); } );
 }
 
 void SimuContext::SetupCaseEnvironment()
@@ -97,144 +109,19 @@ void SimuContext::SetupCaseEnvironment()
     logFile.SetCaseDir( caseDir_ );
     ONEFLOW::ReadControlInfo( caseDir_ );
 
-    // File roots are shared by mesh generation, conversion, and CFD. Missing
-    // settings preserve the historical current-case behavior. Domain roots
-    // inherit their generic input/output root unless explicitly configured.
-    // "case" selects the active case, "project" requires projectRoot, absolute
-    // roots are used directly, and other relative roots resolve from the case.
-    std::string projectRoot;
-    std::string inputRoot;
-    std::string outputRoot;
-
-    try
-    {
-        projectRoot = GetDataValue< std::string >( "projectRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    if ( ! projectRoot.empty() )
-    {
-        Prj::SetProjectBaseDir( projectRoot );
-    }
-
-    try
-    {
-        inputRoot = GetDataValue< std::string >( "inputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    try
-    {
-        outputRoot = GetDataValue< std::string >( "outputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    Prj::SetIOBaseDirs( inputRoot, outputRoot );
-
-    std::string meshInputRoot;
-    std::string flowInputRoot;
-    std::string meshOutputRoot;
-    std::string flowOutputRoot;
-
-    try
-    {
-        meshInputRoot = GetDataValue< std::string >( "meshInputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    try
-    {
-        flowInputRoot = GetDataValue< std::string >( "flowInputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    try
-    {
-        meshOutputRoot = GetDataValue< std::string >( "meshOutputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    try
-    {
-        flowOutputRoot = GetDataValue< std::string >( "flowOutputRoot" );
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    // Preserve the legacy sourceGridCaseDir setting as the default mesh
-    // input root. This keeps linked cases such as rae2822_roe_sa reading grid
-    // artifacts (including wall-distance data) from rae2822grid, while an
-    // explicit meshInputRoot can override that behavior.
-    if ( meshInputRoot.empty() || meshInputRoot == "default" )
-    {
-        try
-        {
-            const std::string sourceGridCaseDir =
-                GetDataValue< std::string >( "sourceGridCaseDir" );
-            if ( ! sourceGridCaseDir.empty() && sourceGridCaseDir != "default" )
-            {
-                meshInputRoot = sourceGridCaseDir;
-            }
-        }
-        catch ( const std::exception & )
-        {
-        }
-    }
-
-    Prj::SetDomainIOBaseDirs(
-        meshInputRoot, flowInputRoot, meshOutputRoot, flowOutputRoot );
-
-    const bool outputsUseCaseRoot =
-        std::filesystem::path( Prj::GetMeshOutputBaseDir() ).lexically_normal()
-            == std::filesystem::path( Prj::prjBaseDir ).lexically_normal()
-        && std::filesystem::path( Prj::GetFlowOutputBaseDir() ).lexically_normal()
-            == std::filesystem::path( Prj::prjBaseDir ).lexically_normal();
-    std::string ioPathInfoFile = outputsUseCaseRoot
-        ? "results/io_paths.txt"
-        : "io_paths.txt";
-    try
-    {
-        const std::string configuredInfoFile =
-            GetDataValue< std::string >( "ioPathInfoFileName" );
-        if ( ! configuredInfoFile.empty() )
-        {
-            ioPathInfoFile = configuredInfoFile;
-        }
-    }
-    catch ( const std::exception & )
-    {
-    }
-
-    const std::string meshInfoPath =
-        Prj::GetMeshOutputFileName( ioPathInfoFile );
-    Prj::WriteIOPathInfo( meshInfoPath );
-
-    const std::string flowInfoPath =
-        Prj::GetFlowOutputFileName( ioPathInfoFile );
-    if ( std::filesystem::path( flowInfoPath ).lexically_normal()
-        != std::filesystem::path( meshInfoPath ).lexically_normal() )
-    {
-        Prj::WriteIOPathInfo( flowInfoPath );
-    }
+    // Snapshot and validate all optional roots before applying global path state.
+    const SimuContextDetail::CaseIOSettings ioSettings =
+        SimuContextDetail::ReadCaseIOSettings(
+            RequireGlobalDataBase().RequireDataPara() );
+    SimuContextDetail::ApplyCaseIOSettings( ioSettings );
 }
 
 void SimuContext::SetupEnvironment()
 {
     SetupProcessEnvironment();
-    SetupCaseEnvironment();
+    SimuCaseLifecycleDetail::ExecuteWithRollback(
+        [&]() { SetupCaseEnvironment(); },
+        [&]() { TeardownEnvironment(); } );
 }
 
 void SimuContext::TeardownCase()
@@ -275,15 +162,45 @@ void SimuContext::TeardownCase()
 
 void SimuContext::FinalizeEnvironment()
 {
-    ONEFLOW::FinalizeAccelRuntime();
-    HXFinalize();
-    processReady_ = false;
+    if ( ! processLifecycle_.IsActive() )
+    {
+        return;
+    }
+
+    std::exception_ptr finalizeFailure;
+    try
+    {
+        ONEFLOW::FinalizeAccelRuntime();
+    }
+    catch ( ... )
+    {
+        finalizeFailure = std::current_exception();
+    }
+
+    try
+    {
+        HXFinalize();
+    }
+    catch ( ... )
+    {
+        if ( ! finalizeFailure )
+        {
+            finalizeFailure = std::current_exception();
+        }
+    }
+
+    processLifecycle_.MarkFinalized();
+    if ( finalizeFailure )
+    {
+        std::rethrow_exception( finalizeFailure );
+    }
 }
 
 void SimuContext::TeardownEnvironment()
 {
-    TeardownCase();
-    FinalizeEnvironment();
+    SimuCaseLifecycleDetail::ExecuteWithCleanup(
+        [&]() { TeardownCase(); },
+        [&]() { FinalizeEnvironment(); } );
 }
 
 void SimuContext::ResolveTaskFromControl()
