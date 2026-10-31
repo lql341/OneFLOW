@@ -16,17 +16,25 @@
 的 **q 已设备权威**：状态更新不再回写 host，边界 ghost、墙面状态、输出按需回拉。
 8 zone / 8 rank / 1 DCU、1000 步 paired：**38.26 → 31.64 ms/step（−6.62 ms，−17.3%）**；
 按 1 DCU 槽 = 8 核的口径约 **6.4x**（CPU 样本需按 §5 重测）。
-功能线已通过 **PR #227** 进入 upstream `master`。
+功能线已通过 **PR #227** 进入 upstream `master`；工作区 runbook 已通过 **PR #238**
+进入 upstream。
+
+**当前（2026-10-31 收尾）**：`dev` 已合入 upstream `638276499`，昆山门禁全绿
+——GoogleTest 1082 个（仅 1 个既有红灯，见 §1）、CPU 五算例 **normal 5/5 + strict 5/5
+（绝对 1e-15 判据未变）**。本轮另把 DCU 构建收口成**后端无关的可选加速器 SDK 接口**
+（HIP/DCU 与 CUDA 共用一套参数），不再每次手拼 CMake 变量。
 
 ### 1. 状态快照
 
 | 项 | 值 |
 |---|---|
-| refs | `master` = `origin/master` = `upstream/master` = `90a08871`；`dev` = `origin/dev` = `4ee4fed0` |
-| upstream PR | #159 / #160 / #203 / #227 全部 MERGED（#227 = 3D HIP 功能线，2026-10-25 合并） |
+| refs | `master` = `origin/master` = `upstream/master` = `638276499`；`dev` = `origin/dev` = `dd1f679c7` |
+| upstream PR | #159 / #160 / #203 / #227 / #238 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
 | 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**31.64 ms/step** |
-| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；CPU 五算例 normal 5/5、strict 5/5；contract gtest 16/16 |
+| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（`638276499` 合并后重新确认，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`）；root GoogleTest 1082（x86 上 1 个既有红灯 `HIP.MainSolverFluxOneCall`）；1D contract gtest 16/16 |
+| 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
+| 已知红灯 | `HIP.MainSolverFluxOneCall` 的 boundary contract 失败（`reconstruction 8.600e+00`、`stale-op 3.000e+00`），旧代码 `a42ab5ce` 给出**相同**值 → 既有问题；`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离） |
 | 能力边界 | `NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / 1 rank 1 zone / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast |
 | 尚未覆盖 | limiter、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；3D 尚无正式性能报告 |
 
@@ -91,12 +99,15 @@
 规则：**只勾有证据的项**；父项只有在子项全勾时才勾；`[ ]` 表示未开始或未通过门禁。
 "插空"指不改变 A–G 顺序的前提下，把无依赖的项提前插入（见 §4.10）。
 
-#### 4.1 A. 运行基线（4/4）
+#### 4.1 A. 运行基线（5/5）
 
-- [x] A1 `master` 三端同步（本轮 `90a08871`），用 `scripts/sync-master.sh` 的语义人工执行
-- [x] A2 `dev` 以 merge 方式吸收 upstream，并推送 `origin/dev`（本轮 `4ee4fed0`）
-- [x] A3 分支模型 + topic branch/PR 流程实际走通（#159/#160/#203/#227）
+- [x] A1 `master` 三端同步（本轮 `638276499`）；`scripts/sync-master.sh` 已改成
+      macOS/Linux 双兼容（flock 缺失时退回 mkdir+PID 锁，时间戳改 POSIX）
+- [x] A2 `dev` 以 merge 方式吸收 upstream，并推送 `origin/dev`（本轮 `dd1f679c7`）
+- [x] A3 分支模型 + topic branch/PR 流程实际走通（#159/#160/#203/#227/#238）
 - [x] A4 文档命名规范、每轮 Definition of Done、`AGENTS.md` 入口
+- [x] A5 加速器构建接口可选化、后端无关（`cmake/OneFLOWAccelSDK.cmake` +
+      `scripts/build-accel.sh`）；昆山实测全新目录 configure 28 s、`build/app` 增量重建 rc=0
 
 #### 4.2 B. standalone 1D 端口（4/5）
 
@@ -172,6 +183,8 @@
 - [ ] H3 热路径去 ambient globals（`ug/unsf/nscom/ctrl/ZoneState::zid` 显式上下文）
 - [ ] H4 `EulerDomain` 泛化到 NS（源项/粘性/能量；与 B5 合并）
 - [ ] H5 backend-kind 真实入口（CUDA/Kokkos 占位可编译）
+      — 构建期已具备：统一 SDK 接口可配 CUDA（`ONEFLOW_ACCEL_SDK_ROOT` + `--arch sm_80`），
+      但仅配置层，运行期 `CUDA`/`KOKKOS` 入口仍是保留位（无 NVIDIA 机器实测）
 - [ ] H6 清理 toy/scalar 路径与失效文档
 
 #### 4.9 I. 产品化与交付（0/4）
@@ -195,7 +208,7 @@
 
 | 层 | 勾选项/总数 | 状态 |
 |---|---|---|
-| A 运行基线 | 4/4 | ✅ 完成 |
+| A 运行基线 | 5/5 | ✅ 完成 |
 | B standalone 1D | 4/5 | ✅ 主体完成（B5 并入 H4） |
 | C accel substrate | 4/4 | ✅ 完成 |
 | D domain contract | 4/4 | ✅ 完成 |
@@ -204,11 +217,15 @@
 | G MPI 与性能 | 3/7 | 🟨 halo/归约有证据，fixture 与正式报告缺 |
 | H 架构通用化 | 1/6 | ⬜ 仅 capability 枚举 |
 | I 产品化 | 0/4 | ⬜ |
-| **合计（顶层条目）** | **32/49（约 65%）** | A–E 收口，F/G 是当前主线，H/I 插空 |
+| **合计（顶层条目）** | **33/50（约 66%）** | A–E 收口，F/G 是当前主线，H/I 插空 |
 | 其中 F 层子项 | 0/14 | F7.1–F7.5、F8.1–F8.6、F9.1–F9.3 全部未开始 |
 
 ### 5. 下一轮任务（按序，含验收）
 
+0. **修 `HIP.MainSolverFluxOneCall` 的 boundary contract**（当前唯一确定性红灯，且既有）：
+   失败读数是 `reconstruction 8.600e+00`、`stale-op 3.000e+00`，其余 HIP 子项全 PASS；
+   旧代码同值，所以不是回归。验收：该 gtest 在 1 DCU 上 PASS，且 CPU 五算例 normal/strict
+   仍 5/5。**注意**：DCU 侧门禁目前都被这一条卡住，优先级高于下面的性能切片。
 1. **F7.1** gradient 镜像只在最后 stage：paired 1000 步 ≥1.5%，trace 24/0/0、200 步 XB、CPU 5/5 全过。
 2. **F7.2** 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝：同上，另加 restart 等价。
 3. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
@@ -226,6 +243,8 @@
 | 诊断 | `ONEFLOW_STAGE_BREAKDOWN_FILE`、`ONEFLOW_UNS_STAGE_TRACE_FILE`、`ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1`、`ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` |
 | 门禁脚本（仓库内） | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
 | 标准作业脚本（集群固定工作区） | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}`，规则见 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) |
+| 加速器构建（仓库内，可选） | `scripts/build-accel.sh`；参数只有 `ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类自动推断；不设则 CPU/CI 不受影响 |
+| 分支同步 | `scripts/sync-master.sh`（macOS/Linux 双兼容，支持 `--dry-run`） |
 | 基准口径 | 1000 步、50 步 warmup、`nFieldSave/nResSave/nForceSave=100000`、CFL 0.01、`ilim=0`、`ischeme=5`、`time_integral=1`、`rk_stage=3`、`vismodel=0` |
 
 ### 7. 口径纪律（不遵守的结论一律作废）
@@ -235,6 +254,10 @@
 3. 探索性单作业数据只进本文档或集群 artifacts，不进正式报告。
 4. 任何性能改动先过：3 步多区 trace → 200 步跨后端 → CPU 五算例（normal/strict）→ 50 步稳定性。
 5. 正式报告的 Markdown 与 HTML 必须同 stem 同步更新。
+6. **数值参考数据的更新纪律**：先跑 strict 量清越界范围 → **只重生成越界算例**的
+   `autotest/*.dat` → 用 `build_residual_db.py --absolute-tolerance 1e-15` 重建并
+   `verify_residual_db.py` 校验 → 用**不变的** strict 判据复跑 5/5。判据本身不得为了
+   通过而放宽；改成"精度优先"时只更新数据，不动判据。
 
 ## 2026-10-31 上游合并后的昆山验证（#238 + #239）
 

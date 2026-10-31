@@ -12,8 +12,10 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo 文首 **§4 路线图勾选树**，取第一个未勾的条目（当前是 `F7.1`）。
-3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，只用那里的 8 个标准脚本。
+2. 打开 todo 文首 **§5 下一轮任务**：当前第 0 项是修 `HIP.MainSolverFluxOneCall`
+   的 boundary contract（唯一确定性红灯）；之后再按 §4 勾选树做 `F7.1`。
+3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，构建统一走
+   `scripts/build-accel.sh`（见 §5.9），不要手拼 CMake 变量。
 4. 收尾：勾选 todo、把证据落进 `evidence/<gate>/<jobid>/`、更新本文 §4（任务指针）与
    §5（新坑）；环境或路径有变化时同步 runbook 与 todo §1.1。
 
@@ -71,14 +73,18 @@ $HOME/oneflow/scripts/cleanup.sh                      # 日志/快照/attic 轮�
 门禁顺序固定：3 步多区 trace（含 resident contract）→ 200 步跨后端 → CPU 五算例
 normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失败都不算完成。
 
-## 4. 当前任务指针（每次会话就地更新这三行）
+## 4. 当前任务指针（每次会话就地更新）
 
-- **阶段**：`F7` 固定开销收口 —— `F7.1` gradient 镜像只在最后 stage → `F7.2` 跳过
+- **下一步（唯一推荐）**：修 `HIP.MainSolverFluxOneCall` 的 boundary contract。
+  它是当前唯一**确定性**红灯（`reconstruction 8.600e+00`、`stale-op 3.000e+00`，其余 HIP
+  子项全 PASS），旧代码同值 → 既有问题、不是回归。DCU 侧门禁都被它卡住，优先级高于 F7。
+- **之后**：`F7` 固定开销收口 —— `F7.1` gradient 镜像只在最后 stage → `F7.2` 跳过
   `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝 → `F7.3` 每步一次 halo → `F7.4` stage 融合 →
   `F7.5` HIP `Advance`。
-- **最近交付**：device 权威 q（paired 38.26 → 31.64 ms/step，PR #227 已合并上游）；
-  #238（工作区 runbook）已进 upstream `master`，本地 `dev` 已合入 `638276499`，
-  昆山验证：1062/1062 单测、CPU 五算例 normal 5/5，strict 4/5（基线过期，见 §5.10）。
+- **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
+  `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
+  接口（HIP/DCU + CUDA，见 §5.9）；声速改用一次除法（更准）并据此重生成越界算例的精度
+  基线，**strict 判据不变**、昆山 normal 5/5 + strict 5/5。
 - **决策待定**：完成定义（1M 单卡 vs 100M 多卡）、性能优先还是能力优先、隐式/多重网格
   是否设备化、zone 映射、CUDA/Kokkos 是否真做 —— 见 plan §6。
 
