@@ -71,14 +71,15 @@ if ( ONEFLOW_ENABLE_HIP OR ONEFLOW_ACCEL_BACKEND_UPPER STREQUAL "HIP" )
     set ( ONEFLOW_HIP_EXPLICIT ON )
 endif()
 
+# Optional: resolve the build-time accelerator SDK (hip/DCU, cuda) from a single
+# prefix before any backend probing. No-op when no SDK is requested, so CPU and
+# CI configurations are unaffected.
+include ( OneFLOWAccelSDK )
+OneFLOW_ConfigureAccelSDK ()
+
 if ( ONEFLOW_HIP_EXPLICIT
      OR ( ONEFLOW_AUTO_ENABLE_HIP
           AND ONEFLOW_ACCEL_BACKEND_UPPER STREQUAL "AUTO" ) )
-    # Optional: point CMake at a Hygon DTK install before any hip probing.
-    # No-op unless ONEFLOW_DTK_ROOT (or ROCM_PATH) names a DTK prefix.
-    include ( OneFLOWDTK )
-    OneFLOW_ConfigureDTK ()
-
     DetectHIPArchitectures ( ONEFLOW_DETECTED_HIP_ARCHITECTURES )
     if ( ONEFLOW_DETECTED_HIP_ARCHITECTURES )
         set ( CMAKE_HIP_ARCHITECTURES "${ONEFLOW_DETECTED_HIP_ARCHITECTURES}"
