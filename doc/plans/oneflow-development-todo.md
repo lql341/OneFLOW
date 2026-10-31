@@ -236,6 +236,61 @@
 4. 任何性能改动先过：3 步多区 trace → 200 步跨后端 → CPU 五算例（normal/strict）→ 50 步稳定性。
 5. 正式报告的 Markdown 与 HTML 必须同 stem 同步更新。
 
+## 2026-10-31 上游合并后的昆山验证（#238 + #239）
+
+**背景**：`dev` 合入 upstream `master` `638276499`（含我们提的 #238 工作区 runbook，
+以及 eric 的 #239 hexin 湍流/Roe 修复）。本次验证回答两个问题：合并后代码是否仍过
+门禁；CPU 五算例的 strict 口径是否还可信。
+
+### 做法（固定工作区，未另建目录）
+
+| 步 | 动作 |
+|---|---|
+| 源码 | `git archive dev@9af3475` → `snapshots/OneFLOW-9af3475-20261031.tgz` → 覆盖 `src/OneFLOW`，更新 `src/REVISION` |
+| 构建 | `build/app` **无法** reconfigure（DTK 26.04 的 `hip-targets.cmake` 引用缺失文件），改用预留的 `build/platform`（CPU-only root build，按 `build/app` 缓存的依赖路径配置） |
+| 单测 | `build/platform` 下 `ctest -j16` |
+| 五算例 | `scripts/cpu-regression.slurm`（新增 `ONEFLOW_CPU_BIN` 覆盖，默认仍指 `build/app`） |
+| 证据 | `evidence/cpu-regression/`（本轮两条：五算例；A/B 对照写在 `logs/`） |
+
+### 结果
+
+| 项 | 结果 |
+|---|---|
+| GoogleTest（Linux/GCC 16.2.0） | **1062/1062 通过** |
+| CPU 五算例 normal(1e-8) | **5/5 通过** |
+| CPU 五算例 strict(1e-15) | **4/5**：`plateuns2dslau2_34950_35000` 未过 |
+
+strict 失败量级：`res.dat` 的 `res5` 通道（量级 `3.29e-8`）
+`max_abs = 2.204e-15`、`max_rel = 6.70e-8`；其余四个算例 `max_abs ≤ 1.9e-16`。
+
+### A/B 判定：不是构建配置，是代码变化
+
+同构建配置（CPU-only、同 `-Ofast` 组合）下换回旧代码 `a42ab5ce`，只跑该算例的
+strict：`max_abs = 0.0`（与基线**逐位一致**）。因此：
+
+- `build/platform` 与基线的数值基准等价（不是我用 CPU-only 构建造成的偏差）；
+- 差异来自 `a42ab5ce → 638276499` 的代码变化，且只落在 **restart 续算**这条路径
+  （同物理、同 `ilim=0` 的从头算算例 `plateuns2dslau2` 仍逐位一致）；
+- 上游 CI 只跑 `ci-serial`（= `cpu-serial` + `grid-serial`）的 1e-8 口径，**不跑 1e-15**，
+  所以上游绿 CI 不能覆盖这个偏差。
+
+### 结论与待决
+
+1. normal 门禁仍然绿，合并没有破坏验收口径；1062 单测与 Linux GCC 16 上全过。
+2. **strict 基线对当前 master 已过期**：要恢复 1e-15 门禁，必须重生成该算例的
+   `autotest/res.dat` 与 `test/baselines/residual-baseline.json` 条目。这是数值口径
+   变更（等于承认新代码的续算结果），需单独评审提交，不在本轮擅自改。
+3. 若要追到具体上游提交，可在 `codes/ns|uns|usolver` 的重构提交上做二分（本轮只
+   定位到路径，没做二分）。
+
+### 本轮顺带修掉的工作区问题
+
+| 问题 | 处理 |
+|---|---|
+| `env.sh` 声明 `$CMAKE` 却没进 `PATH`，`cmake` 落到系统 2.8.12.2；`make` 自动 reconfigure 时用的是缓存里已删除的 `~/tools/cmake-3.30.5` | `env.sh` 末尾补 `export PATH="$(dirname "$CMAKE"):$PATH"` |
+| `cpu-regression.slurm` 硬编码 `build/app`，且把 `system/` 只拷到 `build/app/bin` | 增加 `ONEFLOW_CPU_BIN`（默认仍 `$ONEFLOW_BIN`），`system/` 拷到被测二进制同目录 |
+| OpenAPI 提交器把 `job_*.log`/`job_*.ma`/`job_BASE.slurm` 落在**工作区根** | 已归位到 `logs/`；后续提交统一用 `--work-dir .../logs` |
+
 ## 2026-10-25 文档与昆山工作区规范化
 
 **结论**：文档与集群工作区都收敛到"只描述当前状态"的形态——`doc/handoff/` 只留

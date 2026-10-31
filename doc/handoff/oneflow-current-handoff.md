@@ -76,7 +76,9 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 - **阶段**：`F7` 固定开销收口 —— `F7.1` gradient 镜像只在最后 stage → `F7.2` 跳过
   `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝 → `F7.3` 每步一次 halo → `F7.4` stage 融合 →
   `F7.5` HIP `Advance`。
-- **最近交付**：device 权威 q（paired 38.26 → 31.64 ms/step，PR #227 已合并上游）。
+- **最近交付**：device 权威 q（paired 38.26 → 31.64 ms/step，PR #227 已合并上游）；
+  #238（工作区 runbook）已进 upstream `master`，本地 `dev` 已合入 `638276499`，
+  昆山验证：1062/1062 单测、CPU 五算例 normal 5/5，strict 4/5（基线过期，见 §5.10）。
 - **决策待定**：完成定义（1M 单卡 vs 100M 多卡）、性能优先还是能力优先、隐式/多重网格
   是否设备化、zone 映射、CUDA/Kokkos 是否真做 —— 见 plan §6。
 
@@ -99,6 +101,18 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
 8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
    ≥1M 带 `.skl` 的网格，`partition_type=0`(GenerateLink) 仍失败。
+9. **`build/app` 已经不能 reconfigure**：DTK 26.04 的 `hip-targets.cmake` 引用了安装里
+   不存在的文件，`cmake -S src/OneFLOW -B build/app` 直接失败。后果：上游一旦改
+   `CMakeLists.txt`，`build/app` 就无法靠增量 make 跟进。CPU 门禁走预留的
+   `build/platform`（`ONEFLOW_CPU_BIN=$ONEFLOW_ROOT/build/platform/bin/OneFLOW`）；
+   DCU 门禁在 DTK 修好或重建之前是阻塞状态。
+10. **strict（1e-15）基线对当前 master 已过期**：`plateuns2dslau2_34950_35000` 的
+   `res5` 偏离 `2.2e-15`（rel `6.7e-8`），A/B 证调用旧代码逐位为 0，差异来自
+   restart 续算路径的代码变化，不是构建配置。要用 1e-15 门禁，须先重生成该算例的
+   `autotest/res.dat` 与 `test/baselines/residual-baseline.json`（属数值口径变更，
+   单独评审）。上游 CI 只跑 1e-8，不覆盖这条。
+11. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+   2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则
 

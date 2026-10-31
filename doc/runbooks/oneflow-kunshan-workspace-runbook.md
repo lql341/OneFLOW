@@ -36,11 +36,22 @@
 
 1. **源码**：把仓库快照覆盖到 `src/OneFLOW/`（`rsync -a --delete` 或解压覆盖），
    同步更新 `src/REVISION`。不要在 `src/` 下保留多个修订目录。
-2. **构建**：`build/app` 是唯一生产构建目录，按目标固定、增量编译。
-   - **不要重新 configure**：计算节点 `/opt/rocm` 的旧 `hip-targets.cmake` 会让
-     新配置失败；登录节点上重新 configure 同样会失败。需要恢复时，把上一个
-     `build/app` 从 `snapshots/` 或 `_attic/` 取回，或到有完整 DTK 的节点重建。
+2. **构建**：`build/app` 是唯一生产（HIP）构建目录，按目标固定、增量编译。
+   - **不要重新 configure**：DTK 26.04 的 `hip-targets.cmake` 引用了安装里不存在的
+     文件，登录节点与计算节点重新 configure 都会失败。需要恢复时，把上一个
+     `build/app` 从 `snapshots/` 或 `_attic/` 取回。
    - 用 `scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW/fast`）。
+   - 上游改动 `CMakeLists.txt` 后 `build/app` 没办法再增量跟进（make 会触发
+     reconfigure 并停在 hip 校验）。此时 **CPU 门禁改走预留的 `build/platform`**
+     （CPU-only root build，可正常 configure）：
+
+     ```bash
+     export ONEFLOW_CPU_BIN=$ONEFLOW_ROOT/build/platform/bin/OneFLOW
+     bash $ONEFLOW_ROOT/scripts/cpu-regression.slurm
+     ```
+
+     `cpu-regression.slurm` 默认仍用 `$ONEFLOW_BIN`（`build/app`），只在显式设置
+     `ONEFLOW_CPU_BIN` 时切换，并把 `system/` 拷到被测二进制同目录。
 3. **fixture**：`fixtures/m6-8zone-cpu8/` 只读。派生算例用
    `scripts/prep-case.sh <dest> <steps>` 写到 `evidence/.../<jobid>/` 或
    `$TMPDIR`，作业结束随手清掉。
@@ -58,11 +69,12 @@
 | 作业名 | `of-gate` / `of-paired` / `of-cpureg`（与证据目录同名） |
 | 启动方式 | **只能 `mpirun`**；`srun` 下 MPI size=1，每个 rank 会解全部 zone |
 | 布局 | `--bind-to core --map-by slot`；8 ranks/卡用 `scripts/rank.sh` 映射 `HIP_VISIBLE_DEVICES` |
-| 环境 | 只 source `scripts/env.sh`（MPI 5.0.11 / UCX 1.22.0 / gcc16 / DTK 26.04 / cmake 3.30.5）；批处理里的 `module load` 是空操作 |
+| 环境 | 只 source `scripts/env.sh`（MPI 5.0.11 / UCX 1.22.0 / gcc16 / DTK 26.04 / cmake 4.4.3；`env.sh` 会把 `$CMAKE` 的目录前置到 `PATH`）；批处理里的 `module load` 是空操作 |
 | 网络 | `UCX_NET_DEVICES=mlx5_0:1`、`UCX_IB_DEVICES=mlx5_0`（其他 HCA 会 `ibv_create_ah` EINVAL） |
 | MPI coll | `OMPI_MCA_coll=^hcoll,han`（非均匀分布会崩在 `coll/han`） |
 | 资源口径 | 1 DCU 槽 = 8 核；CPU 基线跑在 `kshcnormal` |
 | 输出 | 证据目录内 `result.txt` + 日志；文档里只写脱敏后的口径与结论 |
+| 提交器 | OpenAPI 提交用 `--work-dir <workspace>/logs`，`--stdout/--stderr` 也指到 `logs/` | 提交器会在 work-dir 生成 `job_*` 记账文件，指到工作区根会污染根目录 |
 
 标准脚本：
 
@@ -90,7 +102,8 @@ $WORKSPACE/scripts/cleanup.sh                         # 日志/快照轮转 + �
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `no ROCm-capable device is detected` | 节点未分配到 DCU / 卡被占用 | 检查 `--gres=dcu:N` 与节点，重投 |
-| `hip-targets.cmake` 校验失败 | 在该节点重新 configure | 不要 reconfigure；用既有 `build/app` 增量编译 |
+| `hip-targets.cmake` 校验失败 / `An install or uninstall procedure did not complete successfully` | 在该节点重新 configure（DTK 26.04 安装自带的引用缺失） | 不要 reconfigure；`build/app` 用既有目录增量 make，CPU 门禁改用 `build/platform`（`ONEFLOW_CPU_BIN`） |
+| `/bin/sh: .../cmake-3.30.5-linux-x86_64/bin/cmake: No such file` | `make` 用缓存里的旧 cmake 路径，且 `cmake` 未在 `PATH` | `source scripts/env.sh`（已把 `$CMAKE` 的目录前置到 `PATH`） |
 | `ldd` 找不到 `libmpi.so.40` | 未 source `scripts/env.sh` | 所有作业脚本第一行 source |
 | `srun` 下 MPI size=1 | `srun` 不做 MPI 启动 | 改用 `mpirun` |
 | `bnd_resize` 报 10 ms/step | 首个 `hipMalloc` 被平均进短基准 | 基准先 warmup 至少一步 |
