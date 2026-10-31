@@ -130,7 +130,11 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    `reconstruction 8.600e+00`、`stale-op 3.000e+00`，且旧代码 `a42ab5ce` 给出**一模一样**的
    失败值 → 既有问题，不是本轮合并引入；其余 HIP 子项均 PASS。DCU 门禁要用到该测试时
    必须先处理它。
-12. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+12. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+   bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
+   `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
+   另：`snapshots/` 现有 8 个（策略是保留 5），下次 `cleanup.sh` 轮转。
+13. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则
