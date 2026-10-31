@@ -23,7 +23,10 @@
 
 set -Eeuo pipefail
 
-repo_root="$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)"
+# Path-based on purpose: the script must work inside an extracted source
+# snapshot (no .git) and with older git builds that lack `git -C`.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "${script_dir}/.." && pwd)"
 cd "$repo_root"
 
 dtk_root="${ONEFLOW_DTK_ROOT:-${ROCM_PATH:-}}"
