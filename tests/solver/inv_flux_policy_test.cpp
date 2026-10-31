@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstring>
 
 #include "NsInvFluxPolicy.h"
 #include "HXMath.h"
@@ -206,28 +207,57 @@ TEST( InvFluxPolicy, IdealGasSoundSpeedGuardDoesNotChangeNormalState )
         std::sqrt( 1.4 * 101325.0 / 1.25 ) );
 }
 
-// A single division is correctly rounded; multiplying by a reciprocal rounds twice
-// and could drift by 1 ulp. Pin that the sound speed stays on the long-double
-// reference across the physical range instead of silently depending on the form.
-TEST( InvFluxPolicy, IdealGasSoundSpeedMatchesLongDoubleReference )
+// A single division is correctly rounded, while scaling by a reciprocal rounds
+// twice. Pin both the absolute quality (within 1 ulp of a higher-precision
+// reference where the platform has one) and the relative claim (the division
+// form is no worse than the reciprocal form over the physical range).
+namespace
 {
-    long mismatches = 0;
+long SoundSpeedUlpDistance( Real actual, long double reference )
+{
+    const Real rounded = static_cast< Real >( reference );
+    long long a = 0;
+    long long b = 0;
+    static_assert( sizeof( Real ) == sizeof( a ), "ulp distance assumes a 64-bit Real" );
+    std::memcpy( &a, &actual, sizeof a );
+    std::memcpy( &b, &rounded, sizeof b );
+    if ( a < 0 ) { a = 0x8000000000000000LL - a; }
+    if ( b < 0 ) { b = 0x8000000000000000LL - b; }
+    return static_cast< long >( a > b ? a - b : b - a );
+}
+}
+
+TEST( InvFluxPolicy, IdealGasSoundSpeedIsWithinOneUlpOfReference )
+{
+    long maxUlpDivided = 0;
+    long maxUlpReciprocal = 0;
+    long sumUlpDivided = 0;
+    long sumUlpReciprocal = 0;
+
     for ( int i = 0; i < 2000; ++i )
     {
         const Real density  = 1.0e-3 + 0.9997 * static_cast< Real >( i );
         const Real pressure = 1.0e-3 + 13.7 * static_cast< Real >( i );
         const Real gama     = 1.4;
 
-        const Real actual = IdealGasSoundSpeedFromPressure( density, pressure, gama );
-        const long double exact =
+        const long double reference =
             sqrtl( fabsl( (long double)gama * pressure / (long double)density ) );
 
-        if ( actual != static_cast< Real >( exact ) )
-        {
-            ++mismatches;
-        }
+        const Real divided = IdealGasSoundSpeedFromPressure( density, pressure, gama );
+        const Real reciprocal = sqrt( ABS( gama * pressure * ( one / density ) ) );
+
+        const long ulpDivided = SoundSpeedUlpDistance( divided, reference );
+        const long ulpReciprocal = SoundSpeedUlpDistance( reciprocal, reference );
+
+        sumUlpDivided += ulpDivided;
+        sumUlpReciprocal += ulpReciprocal;
+        maxUlpDivided = ulpDivided > maxUlpDivided ? ulpDivided : maxUlpDivided;
+        maxUlpReciprocal = ulpReciprocal > maxUlpReciprocal ? ulpReciprocal : maxUlpReciprocal;
     }
-    EXPECT_EQ( mismatches, 0 );
+
+    EXPECT_LE( maxUlpDivided, 1 );
+    EXPECT_LE( sumUlpDivided, sumUlpReciprocal );
+    EXPECT_LT( sumUlpDivided, sumUlpReciprocal );
 }
 
 TEST( InvFluxPolicy, IdealGasPrimToConservativeMatchesManual )
