@@ -190,6 +190,22 @@ TEST( InvFluxPolicy, IdealGasSoundSpeedFromPressure )
         1.0e-12 );
 }
 
+// A zero-density state must stay finite (the + SMALL guard) instead of returning inf.
+TEST( InvFluxPolicy, IdealGasSoundSpeedKeepsZeroDensityFinite )
+{
+    const Real speed = IdealGasSoundSpeedFromPressure( 0.0, 1.0, 1.4 );
+    EXPECT_TRUE( std::isfinite( speed ) );
+    EXPECT_GT( speed, 0.0 );
+}
+
+// The guard must not perturb a normal state: it is far below double precision.
+TEST( InvFluxPolicy, IdealGasSoundSpeedGuardDoesNotChangeNormalState )
+{
+    EXPECT_DOUBLE_EQ(
+        IdealGasSoundSpeedFromPressure( 1.25, 101325.0, 1.4 ),
+        std::sqrt( 1.4 * 101325.0 / 1.25 ) );
+}
+
 TEST( InvFluxPolicy, IdealGasPrimToConservativeMatchesManual )
 {
     Real qr, qu, qv, qw, qe;
@@ -271,4 +287,27 @@ TEST( InvFluxPolicy, IdealGasBilateralSoundSpeedsAveragesSides )
     EXPECT_NEAR( cl, std::sqrt( 1.4 ), 1.0e-12 );
     EXPECT_NEAR( cr, std::sqrt( 1.4 ), 1.0e-12 );
     EXPECT_NEAR( cm, std::sqrt( 1.4 ), 1.0e-12 );
+}
+
+// Each side keeps its own density/pressure/gama pair, and the average is theirs.
+TEST( InvFluxPolicy, IdealGasBilateralSoundSpeedsKeepsSidesIndependent )
+{
+    Real cl, cr, cm;
+    IdealGasBilateralSoundSpeeds(
+        1.0, 2.0, 1.4, 4.0, 3.0, 1.3, cl, cr, cm );
+    EXPECT_NEAR( cl, std::sqrt( 1.4 * 2.0 / 1.0 ), 1.0e-12 );
+    EXPECT_NEAR( cr, std::sqrt( 1.3 * 3.0 / 4.0 ), 1.0e-12 );
+    EXPECT_DOUBLE_EQ( cm, 0.5 * ( cl + cr ) );
+}
+
+// The bilateral helper keeps the zero-density guard on both sides.
+TEST( InvFluxPolicy, IdealGasBilateralSoundSpeedsKeepsZeroDensityFinite )
+{
+    Real cl, cr, cm;
+    IdealGasBilateralSoundSpeeds( 0.0, 1.0, 1.4, 0.0, 1.0, 1.4, cl, cr, cm );
+    EXPECT_TRUE( std::isfinite( cl ) );
+    EXPECT_TRUE( std::isfinite( cr ) );
+    EXPECT_TRUE( std::isfinite( cm ) );
+    EXPECT_GT( cl, 0.0 );
+    EXPECT_GT( cr, 0.0 );
 }

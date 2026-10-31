@@ -124,7 +124,9 @@ Real IdealGasSpecificInternalEnergy(
 
 Real IdealGasSoundSpeedFromPressure( Real density, Real pressure, Real gama )
 {
-    return sqrt( ABS( gama * pressure / density ) );
+    // The + SMALL guard keeps a zero-density state finite instead of inf; for any
+    // density above ~1e-30 it is below double precision and cannot change the result.
+    return sqrt( ABS( gama * pressure / ( density + SMALL ) ) );
 }
 
 
@@ -221,8 +223,14 @@ void IdealGasBilateralSoundSpeeds(
     Real densityRight, Real pressureRight, Real gamaRight,
     Real & soundLeft, Real & soundRight, Real & soundAverage )
 {
-    soundLeft = IdealGasSoundSpeedFromPressure( densityLeft, pressureLeft, gamaLeft );
-    soundRight = IdealGasSoundSpeedFromPressure( densityRight, pressureRight, gamaRight );
+    // Keep the historical association p * ( 1 / ( rho + SMALL ) ) used by the
+    // AUSM-family fluxes: it carries the zero-density guard without perturbing the
+    // accepted CPU residual baseline, which is compared at 1e-15.
+    const Real orLeft  = one / ( densityLeft  + SMALL );
+    const Real orRight = one / ( densityRight + SMALL );
+
+    soundLeft  = sqrt( ABS( gamaLeft  * pressureLeft  * orLeft  ) );
+    soundRight = sqrt( ABS( gamaRight * pressureRight * orRight ) );
     soundAverage = half * ( soundLeft + soundRight );
 }
 
