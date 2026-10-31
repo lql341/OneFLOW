@@ -19,10 +19,12 @@
 功能线已通过 **PR #227** 进入 upstream `master`；工作区 runbook 已通过 **PR #238**
 进入 upstream。
 
-**当前（2026-10-31 收尾）**：`dev` 已合入 upstream `638276499`，昆山门禁全绿
-——GoogleTest 1082 个（仅 1 个既有红灯，见 §1）、CPU 五算例 **normal 5/5 + strict 5/5
-（绝对 1e-15 判据未变）**。本轮另把 DCU 构建收口成**后端无关的可选加速器 SDK 接口**
-（HIP/DCU 与 CUDA 共用一套参数），不再每次手拼 CMake 变量。
+**当前（2026-10-31 收尾）**：`dev` 已合入 upstream `638276499`，CPU 五算例
+**normal 5/5 + strict 5/5（绝对 1e-15 判据未变）**。DCU 侧唯一确定性红灯
+`HIP.MainSolverFluxOneCall` 已修：烟测夹具仍按整个 face 步长填 `bcQ`，而生产路径
+从 `1c470414a` 起只上传 `nEquations*nBoundaryFaces` 的连续缓冲。昆山 1 DCU 上
+`OneFLOWHipSmoke` 的 boundary contract 为 PASS（ghost/reconstruction/generation 均为 0），
+进程退出码 0。本次没有重跑 CPU 五算例：改动不进入 CPU 残差路径。
 
 ### 1. 状态快照
 
@@ -32,9 +34,9 @@
 | upstream PR | #159 / #160 / #203 / #227 / #238 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
 | 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**31.64 ms/step** |
-| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（`638276499` 合并后重新确认，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`）；root GoogleTest 1082（x86 上 1 个既有红灯 `HIP.MainSolverFluxOneCall`）；1D contract gtest 16/16 |
+| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（上一轮证据，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`；本轮未重跑）；`HIP.MainSolverFluxOneCall` 在 1 DCU 上 PASS；全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
-| 已知红灯 | `HIP.MainSolverFluxOneCall` 的 boundary contract 失败（`reconstruction 8.600e+00`、`stale-op 3.000e+00`），旧代码 `a42ab5ce` 给出**相同**值 → 既有问题；`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离） |
+| 已知红灯 | 确定性 DCU 红灯已消除。`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离） |
 | 能力边界 | `NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / 1 rank 1 zone / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast |
 | 尚未覆盖 | limiter、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；3D 尚无正式性能报告 |
 
@@ -222,10 +224,13 @@
 
 ### 5. 下一轮任务（按序，含验收）
 
-0. **修 `HIP.MainSolverFluxOneCall` 的 boundary contract**（当前唯一确定性红灯，且既有）：
-   失败读数是 `reconstruction 8.600e+00`、`stale-op 3.000e+00`，其余 HIP 子项全 PASS；
-   旧代码同值，所以不是回归。验收：该 gtest 在 1 DCU 上 PASS，且 CPU 五算例 normal/strict
-   仍 5/5。**注意**：DCU 侧门禁目前都被这一条卡住，优先级高于下面的性能切片。
+0. [x] **修 `HIP.MainSolverFluxOneCall` 的 boundary contract**。根因不是边界核：
+   烟测把 solid `bcQ` 按 `nFaces` 步长存，而 HIP 上传/内核从 `1c470414a` 起按
+   `nBoundaryFaces` 读连续缓冲。第 4 个方程的期望值正好是 8.6，读到的是 0；
+   打印出来的 `stale-op 3.0` 是第二次 Average 重构相对旧 `bcQ` 的 +3 偏移，检查本身是过的。
+   夹具已改成与生产路径相同的打包；不连续的 `bcQ` 在上传前直接拒绝。
+   昆山 1 DCU / `gfx906`：`OneFLOWHipSmoke` boundary contract PASS，进程退出码 0。
+   CPU 五算例未重跑：本次没有改 CPU 残差源码，上一轮 strict 5/5 仍是最新 CPU 证据。
 1. **F7.1** gradient 镜像只在最后 stage：paired 1000 步 ≥1.5%，trace 24/0/0、200 步 XB、CPU 5/5 全过。
 2. **F7.2** 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝：同上，另加 restart 等价。
 3. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；

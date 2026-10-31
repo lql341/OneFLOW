@@ -12,8 +12,9 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo 文首 **§5 下一轮任务**：当前第 0 项是修 `HIP.MainSolverFluxOneCall`
-   的 boundary contract（唯一确定性红灯）；之后再按 §4 勾选树做 `F7.1`。
+2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是 `F7.1`
+   （gradient 镜像只在最后 stage）。`HIP.MainSolverFluxOneCall` 的 boundary contract
+   已在 1 DCU 上 PASS，不要再当成数值红灯查。
 3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，构建统一走
    `scripts/build-accel.sh`（见 §5.9），不要手拼 CMake 变量。
 4. 收尾：勾选 todo、把证据落进 `evidence/<gate>/<jobid>/`、更新本文 §4（任务指针）与
@@ -75,12 +76,16 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：修 `HIP.MainSolverFluxOneCall` 的 boundary contract。
-  它是当前唯一**确定性**红灯（`reconstruction 8.600e+00`、`stale-op 3.000e+00`，其余 HIP
-  子项全 PASS），旧代码同值 → 既有问题、不是回归。DCU 侧门禁都被它卡住，优先级高于 F7。
-- **之后**：`F7` 固定开销收口 —— `F7.1` gradient 镜像只在最后 stage → `F7.2` 跳过
-  `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝 → `F7.3` 每步一次 halo → `F7.4` stage 融合 →
-  `F7.5` HIP `Advance`。
+- **下一步（唯一推荐）**：`F7.1` gradient 镜像只在最后 stage。验收仍是 paired
+  1000 步 ≥1.5%，trace 24/0/0、200 步跨后端、CPU 五算例 normal/strict 5/5。
+- **刚完成**：`HIP.MainSolverFluxOneCall` 的 boundary contract。失败是烟测夹具的
+  `bcQ` 步长仍是 `nFaces`，生产上传已经是 `nBoundaryFaces`。昆山 1 DCU 上
+  `OneFLOWHipSmoke` PASS（reconstruction 0）。CPU 五算例未重跑。
+- **集群源码还不是完整快照**：`src/OneFLOW` 仍是 `7bd358c0d`，只覆盖了这三个 HIP 文件；
+  `build/app` 的 `OneFLOW` 已按该覆盖增量重链并通过。做 `F7.1` 前先按 runbook 整树覆盖，
+  不要在这层半截快照上继续改。
+- **之后**：`F7.2` 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝 → `F7.3` 每步一次 halo →
+  `F7.4` stage 融合 → `F7.5` HIP `Advance`。
 - **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
   `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
   接口（HIP/DCU + CUDA，见 §5.9）；声速改用一次除法（更准）并据此重生成越界算例的精度
@@ -126,10 +131,12 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    旧代码两种设置都是 `0.0` → 差异是源码里运算结合顺序的确定性 ≤1 ulp 改变，不是编译器
    重排、也不含不确定性。要靠补公式还原不成立（与上游方向相反且易反复）；恢复 1e-15
    需按流程重生成基线或改判据形态，属数值口径决定，等 owner 拍板。
-11. **`HIP.MainSolverFluxOneCall` 的 boundary contract 一直是红的**：
-   `reconstruction 8.600e+00`、`stale-op 3.000e+00`，且旧代码 `a42ab5ce` 给出**一模一样**的
-   失败值 → 既有问题，不是本轮合并引入；其余 HIP 子项均 PASS。DCU 门禁要用到该测试时
-   必须先处理它。
+11. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+   旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
+   `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
+   `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
+   夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
+   bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
 12. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
