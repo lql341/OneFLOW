@@ -313,13 +313,29 @@ f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30
 
 ### 修正尝试：补回 SMALL 护栏（已做）+ 仍未逐位还原（重要）
 
-按“strict 不算太紧、零密度护栏必须留着”的要求，把 `f7ae944c0` 丢掉的护栅补回去了，
-并对 AUSM 双侧路径恢复历史写法（乘倒数而非直接除），同时补了 4 个契约测试：
+`f7ae944c0` 丢掉的零密度护栅已补回。之后按“哪种写法更准”做了一轮精度对照，结论是
+**用除法而不是乘倒数**：
 
 ```cpp
-// IdealGasSoundSpeedFromPressure：加回 (density + SMALL)
-// IdealGasBilateralSoundSpeeds：gama * p * (1/(rho+SMALL))，保持旧结合顺序
+// IdealGasSoundSpeedFromPressure：
+return sqrt( ABS( gama * pressure / ( density + SMALL ) ) );   // 一次除法，正确舍入
+// IdealGasBilateralSoundSpeeds：直接复用上式（不再 p*(1/rho)）
 ```
+
+理由（`-O2`，2e6 个物理状态，与 long double 参考值比）：
+
+| 写法 | 与参考值逐位一致 | 平均误差 | 最大误差 |
+|---|---|---|---|
+| `p*(1/(rho+SMALL))`（旧结合顺序） | 86.77% | 0.13 ulp | 1 ulp |
+| `p/(rho+SMALL)`（现采用） | 100% | 0 | 0 |
+| `p/rho`（无护栏） | 100% | 0 | rho=0 时 **inf** |
+
+IEEE 除法是正确舍入；乘倒数多一次舍入。护栏 `+SMALL` 对任何物理密度都远低于 double
+精度（不影响结果），只用来避免 rho=0 时得到 inf。**精度优先于"与旧基线逐位一致"。**
+
+> 平台注意：在 arm64 上 `long double` 就是 double，此时"与 long double 参考逐位一致"
+> 实际是"与同一条单次舍入链一致"；x86-64 上 `long double` 是 80 位，double 链会落在
+> 1 ulp 内而不是 0。对应用例断言写成"≤1 ulp 且聚合误差严格小于乘倒数形式"，两者都通过。
 
 昆山实测（`build/app`，HIP 构建，标准 `cpu-regression.slurm`）：
 
@@ -375,19 +391,24 @@ f7ae944c0  ns: pure bilateral sound speeds for AUSM-family schemes   (2026-10-30
 `rc=0`、`ONEFLOW_BUILD_HIP=ON`）：
 
 ```bash
-bash src/OneFLOW/scripts/build-accel.sh --sdk auto --sdk-root "$ROCM_PATH" \
+bash src/OneFLOW/scripts/build-accel.sh \
   --arch gfx906 --build-dir build/app --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
 ```
+
+（`--sdk-root` 省略时自动取 `$ROCM_PATH` / `$CUDAToolkit_ROOT` / `$CUDA_HOME`。）
 
 两条轴是分开的：
 
 | 轴 | 参数 | 取值 | 作用 |
 |---|---|---|---|
 | 运行时 | `ONEFLOW_ACCEL_BACKEND` | `AUTO/CPU/HIP/CUDA/KOKKOS` | 选择运行期后端 |
-| 构建 | `ONEFLOW_ACCEL_SDK` | `auto/hip/cuda`（空=不配置） | 选择构建期 SDK |
-| 构建 | `ONEFLOW_ACCEL_SDK_ROOT` | 厂商前缀 | DTK/ROCm 或 CUDA Toolkit |
-| 构建 | `ONEFLOW_ACCEL_SDK_ARCH` | `gfx906` / `sm_80` | 目标架构 |
-| 构建 | `ONEFLOW_ACCEL_SDK_FLAGS` | 任意 | 传给该 SDK 编译器的额外参数 |
+| 构建 | `ONEFLOW_ACCEL_SDK_ROOT` | 厂商前缀（空=不配置任何 SDK） | DTK/ROCm 或 CUDA Toolkit |
+| 构建 | `ONEFLOW_ACCEL_SDK_ARCH`（可选） | `gfx906` / `sm_80` | 目标架构，不填走设备检测 |
+| 构建 | `ONEFLOW_ACCEL_SDK_FLAGS`（可选） | 任意 | 该 SDK 编译器的额外参数 |
+
+**SDK 种类不单独设参数**，按顺序推断：`ONEFLOW_ENABLE_HIP` → hip；
+`ONEFLOW_ENABLE_CUDA` → cuda；否则看前缀内容（`llvm/bin/clang++` → hip，
+`bin/nvcc` → cuda）。所以只有"一个必填 + 两个可选"，功能仍覆盖 HIP/DCU 与 CUDA。
 
 - 解析在 `cmake/OneFLOWAccelSDK.cmake`：`hip` 分支派生 `ROCM_PATH`、厂商包前缀、
   `amd_comgr`/`AMDDeviceLibs`/`hsa-runtime64` 与 `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`；

@@ -65,8 +65,9 @@
        --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
      ```
 
-     `--sdk auto` 会按前缀内容识别 `hip`/`cuda`；`--configure-only` 只配置不编译。
-     CUDA 侧用同一接口：`--sdk cuda --sdk-root <CUDA Toolkit> --arch sm_80`。
+     SDK 种类不需要指定：由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容（`llvm/bin/clang++` /
+     `bin/nvcc`）推断；`--sdk-root` 省略时取 `$ROCM_PATH`/`$CUDAToolkit_ROOT`/`$CUDA_HOME`。
+     `--configure-only` 只配置不编译。CUDA 侧同一接口：`--sdk-root <CUDA Toolkit> --arch sm_80`。
 
    - CPU-only 备用构建（不涉及 HIP 时可用，可在 CPU 节点配置）：`build/platform`。
      CPU 门禁可以指向它：

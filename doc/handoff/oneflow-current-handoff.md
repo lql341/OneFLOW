@@ -101,17 +101,18 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
 8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
    ≥1M 带 `.skl` 的网格，`partition_type=0`(GenerateLink) 仍失败。
-9. **加速器构建用统一 SDK 接口，别再手拼**：运行时后端 `ONEFLOW_ACCEL_BACKEND`
-   （AUTO/CPU/HIP/CUDA/KOKKOS）与构建期 SDK `ONEFLOW_ACCEL_SDK`（auto/hip/cuda）+
-   `ONEFLOW_ACCEL_SDK_ROOT`/`_ARCH`/`_FLAGS` 是两条独立的轴。`cmake/OneFLOWAccelSDK.cmake`
-   从前缀派生 `ROCM_PATH`、厂商包前缀、`amd_comgr`/`AMDDeviceLibs`/`hsa-runtime64` 与
-   `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`（CUDA 分支派生 `CUDAToolkit_ROOT` 等）；不请求
-   就完全不生效。一键入口：
-   `scripts/build-accel.sh --sdk auto --sdk-root "$ROCM_PATH" --arch gfx906 --flags "$ONEFLOW_DTK_HIP_FLAGS"`。
+9. **加速器构建用统一 SDK 接口，别再手拼**：运行时 `ONEFLOW_ACCEL_BACKEND`
+   （AUTO/CPU/HIP/CUDA/KOKKOS）与构建期 `ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`）
+   是两条独立的轴；**SDK 种类不单独设参数**，由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断。
+   `cmake/OneFLOWAccelSDK.cmake` 从前缀派生 `ROCM_PATH`、厂商包前缀、`amd_comgr`/
+   `AMDDeviceLibs`/`hsa-runtime64` 与 `CMAKE_TRY_COMPILE_PLATFORM_VARIABLES`（CUDA 分支派生
+   `CUDAToolkit_ROOT` 等）；不请求就完全不生效。一键入口：
+   `scripts/build-accel.sh --arch gfx906 --flags "$ONEFLOW_DTK_HIP_FLAGS"`。
    原理与故障对照见 runbook §1.2 / §4。
 10. **strict（1e-15）当前仍 4/5，且不止一处贡献者**：`plateuns2dslau2_34950_35000`
-   的 `res5` 偏离已从 `2.204e-15` 降到 `1.779e-15`（补回 `+SMALL` 护栏、恢复 AUSM 双侧
-   的历史结合顺序之后），但**未回到逐位一致**。已定位两处上游重构：
+   的 `res5` 偏离 `2.204e-15`。护栅已补回，且声速**改用一次除法**（精度更高：与 long
+   double 参考逐位一致率 100% vs 乘倒数 86.8%；护栅对物理密度无影响），代价是与旧基线
+   **不再逐位一致**——这是有意的取舍：精度优先。已定位两处上游重构：
    `f7ae944c0`（双边声速）与 `6ca93f57c`（面谱半径/局部时间步）；探针数值非单调
    （中间提交会回到 `0.0`），说明多处末位扰动互相抵消。**已排除 fast-math**：
    当前代码在 `-Ofast` 与 `-Ofast -fno-fast-math` 下给出完全相同的 `1.778709301357682e-15`，
