@@ -146,9 +146,10 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     `NsDeviceAuthoritativeFlowEnabled()` 为真时先回填 `q` 再 `InitUnsteady()` 重建。
     **判据要用所有权谓词，不要用刷新函数的返回值**：镜像可能已被别的读者刷新，
     那样会静默跳过修复（踩过一次，读数逐位不变）。
-14. **每次改热路径先看任务级 profile**：`ONEFLOW_STAGE_BREAKDOWN_FILE` 同时写
-    `.tsv` 与 `.tsv.tasks.tsv`。cat 级分项会漏掉拿不到分类名字的任务，
-    例如 `POST_PROCESS` 每步 7.7 ms（全场历史层拷贝）在 cat 表里被拆散或漏计。
+14. **`mean_ms` 会被周期性输出污染，必须连 `count` 一起读**：`POST_PROCESS` 曾显示
+    每步 7.7 ms，实际总 2193 ms / 300 步、只在第 0/50/100… 步输出；把 `nVisualSave`
+    设成不输出后降到 0.055 ms/step。误把均值当每步开销会选错优化方向（踩过一次）。
+    `ONEFLOW_STAGE_BREAKDOWN_FILE` 的 `.tsv` 是嵌套计时，不能相加求总量。
 15. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
     第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
     它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
