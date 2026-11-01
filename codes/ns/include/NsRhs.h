@@ -45,7 +45,12 @@ void NsCalcGamaT(int flag);
 // path and whenever the mirror is already current.  NsMirrorHostBoundaryState
 // pulls only the boundary-adjacent owned cells, which is all the per-step
 // aerodynamic-force and pressure-coefficient readers touch.
-void NsRefreshHostStateMirror();
+//
+// Returns true only when the resident device field was actually pulled back,
+// i.e. the host mirror had been stale.  Callers that write host-derived data
+// (restart history levels, visualization) must rebuild it in that case: those
+// host levels are derived state and are never updated by the device chain.
+bool NsRefreshHostStateMirror();
 void NsMirrorHostBoundaryState();
 void NsCalcRHS();
 void NsCalcInvFlux();

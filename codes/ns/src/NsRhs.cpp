@@ -105,16 +105,16 @@ void NsCalcGamaT( int flag )
 	}
 }
 
-void NsRefreshHostStateMirror()
+bool NsRefreshHostStateMirror()
 {
 #ifdef ONEFLOW_ENABLE_HIP
-    if ( ! HipProductionBackendSelected() ) return;
+    if ( ! HipProductionBackendSelected() ) return false;
     UnsGrid * grid = Zone::GetUnsGrid();
-    if ( grid == nullptr ) return;
+    if ( grid == nullptr ) return false;
     MRField * q = GetFieldPointer< MRField >( grid, "q" );
-    if ( q == nullptr ) return;
+    if ( q == nullptr ) return false;
     const int nEquations = static_cast< int >( q->GetNEqu() );
-    if ( nEquations <= 0 || nEquations > 5 ) return;
+    if ( nEquations <= 0 || nEquations > 5 ) return false;
     ug.Init();
     const int nCells = ug.nCells;
     const int nGhostCells = ug.nTCell - nCells;
@@ -124,15 +124,16 @@ void NsRefreshHostStateMirror()
     if ( ! HipFluxBackend::Shared().RefreshHostPrimitiveState(
              grid, nCells, nGhostCells, nEquations, components ) )
     {
-        return;
+        return false;
     }
     // The host-only derived fields (constant gamma, temperature) were skipped
     // while the device owned q; rebuild them from the refreshed mirror so the
     // restart/visualization output is self-consistent.
     NsCalcGamaT( F_INNER );
     if ( nGhostCells > 0 ) NsCalcGamaT( F_GHOST );
+    return true;
 #else
-    return;
+    return false;
 #endif
 }
 
