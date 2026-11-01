@@ -44,6 +44,7 @@ License
 #include "SolverDef.h"
 #include "SolverState.h"
 #include "Ctrl.h"
+#include "ResidualBasePolicy.h"
 #include "ZoneState.h"
 #include "GridState.h"
 #include "AccelRuntime.h"
@@ -724,7 +725,10 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
         backend.CalcAndAddReconstructedFaceFlux(
             connectivity, residual, 1, nscom.gama_ref,
             hostFluxPointer, Zone::GetUnsGrid(),
-            ! this->UseHipDeviceStateUpdate() || needFlux || dumpDue );
+            ! this->UseHipDeviceStateUpdate() || needFlux || dumpDue,
+            DeviceOwnsExplicitRkBookkeeping()
+                ? ResidualBase::DeviceZero
+                : ResidualBase::HostUpload );
         if ( needFlux )
         {
             for ( int equation = 0; equation < nEquations; ++ equation )

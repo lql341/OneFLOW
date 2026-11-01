@@ -553,6 +553,20 @@ struct ResidualView
     Real * components[ 5 ] = {};
 };
 
+// Where the accumulating residual starts before the face scatter.  The fused
+// flux add reads a base, then each face adds its contribution.
+//   HostUpload  - the host residual field is the base (legacy host RK, host
+//                 fallback, multigrid defect, any path that still runs
+//                 LOAD_RESIDUALS).
+//   DeviceZero  - the host field was not produced for this stage; the device
+//                 residual is zeroed instead of uploading it.  Only valid
+//                 when the caller owns the same base semantics on the device.
+enum class ResidualBase
+{
+    HostUpload,
+    DeviceZero
+};
+
 // Contract for the explicit Euler/RK state-update slice.  The HIP backend
 // consumes the residual left resident by the fused flux path, scales it with
 // the host-computed local timestep and cell volume, updates its resident

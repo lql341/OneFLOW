@@ -22,6 +22,7 @@ License
 #include <vector>
 #include <cstdlib>
 #include <cmath>
+#include <cstddef>
 #include <algorithm>
 #include <iostream>
 
@@ -500,6 +501,16 @@ __global__ void GradientZeroKernel( Real * gradient, int nValues )
 {
     const int index = blockIdx.x * blockDim.x + threadIdx.x;
     if ( index < nValues ) gradient[ index ] = 0.0;
+}
+
+// Reset a device buffer without a host round trip.  The explicit device chain
+// owns its residual accumulation base; uploading a host field that the stage
+// did not produce would either cost a full H2D or, if skipped, accumulate on
+// top of the previous stage.
+__global__ void ZeroValuesKernel( Real * values, int nValues )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( index < nValues ) values[ index ] = 0.0;
 }
 
 __global__ void GradientAccumulateKernel(
@@ -2388,7 +2399,8 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     Real gamma,
     FaceFluxView * hostFlux,
     const void * cacheKey,
-    bool downloadResidual )
+    bool downloadResidual,
+    ResidualBase residualBase )
 {
     ValidateFaceConnectivityView( connectivity );
     if ( residual.nCells <= 0 || residual.nEquations < 3 || gamma <= 1.0 )
@@ -2439,7 +2451,21 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
 
     const int totalResidual = nCells * nEq;
     storage->residual.Resize( totalResidual );
-    if ( residual.values != nullptr )
+    if ( residualBase == ResidualBase::DeviceZero )
+    {
+        // The device chain owns the base: start from zero on the device.  The
+        // host residual field still receives the final values when the caller
+        // asks for a download below.
+        ScopedStageTimer zeroTimer( "residual_zero" );
+        const int zeroBlock = 256;
+        hipLaunchKernelGGL(
+            ZeroValuesKernel,
+            dim3( ( totalResidual + zeroBlock - 1 ) / zeroBlock ),
+            dim3( zeroBlock ), 0, 0,
+            storage->residual.Data(), totalResidual );
+        CheckHip( hipGetLastError(), "residual zero kernel launch" );
+    }
+    else if ( residual.values != nullptr )
     {
         storage->residual.CopyFromHost(
             residual.values, totalResidual );

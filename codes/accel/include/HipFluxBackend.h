@@ -303,7 +303,9 @@ public:
 
     // Consume the device qf1/qf2 produced by ReconstructFaceValues and scatter
     // the resulting flux directly into the device residual. hostFlux is only
-    // populated for explicit trace/diagnostic requests.
+    // populated for explicit trace/diagnostic requests.  residualBase selects
+    // whether the host residual field is uploaded as the accumulation base or
+    // the device residual is zeroed instead.
     void CalcAndAddReconstructedFaceFlux(
         const FaceConnectivityView & connectivity,
         ResidualView & residual,
@@ -311,7 +313,8 @@ public:
         Real gamma,
         FaceFluxView * hostFlux = nullptr,
         const void * cacheKey = nullptr,
-        bool downloadResidual = true );
+        bool downloadResidual = true,
+        ResidualBase residualBase = ResidualBase::HostUpload );
 
     // Continue the reconstructed-flux path without a residual round trip.
     // ScaleCurrentResidual implements CALC_LHS. UpdatePrimitiveState implements
