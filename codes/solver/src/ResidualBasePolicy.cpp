@@ -72,4 +72,4 @@ bool DeviceOwnsExplicitRkBookkeeping()
 #endif
 }
 
-EndNameSpace( ONEFLOW )
+EndNameSpace

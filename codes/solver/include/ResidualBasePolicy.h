@@ -43,4 +43,4 @@ BeginNameSpace( ONEFLOW )
 // Implementation: codes/solver/src/ResidualBasePolicy.cpp.
 bool DeviceOwnsExplicitRkBookkeeping();
 
-EndNameSpace( ONEFLOW )
+EndNameSpace
