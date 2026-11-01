@@ -78,11 +78,13 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 - **下一步（唯一推荐）**：`A2`。每个 stage 把 `q` 与梯度合成一趟界面交换，滞后与 legacy
   逐位对应。实现前先写清“哪条消息带哪些字段、滞后如何与老代码对齐”；**别直接删轮次**，
   “删掉 post 轮”这条先例已被 200 步跨后端门禁否掉（`2.33e-18` → `5.54e-7`）。
-- **刚完成**：`A1`（A1.1 梯度镜像、A1.2 残差基底；同节点 paired 累计 −22.1%）与 device 权威 q 下的 restart 历史层修复。
+- **刚完成**：`A1` 收口，18.5 ms/step。A1.1 梯度镜像只在最后 stage（−10.5%）、A1.2 残差基底改设备归零（−22.1%）、A1.3 不再搬 host 历史层（−14%，任务级 profile 里 `POST_PROCESS` 每步 7.7 ms 是最大单项）。同轮 restart auth-on/off、trace `24/0/0`、200 步 XB、CPU normal/strict 全部复跑通过。
   restart 现在 auth-on `4.33e-15`、auth-off `4.55e-15`，两模式都 PASS；
   同轮 trace `24/0/0`、XB `2.331035e-18`/`0.0`、CPU 5/5 + strict 5/5 未变。
 - **复习**：直接跳 `LOAD_RESIDUALS` 不补基底时，200 步 XB 会拓到 `5.52e-4`；
-  动这个槽位先跑 XB，不要只看时间。
+  动这个槽位先跑 XB，不要只看时间。同类教训：删 post 界面轮、删 stage 屏障这两个
+  “看起来多余”的东西，一个改离散（XB 拓到 `5.54e-7`），一个完全无收益（同步 22.2 vs
+  不 22.6），都已撤回。先 profile 再动手：`POST_PROCESS` 那种整场拷贝才是真凶。
 - **之后**：`A3` stage 融合 → `A4` HIP `Advance`。
 - **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
   `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
@@ -144,23 +146,26 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     `NsDeviceAuthoritativeFlowEnabled()` 为真时先回填 `q` 再 `InitUnsteady()` 重建。
     **判据要用所有权谓词，不要用刷新函数的返回值**：镜像可能已被别的读者刷新，
     那样会静默跳过修复（踩过一次，读数逐位不变）。
-14. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
+14. **每次改热路径先看任务级 profile**：`ONEFLOW_STAGE_BREAKDOWN_FILE` 同时写
+    `.tsv` 与 `.tsv.tasks.tsv`。cat 级分项会漏掉拿不到分类名字的任务，
+    例如 `POST_PROCESS` 每步 7.7 ms（全场历史层拷贝）在 cat 表里被拆散或漏计。
+15. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
     第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
     它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
-15. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
+16. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
     `27.0 ms/step`，同一作业第二次 `21.1`。跨作业/跨冷热的绝对值不可比，只有
     交替 interleaved 的 A/B 才算数；报数字要写清是不是热态。
-16. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+17. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-17. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+18. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-18. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+19. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则

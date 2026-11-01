@@ -107,10 +107,11 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.1 Phase A — 3D 设备驻留执行（1/4）
 
-- [x] **A1 固定开销**（原 `F7.1` + `F7.2`；同节点相对每 stage 镜像累计 29.9 → 26.7 → 21.0 ms/step）
+- [x] **A1 固定开销**（原 `F7.1` + `F7.2`，另加一项历史层；同节点 29.9 → 26.7 → 21.0 → 18.5 ms/step）
   - [x] A1.1 梯度主机镜像只在最后一个 RK 阶段做。气动力与 Cp 在步末才读，中间 stage 的镜像没人看。同节点 paired 每 stage 29.703/30.017 → 最后 stage 26.660/26.779 ms/step（−10.5%）；单 rank `gradient_mirror` 3.20 → 0.93。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage
   - [x] A1.2 RK 基线状态与残差基底不再从主机搬。第一次只删 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 写入、没补设备侧基线，残差在上一 stage 上继续叠加，200 步跨后端拓到 `5.52e-4`；把“不填 host 槽位”和“设备残差归零”绑成同一个谓词（`DeviceOwnsExplicitRkBookkeeping()`）后对齐。paired 26.91 → 20.97 ms/step（−22.1%）。多重网格、粗网格、双时间、粘性仍填槽。`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0` 恢复
-  - [x] A1.3 基准 warmup 规则。首个 `hipMalloc` 与冷 case 目录会污染短基准：同一配置冷跑 `27.0`、热跑 `21.1 ms/step`。规则落在交接 §5，不是代码改动
+  - [x] A1.3 设备权威路径不再搬 host 历史层。每步 `POST_PROCESS` 里把 `q2←q1←q` 各做一次全场拷贝，约 7.7 ms（任务级 profile 里最大单项）；双时间被 capability 排除，restart 写盘时又从设备场重建，这些层在推进中无人读。跳过条件是 `NsDeviceAuthoritativeFlowEnabled()` + 显式定常 NS，`ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT=0` 恢复。同节点 paired 21.50 → 18.50 ms/step（−14%）；restart auth-on `5.03e-15`、auth-off `4.84e-15` 均 PASS，trace `24/0/0`，200 步跨后端 `2.331035e-18`/`0.0`，CPU normal/strict 5/5
+  - [x] A1.4 基准 warmup 规则。首个 `hipMalloc` 与冷 case 目录会污染短基准：同一配置冷跑 `27.0`、热跑 `18.5–21.1 ms/step`。规则落在交接 §5，不是代码改动
 - [ ] **A2 每步一次界面交换**（原 `F7.3`）。**“删掉第 4 轮”已被门禁否掉**：跳过 post 轮后 200 步跨后端从 `2.33e-18` 拓到 `5.54e-7`（aero `4.0e-5`），那一轮承载 legacy 的一步滞后，删它是改离散数据流。可行方向只剩“每个 stage 把 `q` 与梯度合成一趟过界、滞后逐位保持”，需独立切片
 - [ ] **A3 stage kernel 融合**（原 `F7.4`）：gradient → reconstruction → flux → lhs → update → boundary 在设备内串联，stage 内不再有全卡同步点。约 −6 ms
 - [ ] **A4 HIP `EulerDomainBackend::Advance`**（原 `F7.5`）：RK 三阶段循环进 backend，只在宏步边界回主机（输出、门控）。设备基态留在设备上，不要把 A1.2 跳过的 host 槽位拷回来。目标 12–14 ms
@@ -181,7 +182,7 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 | 阶段 | 勾选/总数 | 状态 |
 |---|---|---|
-| Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成，A2–A4 在途 |
+| Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成（18.5 ms/step），A2–A4 在途 |
 | Phase B 数值能力 | 0/6（另有 B-exit） | ⬜ |
 | Phase C 真实算例与 IO | 0/5 | ⬜ |
 | Phase D 多卡 | 0/4 | ⬜ 卡在 D1 |
