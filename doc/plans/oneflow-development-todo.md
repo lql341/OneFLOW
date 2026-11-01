@@ -152,22 +152,22 @@
 - [x] F5 **device 权威 q**（状态更新不 D2H、按需回拉、host 派生场按需重建）
 - [x] F6 多 zone：METIS `Partition`、zone/rank 守卫、200 步跨后端门禁
 - [ ] **F7 固定开销收口（Phase A，目标 ≤14 ms/step）**
-  - [x] F7.1 gradient host 镜像只在最后 stage 做（同节点 paired −3.14 ms/step，−10.5%；单 rank `gradient_mirror` 3.20 → 0.93）
-  - [ ] F7.2 设备路径跳过 `LOAD_Q`/`LOAD_RESIDUALS` 的整场 host 拷贝（约 −2~3 ms）
-  - [ ] F7.3 每步一次 halo（现在 4 轮，约 −2.8 ms）
+  - [x] F7.1 gradient host 镜像只在最后 stage 做（同节点 paired −3.14 ms/step，−10.5%；单 rank `gradient_mirror` 3.20 → 0.93）。50 步稳定性未跑，不把 Phase A 算收口
+  - [ ] F7.2 设备显式路径跳过没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝（约 −2~3 ms）。多重网格、host RK、双时间仍填槽。验收补上 50 步稳定性和 restart 等价
+  - [ ] F7.3 每步一次 halo（现在 4 轮，约 −2.8 ms）。只合并轮次；3D DeviceDirect/GPU-aware 仍是 G5
   - [ ] F7.4 stage kernel 融合（gradient→recon→flux→lhs→update→boundary，约 −6 ms）
-  - [ ] F7.5 HIP `EulerDomainBackend::Advance`：RK 循环进 backend，宏步驻留
-- [ ] **F8 数值能力扩展（Phase B）**
+  - [ ] F7.5 HIP `EulerDomainBackend::Advance`：RK 循环进 backend，宏步驻留。设备基态留在设备上，不要把 F7.2 跳过的 host 槽位拷回来
+- [ ] **F8 数值能力扩展（Phase B；退出还要 F9.1）**
   - [ ] F8.1 无粘通量 scheme：Roe / HLLC / AUSM（LF 保留作 oracle）
   - [ ] F8.2 limiter：Barth / Venkat（解除 `ilim=0`）
-  - [ ] F8.3 层流粘性（面粘性通量、T 梯度、壁面热流）
-  - [ ] F8.4 湍流：SA（1 方程）
-  - [ ] F8.5 LU-SGS（device 下/上扫 + `dq` 交换）
-  - [ ] F8.6 multigrid（device 或明确声明只加速 finest grid）
-- [ ] **F9 真实算例与 IO（Phase C）**
-  - [ ] F9.1 `test/cfd/m6wingroe_sa`（Roe+LU-SGS+SA）在设备上跑通同一组门禁
-  - [ ] F9.2 restart / 可视化 / 气动力 / 残差 的设备路径或高效 staging
-  - [ ] F9.3 内存预算与 ≥1M cell 单卡算例（含 restart 等价）
+  - [ ] F8.3 层流粘性（面粘性通量、T 梯度、壁面热流）。先做 H3，避免再加一层 per-zone 全局状态
+  - [ ] F8.4 湍流：SA（1 方程）。SST 仍是可选项，不单列
+  - [ ] F8.5 LU-SGS（device 下/上扫 + `dq` 交换）。依赖 F7.5；这不是 todo 的 B5
+  - [ ] F8.6 multigrid（device 或明确声明只加速 finest grid）。依赖 F7.5
+- [ ] **F9 真实算例与 IO**
+  - [ ] F9.1 `test/cfd/m6wingroe_sa`（Roe+LU-SGS+SA）在设备上跑通同一组门禁。这是 Phase B 的退出门，虽然编号在 F9
+  - [ ] F9.2 restart / 可视化 / 气动力 / 残差 的设备路径或高效 staging。多 solver 残差聚合还没独立勾选项
+  - [ ] F9.3 内存预算与 ≥1M cell 单卡算例（含 restart 等价）。`test/suites` 设备算例集收口前要补
 
 #### 4.7 G. MPI 与性能（3/7）
 
@@ -199,10 +199,12 @@
 
 #### 4.10 插空规则（不破坏 A–G 顺序）
 
-1. `F7.1`/`F7.2` 无新能力依赖，可立即做；`F7.3`/`F7.4` 建议在 `F8.1`/`F8.2` 之前或之间，
-   因为它们只动热路径，收益会被后续能力扩展继承。
+1. 已定：先把 Phase A 收到 ≤14 ms/step，再做旗舰算例。`F7.2` 是当前项。
+   `F7.3`/`F7.4` 可在 `F8.1`/`F8.2` 之前或之间，因为它们只动热路径。
 2. `F8.1`（Roe）与 `F8.2`（limiter）是旗舰算例的前置；`F8.3`/`F8.4`（粘性/SA）依赖它们。
-3. `H3`（去 globals）应在 `F8.3` 之前完成，否则每加一类 per-zone 状态都会放大隐式耦合。
+   `F8.5`/`F8.6` 依赖 `F7.5`。
+3. `H3`（去 globals）应在 `F8.3` 之前，最好也在 `F7.5` 之前。CUDA/Kokkos 当前不做，
+   但不要把 HIP 类型写进 `EulerDomain` seam。
 4. `G4`（fixture）是外部依赖，越早启动越好，不阻塞 F 层。
 5. `I1`/`G7` 任何时点都能做（paired 口径已具备），建议紧跟 F7 之后发布一次。
 6. `G5`/`G6` 依赖 `G4`，在拿到合法 fixture 之前只做只读评估，不出数字。
@@ -233,7 +235,7 @@
    昆山 1 DCU / `gfx906`：`OneFLOWHipSmoke` boundary contract PASS，进程退出码 0。
    CPU 五算例未重跑：本次没有改 CPU 残差源码，上一轮 strict 5/5 仍是最新 CPU 证据。
 1. [x] **F7.1** gradient 镜像只在最后 stage。昆山同节点 paired 1000 步：每 stage 29.703/30.017，最后 stage 26.660/26.779 ms/step，均值 −10.5%。3 步 trace `24/0/0`，200 步跨后端 residual `2.331035e-18` / aero `0.0`，CPU 五算例 normal 5/5 + strict 5/5。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage 镜像。
-2. **F7.2** 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝：同上，另加 restart 等价。
+2. **F7.2** 跳过设备显式路径上没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。验收：trace 24/0/0、200 步跨后端、CPU 五算例、50 步稳定性、restart 等价、同节点 paired ≥1.5%。这一轮同时补 F7.1 缺的 50 步稳定性。
 3. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
    Markdown 与 HTML 同 stem；同时把本文 §0/§1 的数字同步。
 4. **G4** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
@@ -245,7 +247,7 @@
 |---|---|
 | 后端选择 | `ONEFLOW_ACCEL_BACKEND=CPU|HIP` |
 | 设备权威 q（默认开） | `ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=0` 回退旧行为；`ONEFLOW_HIP_GHOST_Q_MIRROR=1` 只把 ghost q 的 D2H 加回（bisect） |
-| 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`（默认只在最后 RK stage 镜像；`=0` 恢复每 stage）、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
+| 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`（默认只在最后 RK stage 镜像；`=0` 恢复每 stage）、`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY`（默认跳过设备显式路径上的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝；`=0` 恢复）、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
 | 诊断 | `ONEFLOW_STAGE_BREAKDOWN_FILE`、`ONEFLOW_UNS_STAGE_TRACE_FILE`、`ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1`、`ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` |
 | 门禁脚本（仓库内） | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
 | 标准作业脚本（集群固定工作区） | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}`，规则见 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) |

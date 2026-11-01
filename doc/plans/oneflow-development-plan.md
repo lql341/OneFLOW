@@ -1,6 +1,6 @@
 # OneFLOW 长期分阶段开发计划（accelerator 主线）
 
-> 最后更新：2026-10-25。本文是长期路线图（living），按季度/阶段维护；
+> 最后更新：2026-11-01。本文是长期路线图（living），按季度/阶段维护；
 > **执行进度、勾选与证据以
 > [`oneflow-development-todo.md`](oneflow-development-todo.md) 文首
 > §4 的 A–G（含插入层 H/I）勾选树为准**，本文只说明取舍与阶段边界；
@@ -18,10 +18,11 @@ OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们
    应用级 lifecycle（含网格、初始化、IO、MPI）相对 32 rank CPU 为
    `3.85–9.70x`，4 卡/4M 为 `25.55x`。
    三者差两个数量级，差别全在"谁拥有状态、每步回几次 host"。
-2. **3D 主求解器还在第二阶段。** 现在每步 `31.6 ms`（8 zone/8 rank/1 DCU，
-   paired 口径），其中 device kernel 只占约 `1–1.5 ms`，其余是 host task
-   调度、stage 间 fence、halo 往返和仍留在 host 的整场拷贝。
-   也就是说 3D 目前处在 1D 的"trace 路径"位置，而不是"驻留执行"位置。
+2. **3D 主求解器还在第二阶段。** M0 的历史 paired 点是 31.6 ms/step
+   （2026-10-25，不能当作后续 A 侧）。F7.1 之后的同节点对照是每 stage 镜像
+   29.86 ms/step、只在最后 stage 镜像 26.72 ms/step。device kernel 仍只占约
+   `1–1.5 ms`，其余是 host task 调度、stage 间 fence、halo 往返和仍留在 host
+   的整场拷贝。3D 目前处在 1D 的"trace 路径"位置，而不是"驻留执行"位置。
 
 因此长期计划的主轴不是继续抠 kernel，而是：
 
@@ -130,8 +131,8 @@ Phase A（执行模型）
 
 | 子项 | 内容 | 预期 | 证据/入口 |
 |---|---|---|---|
-| A1 | 固定开销三刀：gradient 镜像只在最后 stage、设备路径跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝、基准 warmup 修正（`bnd_resize` malloc 假象） | 31.6 → ~26 ms | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`HipFluxBackend::UpdateBoundaryState` |
-| A2 | 每步一次 halo：3 stage + 1 post 的 4 轮合并；梯度/q 接收同轮；DeviceDirect 或 GPU-aware | −2.8 ms | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
+| A1 | 固定开销：F7.1 已完成（gradient 镜像只在最后 stage，同节点 29.86 → 26.72 ms/step）。下一刀是 F7.2，跳过设备路径上没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup，规则在交接坑里 | 相对每 stage 镜像再降约 2–3 ms | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals` |
+| A2 | 每步一次 halo：3 stage + 1 post 的 4 轮合并，梯度/q 接收同轮。这是 F7.3。3D DeviceDirect / GPU-aware 重测是 G5，等 G4 的合法 fixture，不塞进这一刀 | −2.8 ms | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
 | A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，stage 内不再有 host 同步点 | −6 ms | `HipFluxBackend` 各 kernel + `TimeIntegral` |
 | A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend（复用已有 seam 与 `stageCallback`），host 只负责 INIT/输出/门控；每宏步结束按需 Download | 达到 12–14 ms | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
 
@@ -153,8 +154,8 @@ Phase A（执行模型）
 | B2 | limiter：Barth / Venkat（cell 邻域极值），解除 `ilim=0` | B1 | `UNsLimiter`/`NsLimiter`、recon kernel |
 | B3 | 层流粘性：`UNsVisFlux`（面粘性通量、T 梯度、壁面热流） | B1/B2 | `UNsVisFlux`、gradient（多方程）、BC 热流 |
 | B4 | 湍流：SA（1 方程）优先，SST 可选；`turb` solver 与主 solver 的 task 交互 | B3 | `codes/turb`、`codes/uturb`、`system/turb` 字段 |
-| B5 | 隐式：LU-SGS 设备化（下/上扫、`dq` 交换、与 halo 的依赖），再评估双时间 | A4 | `NsLusgs`、`ULhs`、`LhsTaskReg` |
-| B6 | 多重网格：restrict/prolong 的设备化，或显式声明"只加速 finest grid，粗网格留 host" | A4 | `codes/multigrid` |
+| B5 | 隐式：LU-SGS 设备化（下/上扫、`dq` 交换、与 halo 的依赖），再评估双时间。依赖 F7.5，不是 todo 的 B5 | A4 / F7.5 | `NsLusgs`、`ULhs`、`LhsTaskReg` |
+| B6 | 多重网格：restrict/prolong 的设备化，或显式声明"只加速 finest grid，粗网格留 host"。同样依赖 F7.5 | A4 / F7.5 | `codes/multigrid` |
 
 准入门（每个子项都必须先过）：
 1. 单点数值契约（scheme/limiter 的 CPU vs device 单元测试，≤1e-14）；
@@ -162,7 +163,8 @@ Phase A（执行模型）
 3. 该能力对应的物理门禁（正性、守恒、边界语义）；
 4. 200 步跨后端 + 50 步稳定性。
 
-退出门：`m6wingroe_sa`（Roe+LU-SGS+SA）在设备上跑通并通过同一组门禁；
+退出门：`m6wingroe_sa`（Roe+LU-SGS+SA）在设备上跑通并通过同一组门禁。
+这个算例在 todo 里记为 F9.1，但是 Phase B 的退出条件，不是做完 F8 就算 B 结束。
 之后才允许把 "HIP 支持的算例范围" 写进正式文档。
 
 ### Phase C — 真实算例与 IO（把加速变成可交付能力）
@@ -215,11 +217,11 @@ Phase A（执行模型）
 
 | 本文阶段 | todo 层/条目 | 说明 |
 |---|---|---|
-| Phase A 执行模型 | `F7.1`–`F7.5` | 固定开销三刀 + 单轮 halo + 融合 + `Advance` |
-| Phase B 数值能力 | `F8.1`–`F8.6` | scheme → limiter → 粘性 → SA → LU-SGS → multigrid |
-| Phase C 真实算例/IO | `F9.1`–`F9.3` | 旗舰算例、IO 路径、≥1M 单卡 |
+| Phase A 执行模型 | `F7.1`–`F7.5` | F7.1 已完成。F7.3 只合并 halo 轮次；DeviceDirect/GPU-aware 在 G5 |
+| Phase B 数值能力 | `F8.1`–`F8.6`，退出还要 `F9.1` | scheme → limiter → 粘性 → SA → LU-SGS → multigrid，然后旗舰算例 |
+| Phase C 真实算例/IO | `F9.2`–`F9.3` | IO/气动力/残差聚合与 ≥1M。多 solver 残差聚合和 `test/suites` 设备算例集还没有独立勾选项，收口前要补 |
 | Phase D 多卡 | `G4`–`G6` | fixture → 3D GPU-aware/DeviceDirect → 映射与负载 |
-| Phase E 架构通用化 | `H2`–`H6`（`H1` 已完成） | capability 表、去 globals、NS 泛化、backend 入口 |
+| Phase E 架构通用化 | `H3` 先于 `H2`，然后 `H4`–`H6` | 去 globals 要在 F8.3 之前，最好也在 F7.5 之前；capability 表其次。todo 的 B5 是 1D `Advance` 语义，不是这里的 LU-SGS |
 | Phase F 产品化 | `G7`、`I1`–`I4` | 3D 报告、CI 矩阵、文档与能力矩阵、发行 |
 
 ## 3. 里程碑与判定口径
@@ -254,7 +256,7 @@ Phase A（执行模型）
 
 | 文档 | 已有结论 | 本文新增 |
 |---|---|---|
-| `doc/plans/oneflow-development-todo.md` | A–G 分层（A–E 已闭环、F 收口、G 进行中）；P0–P3 任务清单与每轮证据 | 把 G 展开为 A–F 六个阶段，给出准入门/退出门与里程碑 |
+| `doc/plans/oneflow-development-todo.md` | A–E 已闭环；F 是 6/9，F7.1 已有同节点 paired；G/H/I 未收口 | 阶段取舍以本文为准，勾选与证据以 todo 为准 |
 | `doc/architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md` | backend-neutral 接入方案、state key、调用边界 | 把该方案升格为长期阶段主轴（Phase A4） |
 | `doc/plans/oneflow-euler-optimization-plan.md` | "stateful NoTrace 才是性能路径"（trace 2x vs 驻留 100x+） | 在 3D 复现同一结论：执行模型优先于 kernel |
 | `doc/runbooks/oneflow-dcu-porting-playbook-20260903.md` | 移植方法论（契约→或修→门禁→benchmark） | 作为每个 Phase 子项的验收流程模板 |
@@ -264,19 +266,19 @@ Phase A（执行模型）
 
 1. **目标规模**：这条后端的"完成"定义是 1M cell 单卡、还是 100M cell 多卡？
    （决定 Phase C/D 的投入比例）
-2. **旗舰算例优先还是性能优先**：先做 Phase B（Roe+SA+LU-SGS，让 `m6wingroe_sa`
-   上设备），还是先把 Phase A 做到 14 ms 再扩能力？
+2. **旗舰算例优先还是性能优先**：2026-11-01 定为先把 Phase A 做到 ≤14 ms/step，
+   再扩 F8。F8.1/F8.2 可以并行评估契约，但不插到 F7.2 前面。
 3. **隐式与多重网格是否在设备上做**：若只加速显式 finest grid，可省掉 Phase B5/B6
    的大半工作，但要接受"定常收敛用 LUSGS 就没加速"的现实。
 4. **zone 映射**：长期是否维持 1 rank = 1 zone？若需要 zone 切分，Phase D 的工作量
    翻倍（state、halo、load balance 全变）。
-5. **CUDA/Kokkos 是否真要做**：做则 E4 要在 Phase A 之前，避免把 HIP 细节写进 seam。
+5. **CUDA/Kokkos 是否真要做**：当前不做。F7 继续走 HIP 生产路径，但不要把 HIP
+   类型写进 `EulerDomain` seam。真的要做 CUDA 时再补 H5，不回头阻塞 F7。
 
 ## 7. 立刻可执行的三件事（两周内）
 
-1. **Phase A1**（3 刀，31.6 → ~26 ms）+ paired 测量 + 全门禁。
-2. **3D 正式性能报告**：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对，
-   新建 `doc/reports/performance/oneflow-3d-...`，Markdown 与 HTML 同步；
-   同时把 `oneflow-development-todo.md` §1 摘要改成当前事实。
-3. **fixture 决策**：向 fixture owner 申请 ≥1M cell 带 `.skl` 的 m6wing 级网格；
-   并行评估 `GenerateLink`（`FaceTopo::SetNewFace2Node`）修复代价，决定是否自研。
+1. **F7.2**：跳过设备显式路径上的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。验收含
+   trace、200 步跨后端、CPU 五算例、50 步稳定性、restart 等价和同节点 paired。
+   F7.1 还缺 50 步稳定性，这一轮补上。
+2. **3D 正式性能报告**：同节点补 CPU 8C 1000 步 2–3 个样本。不要用 31.6 当 A 侧。
+3. **fixture 决策**：向 owner 申请 ≥1M cell 带 `.skl` 的网格，或评估 `GenerateLink`。
