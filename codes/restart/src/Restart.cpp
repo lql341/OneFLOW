@@ -193,7 +193,8 @@ void Restart::Dump( int solverType )
     bool deviceOwnedField = false;
     if ( solverType == NS_SOLVER )
     {
-        deviceOwnedField = NsRefreshHostStateMirror();
+        NsRefreshHostStateMirror();
+        deviceOwnedField = NsDeviceAuthoritativeFlowEnabled();
     }
     // The stream stores history levels 1..N and the reader rebuilds the
     // current level from level 1.  Those host levels are derived state: the
