@@ -86,13 +86,32 @@ inline bool HipSkipHostInterfaceExchange()
 }
 
 // The host mirror of the boundary-adjacent gradient only feeds aerodynamic
-// forces, the optional boundary-gradient store and field dumps.  Mirroring it
-// every RK stage costs a device pack plus one H2D of the sampled cells;
-// request it only on the steps whose host consumers actually run.
+// forces, the optional boundary-gradient store and field dumps.  Those
+// readers run after the Runge-Kutta loop, so an intermediate stage's mirror
+// is overwritten before anyone reads it.  Mirroring every stage costs a
+// device pack plus one D2H of the sampled cells.  Request it only on steps
+// whose host consumers actually run, and only on the last stage of those
+// steps.  ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0 restores the per-stage
+// mirror for bisection.
 inline bool HipGradientHostMirrorOnDemand()
 {
     const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND" );
     return value == nullptr || value[ 0 ] != '0';
+}
+
+// rkStage < 0 means the caller is not inside a staged loop.  A single-stage
+// or unstaged evaluation still mirrors when a post-step reader exists.
+inline bool HipGradientMirrorOnThisStage(
+    bool mirrorOnDemand,
+    bool forceEveryStage,
+    bool postStepReader,
+    int rkStage,
+    int stageCount )
+{
+    if ( ! mirrorOnDemand || forceEveryStage ) return true;
+    if ( ! postStepReader ) return false;
+    if ( rkStage < 0 || stageCount <= 1 ) return true;
+    return rkStage + 1 >= stageCount;
 }
 
 inline bool HipPackedGradientExchangeEnabled()

@@ -82,6 +82,7 @@ void Ctrl::Init()
     }
 
     rk_stage = GetDataValue< int >( "rk_stage" );
+    rkStage = -1;
     for ( int i = 0; i < rk_stage; ++ i )
     {
         Real coef = 1.0 / ( i + 1 );
