@@ -396,26 +396,38 @@ bool SkipRedundantPostInterface()
 void NsPostprocess( StringField & data )
 {
     //After every Iter, the first thing to consider is communication.
-    if ( ! SkipRedundantPostInterface() )
     {
-        CommInterfaceData();
+        ScopedStageTimer timer( "post_interface" );
+        if ( ! SkipRedundantPostInterface() )
+        {
+            CommInterfaceData();
+        }
     }
 
     //The solution and output of residuals need to be judged logically.
-    if ( Iteration::ResOk() )
     {
-        ONEFLOW::AddCmdToList( kDumpResidualTaskName );
+        ScopedStageTimer timer( "post_residual_gate" );
+        if ( Iteration::ResOk() )
+        {
+            ONEFLOW::AddCmdToList( kDumpResidualTaskName );
+        }
     }
 
     //The solution and output of aerodynamic force need to be judged logically.
-    if ( Iteration::ForceOk() )
     {
-        ONEFLOW::AddCmdToList( kDumpAerodynamicTaskName );
+        ScopedStageTimer timer( "post_force_gate" );
+        if ( Iteration::ForceOk() )
+        {
+            ONEFLOW::AddCmdToList( kDumpAerodynamicTaskName );
+        }
     }
 
     if ( ! Iteration::InnerOk() ) return;
 
-    ONEFLOW::AddCmdToList( kUpdateUnsteadyFlowTaskName );
+    {
+        ScopedStageTimer timer( "post_unsteady_dispatch" );
+        ONEFLOW::AddCmdToList( kUpdateUnsteadyFlowTaskName );
+    }
 
     if ( Iteration::outerSteps % Iteration::nVisualSave == 0 )
     {
