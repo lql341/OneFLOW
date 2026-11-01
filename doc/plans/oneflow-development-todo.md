@@ -153,7 +153,7 @@
 - [x] F6 多 zone：METIS `Partition`、zone/rank 守卫、200 步跨后端门禁
 - [ ] **F7 固定开销收口（Phase A，目标 ≤14 ms/step）**
   - [x] F7.1 gradient host 镜像只在最后 stage 做（同节点 paired −3.14 ms/step，−10.5%；单 rank `gradient_mirror` 3.20 → 0.93）。50 步稳定性未跑，不把 Phase A 算收口
-  - [ ] F7.2 设备显式路径跳过没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝（约 −2~3 ms）。多重网格、host RK、双时间仍填槽。验收补上 50 步稳定性和 restart 等价
+  - [x] F7.2 设备显式路径不再填没人读的 `LOAD_Q`/`LOAD_RESIDUALS` host 槽位，残差基底改成设备侧归零（同节点 paired 26.91 → 20.97 ms/step，−22.1%）。多重网格、host RK、双时间仍填槽。restart 等价**未达成**，原因已定位为原有缺陷，单列为 §5 第 0 项
   - [ ] F7.3 每步一次 halo（现在 4 轮，约 −2.8 ms）。只合并轮次；3D DeviceDirect/GPU-aware 仍是 G5
   - [ ] F7.4 stage kernel 融合（gradient→recon→flux→lhs→update→boundary，约 −6 ms）
   - [ ] F7.5 HIP `EulerDomainBackend::Advance`：RK 循环进 backend，宏步驻留。设备基态留在设备上，不要把 F7.2 跳过的 host 槽位拷回来
@@ -166,7 +166,7 @@
   - [ ] F8.6 multigrid（device 或明确声明只加速 finest grid）。依赖 F7.5
 - [ ] **F9 真实算例与 IO**
   - [ ] F9.1 `test/cfd/m6wingroe_sa`（Roe+LU-SGS+SA）在设备上跑通同一组门禁。这是 Phase B 的退出门，虽然编号在 F9
-  - [ ] F9.2 restart / 可视化 / 气动力 / 残差 的设备路径或高效 staging。多 solver 残差聚合还没独立勾选项
+  - [ ] F9.2 restart / 可视化 / 气动力 / 残差 的设备路径或高效 staging。**restart 在设备权威 q 下还不等价**（见 §5 第 3 项），所以不能勾；多 solver 残差聚合也没独立勾选项
   - [ ] F9.3 内存预算与 ≥1M cell 单卡算例（含 restart 等价）。`test/suites` 设备算例集收口前要补
 
 #### 4.7 G. MPI 与性能（3/7）
@@ -235,11 +235,19 @@
    昆山 1 DCU / `gfx906`：`OneFLOWHipSmoke` boundary contract PASS，进程退出码 0。
    CPU 五算例未重跑：本次没有改 CPU 残差源码，上一轮 strict 5/5 仍是最新 CPU 证据。
 1. [x] **F7.1** gradient 镜像只在最后 stage。昆山同节点 paired 1000 步：每 stage 29.703/30.017，最后 stage 26.660/26.779 ms/step，均值 −10.5%。3 步 trace `24/0/0`，200 步跨后端 residual `2.331035e-18` / aero `0.0`，CPU 五算例 normal 5/5 + strict 5/5。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage 镜像。
-2. **F7.2** 跳过设备显式路径上没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。验收：trace 24/0/0、200 步跨后端、CPU 五算例、50 步稳定性、restart 等价、同节点 paired ≥1.5%。这一轮同时补 F7.1 缺的 50 步稳定性。
-3. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
+2. [x] **F7.2** 设备显式路径不再填 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 槽位。第一次尝试只跳任务、不补基底，被 200 步跨后端门禁拓住（residual `5.52e-4`、aero `1.31e-3`）：`LOAD_RESIDUALS` 不是死写，它把命名残差置成 `-FIELD_RHS`，而融合通量核把它当累加基底上传。最终做法是一个共用谓词同时决定“不填槽位”和“设备侧归零”，两边不能单独改。
+   昆山同节点 paired 1000 步：填槽 26.939/26.891/26.908，不填 21.224/20.790/20.904 ms/step，均值 26.91 → 20.97（−22.1%）。trace `24/0/0`、200 步跨后端 residual `2.331035e-18` / aero `0.0`、CPU 五算例 normal 5/5 + strict 5/5、50 步 `exit 0` 且 `nonphysical_hits=0`（HIP 两种开关都跑）。`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0` 恢复。
+3. **（新增，优先于 F7.3）修 device 权威 q 下的 restart 历史层**：`ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=1`（默认）时 restart 不等价。
+   单 zone `m6wingroe_sa`、100 步 / 50+50：auth-on flow `4.761e-2`、residual `4.538e-6`、aero `1.59e-3`（FAIL）；auth-off 为 `5.88e-15 / 0 / 0`（PASS）。
+   同一 100 步在两个独立作业里 `auth-on` 写出的 `restart/flow.dat` 与 `auth-off` 相差 41%（20 个数组，逐元素最大相对差 `4.13e-1`）——所以是**写盘**旧，不是续算逻辑。
+   根因：restart 流写 `q`/`q1`/`q2`+`res*`，而设备权威路径只按需回填当前 `q`；`q1`/`q2` 这些 host 历史层从未被设备链更新，被 host 步进逻辑用旧的 `q` 覆盖。
+   与本次两个切片无关：`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY` 开/关给出**完全相同**的读数，F7.1 只改 gradient 镜像时机。该缺陷在默认配置下会影响所有 restart 算例，优先级高于 F7.3。
+   验收：auth-on 下 restart 等价（flow ≤1e-12、res/aero 同现有判据），且 auth-on 的 100 步 `flow.dat` 与 auth-off 逐位一致。
+   （本轮曾试过在 restart 读盘后通知后端“host 场已替换”，读数一字未变，已回退：问题在写盘侧。）
+4. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
    Markdown 与 HTML 同 stem；同时把本文 §0/§1 的数字同步。
-4. **G4** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
-5. **F8.1/F8.2**（可与 1–3 并行评估）：Roe + limiter 的单点数值契约与 trace 门禁。
+5. **G4** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
+6. **F8.1/F8.2**（可与 1–3 并行评估）：Roe + limiter 的单点数值契约与 trace 门禁。
 
 ### 6. 关键开关与脚本
 

@@ -75,13 +75,17 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：`F7.2` 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 的整场 host 拷贝。
-  验收仍是 trace 24/0/0、200 步跨后端、CPU 五算例 normal/strict 5/5，另加 restart 等价；
-  性能结论必须是同节点 paired。
-- **刚完成**：`F7.1`。气动力/Cp 在 RK 循环之后才读 host gradient，但 `InnerOk()`
-  在整个内迭代为真，所以每个 stage 都在镜像。现在默认只在最后 stage 镜像。
-  同节点 1000 步 paired：29.86 → 26.72 ms/step（−10.5%）。trace `24/0/0`，
-  200 步 XB residual `2.331035e-18` / aero `0.0`，CPU normal/strict 5/5。
+- **下一步（唯一推荐）**：修 device 权威 q 下的 restart 历史层。restart 写到
+  `q`/`q1`/`q2`，而设备权威路径只按需回填当前 `q`；`q1`/`q2` 仍被 host 步进逻辑用旧
+  `q` 覆盖。单 zone 100 步带 50+50 断点：auth-on flow `4.76e-2`（FAIL），auth-off
+  `5.88e-15`（PASS）；auth-on 的 100 步 `flow.dat` 与 auth-off 差 41%。默认配置受影响，
+  优先级高于 F7.3。
+- **刚完成**：`F7.2`。设备显式路径不再填 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 槽位，
+  残差基底改为设备侧归零；两边由同一个谓词控制，不能单独改。同节点 paired
+  26.91 → 20.97 ms/step（−22.1%）。trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、
+  CPU normal/strict 5/5、50 步 `exit 0` 无 non-physical。
+- **复习**：直接跳 `LOAD_RESIDUALS` 不补基底时，200 步 XB 会拓到 `5.52e-4`；
+  以后动这个槽位先跑 XB，不要只看时间。
 - **之后**：`F7.3` 每步一次 halo → `F7.4` stage 融合 → `F7.5` HIP `Advance`。
 - **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
   `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
@@ -132,17 +136,28 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     才恢复每 stage 镜像。不要用上一会话的 31.64 ms/step 当本轮 A 侧；本轮同节点
     对照是 29.86 → 26.72。分项文件如果路径里没有 `%r`，8 个 rank 会写同一个文件，
     读到的是其中一个 rank，不是 8 rank 均值。
-12. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+12. **`LOAD_Q`/`LOAD_RESIDUALS` 不是死写**：前者填 host RK 基态，后者把命名残差置成
+    `-FIELD_RHS`，而 fused flux 核把它当**累加基底**上传。跳任务必须同时把基底改成
+    设备侧归零，两边由 `DeviceOwnsExplicitRkBookkeeping()` 一个谓词控制
+    （`codes/solver/include/ResidualBasePolicy.h`）。只改一边，读数会变成残差在上一
+    stage 上累加：trace 仍过，200 步 XB 会拓到 `5.52e-4`。
+13. **restart 在 device 权威 q 下不等价（默认配置）**：restart 流写 `q`/`q1`/`q2`
+    与 `res*`，设备链只按需回填当前 `q`；`q1`/`q2` 被 host 步进逻辑用旧 `q` 覆盖。
+    证据：auth-on flow `4.76e-2`（FAIL），auth-off `5.88e-15`（PASS）；auth-on 的
+    100 步 `flow.dat` 与 auth-off 逐数组最大相对差 `4.13e-1`。**不要用 auth-on 的
+    restart 做任何长跑结论**，也不要把 `ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=0` 当成
+    修好了。
+14. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-13. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+15. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-14. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+16. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则

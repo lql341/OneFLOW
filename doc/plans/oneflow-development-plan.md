@@ -131,7 +131,7 @@ Phase A（执行模型）
 
 | 子项 | 内容 | 预期 | 证据/入口 |
 |---|---|---|---|
-| A1 | 固定开销：F7.1 已完成（gradient 镜像只在最后 stage，同节点 29.86 → 26.72 ms/step）。下一刀是 F7.2，跳过设备路径上没人读的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup，规则在交接坑里 | 相对每 stage 镜像再降约 2–3 ms | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals` |
+| A1 | 固定开销：F7.1（gradient 镜像只在最后 stage）与 F7.2（设备残差基底归零，不再填 host RK 槽位）均已完成，同节点相对每 stage 镜像累计 −22%（29.9 → 26.7 → 21.0 ms/step）。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup | 相对每 stage 镜像累计约 −22% | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
 | A2 | 每步一次 halo：3 stage + 1 post 的 4 轮合并，梯度/q 接收同轮。这是 F7.3。3D DeviceDirect / GPU-aware 重测是 G5，等 G4 的合法 fixture，不塞进这一刀 | −2.8 ms | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
 | A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，stage 内不再有 host 同步点 | −6 ms | `HipFluxBackend` 各 kernel + `TimeIntegral` |
 | A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend（复用已有 seam 与 `stageCallback`），host 只负责 INIT/输出/门控；每宏步结束按需 Download | 达到 12–14 ms | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
@@ -277,8 +277,9 @@ Phase A（执行模型）
 
 ## 7. 立刻可执行的三件事（两周内）
 
-1. **F7.2**：跳过设备显式路径上的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝。验收含
-   trace、200 步跨后端、CPU 五算例、50 步稳定性、restart 等价和同节点 paired。
-   F7.1 还缺 50 步稳定性，这一轮补上。
+1. **F7.2**：已于 2026-11-01 完成（同节点 paired −22.1%，四道数值门禁全过）。
+   **下一刀改为修 device 权威 q 下的 restart 历史层**：这是默认路径的正确性缺口，
+   优先级高于 F7.3。验收是 auth-on 下 restart 等价 + auth-on 的 100 步 `flow.dat`
+   与 auth-off 逐位一致。
 2. **3D 正式性能报告**：同节点补 CPU 8C 1000 步 2–3 个样本。不要用 31.6 当 A 侧。
 3. **fixture 决策**：向 owner 申请 ≥1M cell 带 `.skl` 的网格，或评估 `GenerateLink`。
