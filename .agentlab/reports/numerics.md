@@ -2,7 +2,7 @@
 
 status: ready
 updated: 2026-11-01
-commit: 见 §12（本文件所在提交）
+commit: e936b8191（审计交付提交；§12 记录回填与复核提交）
 branch: agent/numerics
 model: audit worker (agent-lab / pi)
 pi_version: n/a
@@ -391,18 +391,30 @@ tests/numerics/unsteady/CMakeLists.txt
 
 ### Gate
 
+两次运行（交付前 / SHA 回填后复核），命令相同：
+
 ```
 $ cd <checkout root> && GATE_MODE=audit \
     /Users/luql/Downloads/agent/repo/open-research-agents/platform/scripts/gate.sh numerics
+
+# run 1（交付前）
 == scope
 scope: numerics OK (2 changed files)
-repro record: .agentlab/repro/numerics-<UTC timestamp>.json
+repro record: .agentlab/repro/numerics-20261101T111218Z.json
+----
+GATE PASS (mode: audit, read-only)
+EXIT=0
+
+# run 2（回填 SHA 后复核；3 个改动文件 = 报告 + RFC + run 1 的 repro 记录）
+== scope
+scope: numerics OK (3 changed files)
+repro record: .agentlab/repro/numerics-20261101T111252Z.json
 ----
 GATE PASS (mode: audit, read-only)
 EXIT=0
 ```
 
-- 本报告所在提交：见 `git log -1 --format=%H -- .agentlab/reports/numerics.md`（gate 通过后单独提交，报告正文不预写 SHA，避免 amend 造成 SHA 自指）。
+- 审计交付提交：`e936b8191`（`numerics: audit A2 numerics boundary map and contract RFC`）。报告正文无法预写自身 SHA，因此 SHA 与最终 gate 复核记录由随后的一个仅记录证据的提交回填（即 `git log -2 -- .agentlab/reports/numerics.md` 中的后一条）。
 - 分支：`agent/numerics`（未 push、未 merge、未触碰 `master`/`dev`）。
 - gate 运行时 `git_commit` = `df8676fc24a35439d355eff20a6fdca71b342313`。
 - 注意：gate 只跑 `scope_check` + `repro_snapshot`，audit 模式**不构建、不跑测试**，因此 `GATE PASS` 只表示"只读审计的改动范围合法"，不表示任何数值正确性。
