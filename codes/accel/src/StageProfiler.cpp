@@ -48,9 +48,9 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
     return totals;
 }
 
-std::array< CategoryTotal, 64 > & Totals()
+std::array< CategoryTotal, 68 > & Totals()
 {
-    static std::array< CategoryTotal, 64 > totals = {{
+    static std::array< CategoryTotal, 68 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
