@@ -13,5 +13,8 @@
    see `.agentlab/contracts/README.md`.
 5. Keep C++ source ASCII-only. Do not submit cluster jobs (`sbatch`/`srun`).
 6. Report exact paths, callers, ownership, tests, and evidence. Do not claim a test passed unless it ran.
-7. Ask one concrete question at a time, with a recommendation and reason.
-8. Do not mark an audit `ready` if it only restates the task. It must produce a usable boundary map.
+7. Do not restructure OneFLOW's build or test architecture (`tests/`, `test/`,
+   per-target source lists, CMake targets). Add tests only in the existing pattern.
+   A gap that would need a build change is a report/RFC item, not a worker task.
+8. Ask one concrete question at a time, with a recommendation and reason.
+9. Do not mark an audit `ready` if it only restates the task. It must produce a usable boundary map.

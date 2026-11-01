@@ -48,6 +48,45 @@ GATE_MODE=audit "$AGENTLAB/platform/scripts/gate.sh" runtime-io
 
 Audit workers commit only reports/RFC/repro. No build, no ctest, no code edits.
 
+## Merge audit reports
+
+```bash
+cd /Users/luql/Downloads/agent/repo/OneFLOW
+"$AGENTLAB/platform/scripts/integrate_audit.sh" runtime-io numerics
+# review .agentlab/reports/*.md and .agentlab/RFC/*.md
+git checkout dev
+git merge --no-ff audit-integration
+```
+
+`integrate_audit.sh` refuses any change outside `.agentlab/reports`, `.agentlab/RFC`,
+and `.agentlab/repro`. It does not build or run tests.
+
+## First audit (2026-11-01)
+
+Both audits have run and their reports are merged into `dev`:
+
+- `.agentlab/reports/runtime-io.md`
+- `.agentlab/RFC/runtime-io-2026-11-01-shared-case-runtime-target.md`
+- `.agentlab/reports/numerics.md`
+- `.agentlab/RFC/numerics-2026-11-01-boundary-contracts.md`
+
+### Decided: no test-architecture refactor
+
+The runtime-io RFC proposed a shared `oneflow_case_runtime` target so a test could
+link `TeardownCase`. **Rejected for v0.1.** OneFLOW keeps its current test
+architecture; `TeardownCase` stays a recorded gap. See
+`platform/docs/decisions/0002-no-test-architecture-refactor.md`.
+
+Workers may add tests only in the existing pattern (one target listing the
+production sources it needs). They may not restructure the build or add a second
+test entry point.
+
+### Still open (human)
+
+1. numerics: complete dual-time, or declare it unsupported and fail fast?
+2. Which two disjoint code workstreams to open first, now that no build
+   refactor is allowed.
+
 ## After the audits
 
 1. Read `.agentlab/reports/runtime-io.md` and `.agentlab/reports/numerics.md`.
