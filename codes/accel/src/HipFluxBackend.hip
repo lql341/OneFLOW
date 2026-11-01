@@ -31,6 +31,13 @@ namespace ONEFLOW
 namespace
 {
 
+void CheckHip( hipError_t status, const char * operation )
+{
+    if ( status == hipSuccess ) return;
+    throw std::runtime_error(
+        std::string( operation ) + ": " + hipGetErrorString( status ) );
+}
+
 // The production chain launches each stage kernel on the default stream, then
 // either launches the next kernel or performs a blocking copy.  Both already
 // order the work, so a device-wide barrier after every kernel buys nothing on
@@ -56,12 +63,6 @@ void CheckStageSync( const char * what )
     }
 }
 
-void CheckHip( hipError_t status, const char * operation )
-{
-    if ( status == hipSuccess ) return;
-    throw std::runtime_error(
-        std::string( operation ) + ": " + hipGetErrorString( status ) );
-}
 
 std::unique_ptr< HipFluxBackend > sharedHipFluxBackend;
 
