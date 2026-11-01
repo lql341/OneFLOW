@@ -381,12 +381,26 @@ namespace {
 // The explicit RK path exchanges the interface at the end of every stage, so
 // q and its resident device ghosts are already current when the outer
 // iteration reaches the post-process hook.  Repeating the upload/exchange/
-// download round trip here costs a full interface pass per step.  Opt in with
-// ONEFLOW_SKIP_POST_INTERFACE=1 until the trace and residual gates have run.
+// download round trip here is one redundant interface pass per step: the last
+// stage already published exactly the same values.
+//   * device-authoritative path: on by default (nobody reads the host ghost
+//     mirror; aero/Cp pull the boundary cells they need);
+//   * host path: still off by default, because the legacy post-process
+//     consumers were validated against the extra round;
+//   * ONEFLOW_SKIP_POST_INTERFACE=0/1 overrides either way.
 bool SkipRedundantPostInterface()
 {
     const char * value = std::getenv( "ONEFLOW_SKIP_POST_INTERFACE" );
-    if ( value == nullptr || value[ 0 ] != '1' ) return false;
+    bool skip = false;
+    if ( value != nullptr )
+    {
+        skip = value[ 0 ] == '1';
+    }
+    else
+    {
+        skip = NsDeviceAuthoritativeFlowEnabled();
+    }
+    if ( ! skip ) return false;
     return ctrl.time_integral == MULTI_STAGE
         && ZoneState::nZones > 1;
 }
