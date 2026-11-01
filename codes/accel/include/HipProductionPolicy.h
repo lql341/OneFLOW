@@ -204,6 +204,19 @@ inline bool HipSkipHostRkSlotCopy(
         && steadyStrategy;
 }
 
+// Host history levels (q1/q2 and their residual counterparts) exist for the
+// dual-time scheme and for the restart stream. With the device-authoritative
+// explicit chain neither reads them during stepping: dual time is excluded by
+// the capability check, and the restart dump rebuilds them from the resident
+// field. The per-step shift copies the whole field once per level.
+// ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT=0 restores it for bisection.
+inline bool HipSkipHostHistoryShiftRequested()
+{
+    const char * value =
+        std::getenv( "ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
 // Diagnostic bisection switch: skip the per-step boundary-adjacent q mirror
 // the aerodynamic force and pressure coefficient read.
 inline bool HipBoundaryStateMirrorEnabled()
