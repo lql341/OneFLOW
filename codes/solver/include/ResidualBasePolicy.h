@@ -21,14 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #pragma once
-#include "Ctrl.h"
-#include "GridState.h"
-#include "Multigrid.h"
-#include "NsCom.h"
-#include "SolverDef.h"
-#include "SolverState.h"
-#include "TimeIntegral.h"
-#include "HipProductionPolicy.h"
+#include "NamespaceMacros.h"
 
 BeginNameSpace( ONEFLOW )
 
@@ -41,49 +34,13 @@ BeginNameSpace( ONEFLOW )
 // If only one of them changes, the stage silently accumulates on the previous
 // stage's residual.  That is a numerical regression, not a performance knob.
 //
-// The device owns this bookkeeping only when every precondition below holds.
-// Otherwise the host slots stay authoritative:
-//   * steady explicit multi-stage step (dual time keeps host history levels);
-//   * single grid level (multigrid restrict/prolong reads FIELD_FLOW);
-//   * finest grid only (coarse grids run the host update);
-//   * single local zone, because the validated device chain is one zone per
-//     rank;
-//   * constant-gamma five-equation NS solver with no chemistry and a single
-//     ideal-gas temperature model;
-//   * inviscid (the host viscous flux would otherwise add into a residual the
-//     device has already zeroed);
-//   * no dual-time source (it also accumulates into the host residual).
-inline bool SolverSupportsDeviceRkBookkeeping()
-{
-    return HipProductionBackendSelected()
-        && SolverState::solverType == NS_SOLVER
-        && nscom.chemModel == 0
-        && nscom.nTModel == 1
-        && vis_model.vismodel == 0
-        && ctrl.idualtime != 1;
-}
-
-inline bool DeviceOwnsExplicitRkBookkeeping()
-{
-#ifdef ONEFLOW_ENABLE_HIP
-    const bool stateUpdate =
-        HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" );
-    const bool reconstruction =
-        HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" );
-    // The pure seven-argument truth table is unit tested; this call wires the
-    // live globals into it so the test and production cannot drift apart.
-    return SolverSupportsDeviceRkBookkeeping()
-        && HipSkipHostRkSlotCopy(
-               HipSkipHostRkSlotCopyRequested(),
-               HipDeviceAuthoritativeStateEnabled(),
-               stateUpdate && reconstruction,
-               GridState::gridLevel == 0,
-               MG::nMulti <= 1,
-               ctrl.time_integral == MULTI_STAGE,
-               ctrl.startStrategy != 2 );
-#else
-    return false;
-#endif
-}
+// The device owns this bookkeeping only for the validated explicit chain:
+// steady multi-stage, finest grid, single grid level, NS solver, inviscid,
+// no chemistry, no dual time.  Everything else keeps the host slots
+// authoritative (multigrid restriction reads FIELD_FLOW, the host update and
+// the multigrid defect read FIELD_RHS).
+//
+// Implementation: codes/solver/src/ResidualBasePolicy.cpp.
+bool DeviceOwnsExplicitRkBookkeeping();
 
 EndNameSpace( ONEFLOW )
