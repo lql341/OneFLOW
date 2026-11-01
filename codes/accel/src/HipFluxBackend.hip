@@ -31,6 +31,31 @@ namespace ONEFLOW
 namespace
 {
 
+// The production chain launches each stage kernel on the default stream, then
+// either launches the next kernel or performs a blocking copy.  Both already
+// order the work, so a device-wide barrier after every kernel buys nothing on
+// the hot path: with eight ranks sharing one DCU it serialises their queues.
+// Keep the launch-error check (cheap, host-side) and drop the barrier.
+//   * numeric result is unchanged - no value crosses the host without a
+//     blocking copy, and no second stream is used;
+//   * fault attribution gets coarser: an execution fault surfaces at the next
+//     blocking call instead of at the kernel that caused it;
+//   * stage timers then measure enqueue time, not kernel completion, so
+//     profiling runs must set ONEFLOW_HIP_STAGE_SYNC=1.
+bool StageSynchronizeEnabled()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_STAGE_SYNC" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
+void CheckStageSync( const char * what )
+{
+    if ( StageSynchronizeEnabled() )
+    {
+        CheckHip( hipDeviceSynchronize(), what );
+    }
+}
+
 void CheckHip( hipError_t status, const char * operation )
 {
     if ( status == hipSuccess ) return;
@@ -1781,7 +1806,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
             view.nCells, view.nBoundaryFaces, view.nEquations );
     }
     CheckHip( hipGetLastError(), "gradient kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
+    CheckStageSync( "gradient kernel synchronize" );
     }
     if ( ! view.downloadToHost ) return;
     // One contiguous device->host transfer plus a host-side scatter instead of
@@ -1968,8 +1993,7 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
             view.nCells );
         CheckHip( hipGetLastError(), "local timestep cap kernel launch" );
     }
-    CheckHip(
-        hipDeviceSynchronize(), "local timestep kernel synchronize" );
+    CheckStageSync( "local timestep kernel synchronize" );
 
     storage->cachedTimeStepHost = view.timeStep;
     storage->residentTimeStepReady = true;
@@ -2376,7 +2400,7 @@ void HipFluxBackend::ReconstructFaceValues(
         view.densityComponent, view.pressureComponent,
         storage->qf1.Data(), storage->qf2.Data() );
     CheckHip( hipGetLastError(), "reconstruction kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "reconstruction kernel synchronize" );
+    CheckStageSync( "reconstruction kernel synchronize" );
 
     if ( downloadToHost )
     {
@@ -2522,8 +2546,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         storage->residual.Data() );
     CheckHip( hipGetLastError(),
               "reconstructed primitive flux kernel launch" );
-    CheckHip( hipDeviceSynchronize(),
-              "reconstructed primitive flux kernel synchronize" );
+    CheckStageSync( "reconstructed primitive flux kernel synchronize" );
     }
     if ( downloadResidual && residual.values != nullptr )
     {
@@ -2598,9 +2621,7 @@ void HipFluxBackend::ScaleCurrentResidual(
         storage.cellVolume.Data(), view.nCells, view.nEquations,
         view.rkCoefficient );
     CheckHip( hipGetLastError(), "state residual scale kernel launch" );
-    CheckHip(
-        hipDeviceSynchronize(),
-        "state residual scale kernel synchronize" );
+    CheckStageSync( "state residual scale kernel synchronize" );
     storage.residualMetricsValid = true;
 }
 
@@ -3117,9 +3138,7 @@ void HipFluxBackend::UnpackBoundary(
             cellCount, static_cast< int >( endpoint.cellIds.size() ),
             nEquations, storage.cellState.Data() );
         CheckHip( hipGetLastError(), "boundary unpack kernel launch" );
-        CheckHip(
-            hipDeviceSynchronize(),
-            "boundary unpack kernel synchronize" );
+        CheckStageSync( "boundary unpack kernel synchronize" );
     }
     // The paired host exchange wrote the same ghost cells, and those values
     // were just received into the state-owned device q.  The ghost epoch is now
@@ -3465,7 +3484,7 @@ bool HipFluxBackend::ComputeResidualMetrics(
         storage.residualMetricChunkIndex.Data(),
         storage.residualMetricChunkMin.Data() );
     CheckHip( hipGetLastError(), "residual metrics kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "residual metrics kernel synchronize" );
+    CheckStageSync( "residual metrics kernel synchronize" );
 
     std::vector< Real > chunkSum(
         static_cast< std::size_t >( chunks ) * nEquations );
