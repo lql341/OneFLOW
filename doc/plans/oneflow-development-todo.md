@@ -237,13 +237,12 @@
 1. [x] **F7.1** gradient 镜像只在最后 stage。昆山同节点 paired 1000 步：每 stage 29.703/30.017，最后 stage 26.660/26.779 ms/step，均值 −10.5%。3 步 trace `24/0/0`，200 步跨后端 residual `2.331035e-18` / aero `0.0`，CPU 五算例 normal 5/5 + strict 5/5。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage 镜像。
 2. [x] **F7.2** 设备显式路径不再填 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 槽位。第一次尝试只跳任务、不补基底，被 200 步跨后端门禁拓住（residual `5.52e-4`、aero `1.31e-3`）：`LOAD_RESIDUALS` 不是死写，它把命名残差置成 `-FIELD_RHS`，而融合通量核把它当累加基底上传。最终做法是一个共用谓词同时决定“不填槽位”和“设备侧归零”，两边不能单独改。
    昆山同节点 paired 1000 步：填槽 26.939/26.891/26.908，不填 21.224/20.790/20.904 ms/step，均值 26.91 → 20.97（−22.1%）。trace `24/0/0`、200 步跨后端 residual `2.331035e-18` / aero `0.0`、CPU 五算例 normal 5/5 + strict 5/5、50 步 `exit 0` 且 `nonphysical_hits=0`（HIP 两种开关都跑）。`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0` 恢复。
-3. **（新增，优先于 F7.3）修 device 权威 q 下的 restart 历史层**：`ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=1`（默认）时 restart 不等价。
-   单 zone `m6wingroe_sa`、100 步 / 50+50：auth-on flow `4.761e-2`、residual `4.538e-6`、aero `1.59e-3`（FAIL）；auth-off 为 `5.88e-15 / 0 / 0`（PASS）。
-   同一 100 步在两个独立作业里 `auth-on` 写出的 `restart/flow.dat` 与 `auth-off` 相差 41%（20 个数组，逐元素最大相对差 `4.13e-1`）——所以是**写盘**旧，不是续算逻辑。
-   根因：restart 流写 `q`/`q1`/`q2`+`res*`，而设备权威路径只按需回填当前 `q`；`q1`/`q2` 这些 host 历史层从未被设备链更新，被 host 步进逻辑用旧的 `q` 覆盖。
-   与本次两个切片无关：`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY` 开/关给出**完全相同**的读数，F7.1 只改 gradient 镜像时机。该缺陷在默认配置下会影响所有 restart 算例，优先级高于 F7.3。
-   验收：auth-on 下 restart 等价（flow ≤1e-12、res/aero 同现有判据），且 auth-on 的 100 步 `flow.dat` 与 auth-off 逐位一致。
-   （本轮曾试过在 restart 读盘后通知后端“host 场已替换”，读数一字未变，已回退：问题在写盘侧。）
+3. [x] **修 device 权威 q 下的 restart 历史层**（`9644b84f2` + `f07c00efc`）。
+   缺陷读数：单 zone `m6wingroe_sa`、100 步 / 50+50，auth-on flow `4.761e-2`（FAIL），auth-off `5.88e-15`（PASS）；auth-on 的 100 步 `flow.dat` 与 auth-off 差 41%。
+   根因：restart 流写 `q1`/`q2` 等历史层，读盘时用 level 1 复原当前场；而设备权威路径只按需回填当前 `q`，历史层被 host 步进逻辑用旧的 `q` 覆盖，所以**写盘**旧。
+   修法：`Restart::Dump` 在设备拥有权威场时（`NsDeviceAuthoritativeFlowEnabled()`），先回填 `q`，再用 `InitUnsteady()` 从它重建历史层。判据用「谁拥有权威场」，**不能**用刷新函数的返回值——镜像可能已被别的读者刷新，那样会静默跳过。
+   修复后：auth-on `4.330e-15 / 0 / 0` PASS，auth-off `4.552e-15 / 0 / 0` PASS。同一 100 步的 dump 里 level 1 与 auth-off 差 `5.33e-15`；level 2 保留差异是设计使然（auth-on 无法复现真实上一步），steady 下不被读取。
+   同一轮复跑：trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、CPU normal 5/5 + strict 5/5、热态 1000 步 `21.10/21.27/20.86 ms/step`——说明该修复不影响数值与性能。
 4. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
    Markdown 与 HTML 同 stem；同时把本文 §0/§1 的数字同步。
 5. **G4** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
