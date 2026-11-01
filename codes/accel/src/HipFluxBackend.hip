@@ -3138,6 +3138,23 @@ void HipFluxBackend::NotifyHostFieldStateModified( const void * cacheKey )
     binding->second->MarkFieldChanged();
 }
 
+void HipFluxBackend::NotifyHostFieldReplaced( const void * cacheKey )
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() ) return;
+    Ns3DDeviceState * owner = binding->second;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        owner->BackendState() );
+    if ( hipState == nullptr ) return;
+    // A host writer replaced the complete field outside the device path
+    // (restart read, field import).  The host copy is now the newest state, so
+    // bump the generation and declare the mirror current; the next device
+    // consumer then performs one full upload instead of keeping its old field.
+    owner->MarkFieldChanged();
+    hipState->Gradient().residentContract.NoteHostMirrorRefresh(
+        owner->FieldGeneration() );
+}
+
 void HipFluxBackend::NotifyHostGhostStateModified( const void * cacheKey )
 {
     const auto binding = boundStates_.find( cacheKey );

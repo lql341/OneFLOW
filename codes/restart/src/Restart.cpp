@@ -42,6 +42,9 @@ License
 #include "RegisterUtils.h"
 #include "INsRestart.h"
 #include "NsRhs.h"
+#ifdef ONEFLOW_ENABLE_HIP
+#include "HipFluxBackend.h"
+#endif
 
 BeginNameSpace( ONEFLOW )
 
@@ -183,6 +186,20 @@ void Restart::Read( int solverType )
     this->ReadUnsteady( solverType );
 
     RwInterface( solverType, GREAT_READ );
+
+    // A restart read replaces the complete host flow field outside the device
+    // path.  The resident HIP state still holds the field from before the
+    // read (for example the inflow initialization), so declare the host copy
+    // newest and let the next device consumer upload it once.  Without this
+    // the device keeps solving from the pre-read state, which is invisible in
+    // the residual but wrong in the flow field.
+    if ( solverType == NS_SOLVER )
+    {
+#ifdef ONEFLOW_ENABLE_HIP
+        HipFluxBackend::Shared().NotifyHostFieldReplaced(
+            Zone::GetUnsGrid() );
+#endif
+    }
 }
 
 void Restart::Dump( int solverType )

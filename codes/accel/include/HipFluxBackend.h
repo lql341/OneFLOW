@@ -385,6 +385,10 @@ public:
     // device path.  Owned-cell writes invalidate the whole resident field;
     // ghost writes only invalidate the ghost region.
     void NotifyHostFieldStateModified( const void * cacheKey );
+    // The host replaced the complete field outside the device path (restart
+    // read, field import).  The host copy becomes the newest state and the
+    // next device consumer performs one full upload.
+    void NotifyHostFieldReplaced( const void * cacheKey );
     void NotifyHostGhostStateModified( const void * cacheKey );
 
     // Refresh the ghost region of the state-owned device q from the host
