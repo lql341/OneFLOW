@@ -14,8 +14,9 @@
 
 受限无粘 3D 路径（5 方程 / Lax–Friedrichs / `ilim=0` / 稳态显式 RK / 1 rank 1 zone）
 的 **q 已设备权威**：状态更新不再回写 host，边界 ghost、墙面状态、输出按需回拉。
-8 zone / 8 rank / 1 DCU、1000 步 paired：**38.26 → 31.64 ms/step（−6.62 ms，−17.3%）**；
-按 1 DCU 槽 = 8 核的口径约 **6.4x**（CPU 样本需按 §5 重测）。
+8 zone / 8 rank / 1 DCU、1000 步：上一会话 paired 点是 31.64 ms/step，不能当作本轮 A 侧。
+本轮同节点 paired（50 步 warmup、2 个正式 repeat）把 gradient host 镜像从每 stage 收到最后 stage：
+**29.86 → 26.72 ms/step（−3.14 ms，−10.5%）**。单 rank 分项里 `gradient_mirror` 从 3.20 降到 0.93 ms/step。
 功能线已通过 **PR #227** 进入 upstream `master`；工作区 runbook 已通过 **PR #238**
 进入 upstream。
 
@@ -151,7 +152,7 @@
 - [x] F5 **device 权威 q**（状态更新不 D2H、按需回拉、host 派生场按需重建）
 - [x] F6 多 zone：METIS `Partition`、zone/rank 守卫、200 步跨后端门禁
 - [ ] **F7 固定开销收口（Phase A，目标 ≤14 ms/step）**
-  - [ ] F7.1 gradient host 镜像只在最后 stage 做（约 −2 ms）
+  - [x] F7.1 gradient host 镜像只在最后 stage 做（同节点 paired −3.14 ms/step，−10.5%；单 rank `gradient_mirror` 3.20 → 0.93）
   - [ ] F7.2 设备路径跳过 `LOAD_Q`/`LOAD_RESIDUALS` 的整场 host 拷贝（约 −2~3 ms）
   - [ ] F7.3 每步一次 halo（现在 4 轮，约 −2.8 ms）
   - [ ] F7.4 stage kernel 融合（gradient→recon→flux→lhs→update→boundary，约 −6 ms）
@@ -220,7 +221,7 @@
 | H 架构通用化 | 1/6 | ⬜ 仅 capability 枚举 |
 | I 产品化 | 0/4 | ⬜ |
 | **合计（顶层条目）** | **33/50（约 66%）** | A–E 收口，F/G 是当前主线，H/I 插空 |
-| 其中 F 层子项 | 0/14 | F7.1–F7.5、F8.1–F8.6、F9.1–F9.3 全部未开始 |
+| 其中 F 层子项 | 1/14 | F7.1 已有同节点 paired 证据；F7.2 起未开始 |
 
 ### 5. 下一轮任务（按序，含验收）
 
@@ -231,7 +232,7 @@
    夹具已改成与生产路径相同的打包；不连续的 `bcQ` 在上传前直接拒绝。
    昆山 1 DCU / `gfx906`：`OneFLOWHipSmoke` boundary contract PASS，进程退出码 0。
    CPU 五算例未重跑：本次没有改 CPU 残差源码，上一轮 strict 5/5 仍是最新 CPU 证据。
-1. **F7.1** gradient 镜像只在最后 stage：paired 1000 步 ≥1.5%，trace 24/0/0、200 步 XB、CPU 5/5 全过。
+1. [x] **F7.1** gradient 镜像只在最后 stage。昆山同节点 paired 1000 步：每 stage 29.703/30.017，最后 stage 26.660/26.779 ms/step，均值 −10.5%。3 步 trace `24/0/0`，200 步跨后端 residual `2.331035e-18` / aero `0.0`，CPU 五算例 normal 5/5 + strict 5/5。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage 镜像。
 2. **F7.2** 跳过 `LOAD_Q`/`LOAD_RESIDUALS` 整场 host 拷贝：同上，另加 restart 等价。
 3. **G7/I1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
    Markdown 与 HTML 同 stem；同时把本文 §0/§1 的数字同步。
@@ -244,7 +245,7 @@
 |---|---|
 | 后端选择 | `ONEFLOW_ACCEL_BACKEND=CPU|HIP` |
 | 设备权威 q（默认开） | `ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=0` 回退旧行为；`ONEFLOW_HIP_GHOST_Q_MIRROR=1` 只把 ghost q 的 D2H 加回（bisect） |
-| 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
+| 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`（默认只在最后 RK stage 镜像；`=0` 恢复每 stage）、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
 | 诊断 | `ONEFLOW_STAGE_BREAKDOWN_FILE`、`ONEFLOW_UNS_STAGE_TRACE_FILE`、`ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1`、`ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` |
 | 门禁脚本（仓库内） | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
 | 标准作业脚本（集群固定工作区） | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}`，规则见 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) |
