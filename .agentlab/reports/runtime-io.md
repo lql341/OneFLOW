@@ -2,7 +2,7 @@
 
 status: need_decision
 updated: 2026-11-01
-commit: (见 §12 交付记录；本报告所在提交以 `git log -1 --format=%H` 为准)
+commit: ff5a34c6e766c62c369e2d3342e4d152bdd6e4f0 (本报告所在提交；后续仅追加提交标识的元数据提交)
 branch: agent/runtime-io
 model: scnetx/deepseek-v4.1-flash-261017
 pi_version: 1.4.0
@@ -322,7 +322,8 @@ gate_status: PASS
 
 ## 12. 交付记录
 
-- 本报告所在提交：见 `git log -1 --format='%H %s'`（branch `agent/runtime-io`）。
+- 本报告所在提交：`ff5a34c6e766c62c369e2d3342e4d152bdd6e4f0`（branch `agent/runtime-io`，未 amend、未 push）。
+  同一提交包含本报告、RFC 与 gate 生成的 `.agentlab/repro/runtime-io-20261101T110035Z.json`。
 - Gate：`GATE_MODE=audit …/gate.sh runtime-io` → 结果见下方 gate 输出。
 - 未 push、未 merge、未提交集群作业。
 
