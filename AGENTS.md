@@ -19,7 +19,7 @@ Then follow the relevant architecture page, roadmap, tests, and evidence links.
 | 2026-09-13 measurement method and baseline audit | [`doc/reports/performance/oneflow-euler-performance-20260913.md`](doc/reports/performance/oneflow-euler-performance-20260913.md) |
 | CPU regression suite and residual baselines | [`test/README.md`](test/README.md), [`test/baselines/README.md`](test/baselines/README.md) |
 | GoogleTest contract tests | [`tests/README.md`](tests/README.md) |
-| Current state, A–G roadmap with checkboxes, per-round gates | [`doc/plans/oneflow-development-todo.md`](doc/plans/oneflow-development-todo.md) |
+| Current state, Phase A–F roadmap with checkboxes, per-round gates | [`doc/plans/oneflow-development-todo.md`](doc/plans/oneflow-development-todo.md) |
 | Long-term phase plan (milestones, gates, open decisions) | [`doc/plans/oneflow-development-plan.md`](doc/plans/oneflow-development-plan.md) |
 | Session handoff (living: environment, fixed paths, traps) | [`doc/handoff/oneflow-current-handoff.md`](doc/handoff/oneflow-current-handoff.md) |
 | Kunshan workspace layout, job submission and cleanup rules | [`doc/runbooks/oneflow-kunshan-workspace-runbook.md`](doc/runbooks/oneflow-kunshan-workspace-runbook.md) |

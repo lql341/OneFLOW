@@ -7,13 +7,13 @@
 > [`../runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md)。
 >
 > 本文只放"接手时立刻需要"的东西：**环境与固定路径、启动顺序、常量和坑、当前任务指针**。
-> 能力边界、性能数字、A–G 进度**不在这里重复**，一律以 todo 为准。
+> 能力边界、性能数字、Phase A–F 进度**不在这里重复**，一律以 todo 为准。
 
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是 `F7.2`
-   （跳过 `LOAD_Q`/`LOAD_RESIDUALS` 的整场 host 拷贝）。`F7.1` 已有同节点 paired 证据。
+2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是 `A2`
+   （每个 stage 把 `q` 与梯度合成一趟界面交换）。`A1` 已有同节点 paired 证据。
 3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，构建统一走
    `scripts/build-accel.sh`（见 §5.9），不要手拼 CMake 变量。
 4. 收尾：勾选 todo、把证据落进 `evidence/<gate>/<jobid>/`、更新本文 §4（任务指针）与
@@ -75,16 +75,15 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：重新定义 `F7.3`。原写法“删掉多余的 post 轮”已被门禁否掉
-  （200 步 XB 从 `2.33e-18` 拓到 `5.54e-7`），它与 legacy 的一轮 lag 绑在一起。
-  可行方向是把每 stage 的 q 与 gradient 合成一轮、lag 保持不变；实现前先写清
-  “哪条消息带哪些字段、lag 与 legacy 如何一一对应”，别直接删轮次。
-- **刚完成**：`F7.2`（同节点 paired −22.1%）与 device 权威 q 下的 restart 历史层修复。
+- **下一步（唯一推荐）**：`A2`。每个 stage 把 `q` 与梯度合成一趟界面交换，滞后与 legacy
+  逐位对应。实现前先写清“哪条消息带哪些字段、滞后如何与老代码对齐”；**别直接删轮次**，
+  “删掉 post 轮”这条先例已被 200 步跨后端门禁否掉（`2.33e-18` → `5.54e-7`）。
+- **刚完成**：`A1`（A1.1 梯度镜像、A1.2 残差基底；同节点 paired 累计 −22.1%）与 device 权威 q 下的 restart 历史层修复。
   restart 现在 auth-on `4.33e-15`、auth-off `4.55e-15`，两模式都 PASS；
   同轮 trace `24/0/0`、XB `2.331035e-18`/`0.0`、CPU 5/5 + strict 5/5 未变。
 - **复习**：直接跳 `LOAD_RESIDUALS` 不补基底时，200 步 XB 会拓到 `5.52e-4`；
   动这个槽位先跑 XB，不要只看时间。
-- **之后**：`F7.4` stage 融合 → `F7.5` HIP `Advance`。
+- **之后**：`A3` stage 融合 → `A4` HIP `Advance`。
 - **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
   `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
   接口（HIP/DCU + CUDA，见 §5.9）；声速改用一次除法（更准）并据此重生成越界算例的精度
@@ -130,11 +129,11 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    旧代码两种设置都是 `0.0` → 差异是源码里运算结合顺序的确定性 ≤1 ulp 改变，不是编译器
    重排、也不含不确定性。要靠补公式还原不成立（与上游方向相反且易反复）；恢复 1e-15
    需按流程重生成基线或改判据形态，属数值口径决定，等 owner 拍板。
-11. **gradient host 镜像默认只在最后 RK stage**：`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0`
+11. **gradient host 镜像默认只在最后 RK stage（A1.1）**：`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0`
     才恢复每 stage 镜像。不要用上一会话的 31.64 ms/step 当本轮 A 侧；本轮同节点
     对照是 29.86 → 26.72。分项文件如果路径里没有 `%r`，8 个 rank 会写同一个文件，
     读到的是其中一个 rank，不是 8 rank 均值。
-12. **`LOAD_Q`/`LOAD_RESIDUALS` 不是死写**：前者填 host RK 基态，后者把命名残差置成
+12. **`LOAD_Q`/`LOAD_RESIDUALS` 不是死写（A1.2）**：前者填 host RK 基态，后者把命名残差置成
     `-FIELD_RHS`，而 fused flux 核把它当**累加基底**上传。跳任务必须同时把基底改成
     设备侧归零，两边由 `DeviceOwnsExplicitRkBookkeeping()` 一个谓词控制
     （`codes/solver/include/ResidualBasePolicy.h`）。只改一边，读数会变成残差在上一
@@ -168,4 +167,4 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 - **不新建 dated handoff**：每次会话结束就地更新 §4（任务指针）和 §5（新坑）。
 - §1/§2 只在环境或固定路径变化时改，并同步 `runbook` 与 todo §1.1。
-- 能力边界、性能数字、A–G 进度不写进本文，避免与 todo 双份维护。
+- 能力边界、性能数字、Phase A–F 进度不写进本文，避免与 todo 双份维护。
