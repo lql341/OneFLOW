@@ -154,7 +154,7 @@
 - [ ] **F7 固定开销收口（Phase A，目标 ≤14 ms/step）**
   - [x] F7.1 gradient host 镜像只在最后 stage 做（同节点 paired −3.14 ms/step，−10.5%；单 rank `gradient_mirror` 3.20 → 0.93）。50 步稳定性未跑，不把 Phase A 算收口
   - [x] F7.2 设备显式路径不再填没人读的 `LOAD_Q`/`LOAD_RESIDUALS` host 槽位，残差基底改成设备侧归零（同节点 paired 26.91 → 20.97 ms/step，−22.1%）。多重网格、host RK、双时间仍填槽。restart 等价**未达成**，原因已定位为原有缺陷，单列为 §5 第 0 项
-  - [ ] F7.3 每步一次 halo（现在 4 轮，约 −2.8 ms）。只合并轮次；3D DeviceDirect/GPU-aware 仍是 G5
+  - [ ] F7.3 每步一次 halo。**已排除“直接删 post 轮”这条路**：把 post 轮跳过后，200 步跨后端从 `2.33e-18` 拓到 `5.54e-7`（aero `4.0e-5`）——那一轮不是重复，它参与 legacy 的一轮 lag 结构，删掉是算法变更。可行方向只剩“q 与 gradient 合成一轮、保持 lag 不变”，属结构性改动，需要一个独立切片。3D DeviceDirect/GPU-aware 仍是 G5
   - [ ] F7.4 stage kernel 融合（gradient→recon→flux→lhs→update→boundary，约 −6 ms）
   - [ ] F7.5 HIP `EulerDomainBackend::Advance`：RK 循环进 backend，宏步驻留。设备基态留在设备上，不要把 F7.2 跳过的 host 槽位拷回来
 - [ ] **F8 数值能力扩展（Phase B；退出还要 F9.1）**

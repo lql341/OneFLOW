@@ -75,8 +75,10 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：`F7.3` 每步一次 halo（现在 3 stage + 1 post 共 4 轮，预计
-  −2.8 ms）。只合并轮次；3D DeviceDirect / GPU-aware 重测仍是 G5，等 G4 的合法 fixture。
+- **下一步（唯一推荐）**：重新定义 `F7.3`。原写法“删掉多余的 post 轮”已被门禁否掉
+  （200 步 XB 从 `2.33e-18` 拓到 `5.54e-7`），它与 legacy 的一轮 lag 绑在一起。
+  可行方向是把每 stage 的 q 与 gradient 合成一轮、lag 保持不变；实现前先写清
+  “哪条消息带哪些字段、lag 与 legacy 如何一一对应”，别直接删轮次。
 - **刚完成**：`F7.2`（同节点 paired −22.1%）与 device 权威 q 下的 restart 历史层修复。
   restart 现在 auth-on `4.33e-15`、auth-off `4.55e-15`，两模式都 PASS；
   同轮 trace `24/0/0`、XB `2.331035e-18`/`0.0`、CPU 5/5 + strict 5/5 未变。
@@ -143,20 +145,23 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     `NsDeviceAuthoritativeFlowEnabled()` 为真时先回填 `q` 再 `InitUnsteady()` 重建。
     **判据要用所有权谓词，不要用刷新函数的返回值**：镜像可能已被别的读者刷新，
     那样会静默跳过修复（踩过一次，读数逐位不变）。
-14. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
+14. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
+    第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
+    它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
+15. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
     `27.0 ms/step`，同一作业第二次 `21.1`。跨作业/跨冷热的绝对值不可比，只有
     交替 interleaved 的 A/B 才算数；报数字要写清是不是热态。
-15. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+16. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-16. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+17. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-17. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+18. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则
