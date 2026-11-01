@@ -259,3 +259,25 @@ TEST( HipGradientMirror, UnstagedAndForcedReadersKeepTheMirror )
     EXPECT_TRUE( HipGradientMirrorOnThisStage( true, true, true, 0, 3 ) );
     EXPECT_FALSE( HipGradientMirrorOnThisStage( true, false, false, 2, 3 ) );
 }
+
+TEST( HipRkSlotCopy, DeviceSteadyFinestGridSkipsHostSlots )
+{
+    EXPECT_TRUE( HipSkipHostRkSlotCopy(
+        true, true, true, true, true, true, true ) );
+}
+
+TEST( HipRkSlotCopy, HostMultigridAndDualTimeKeepTheSlots )
+{
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        false, true, true, true, true, true, true ) );
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        true, true, true, true, false, true, true ) );
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        true, true, true, false, true, true, true ) );
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        true, true, false, true, true, true, true ) );
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        true, true, true, true, true, false, true ) );
+    EXPECT_FALSE( HipSkipHostRkSlotCopy(
+        true, true, true, true, true, true, false ) );
+}

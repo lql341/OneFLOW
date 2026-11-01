@@ -42,6 +42,11 @@ License
 #include "Lhs.h"
 #include "FieldManager.h"
 #include "SolverState.h"
+#include "GridState.h"
+#include "Ctrl.h"
+#include "Multigrid.h"
+#include "TimeIntegral.h"
+#include "HipProductionPolicy.h"
 #include "Zone.h"
 #include "Grid.h"
 #include "UnsGrid.h"
@@ -69,8 +74,39 @@ void RegisterFieldTask()
     REGISTER_DATA_CLASS( ConvertNodeFieldToCell );
 }
 
+bool DeviceExplicitChainOwnsRkSlots()
+{
+#ifdef ONEFLOW_ENABLE_HIP
+    return HipProductionBackendSelected()
+        && HipProductionFeatureEnabled( "ONEFLOW_ENABLE_UNS_HIP_STATE_UPDATE" )
+        && HipProductionFeatureEnabled(
+               "ONEFLOW_ENABLE_UNS_HIP_RECONSTRUCTION" )
+        && SolverState::solverType == NS_SOLVER
+        && nscom.chemModel == 0
+        && nscom.nTModel == 1;
+#else
+    return false;
+#endif
+}
+
+bool SkipHostRkSlotCopy()
+{
+    return HipSkipHostRkSlotCopy(
+        HipSkipHostRkSlotCopyRequested(),
+        HipDeviceAuthoritativeStateEnabled(),
+        DeviceExplicitChainOwnsRkSlots(),
+        GridState::gridLevel == 0,
+        MG::nMulti <= 1,
+        ctrl.time_integral == MULTI_STAGE,
+        ctrl.startStrategy != 2 );
+}
+
 void LoadResiduals( StringField & data )
 {
+    // The device chain scales its own residual. FIELD_RHS remains the
+    // multigrid defect slot and is still filled on that path.
+    if ( SkipHostRkSlotCopy() ) return;
+
     int fieldId = ( * fieldIdMap )[ data[ 0 ] ];
 
     UnsGrid * grid = Zone::GetUnsGrid();
@@ -89,6 +125,10 @@ void ZeroResiduals( StringField & data )
 
 void LoadQ( StringField & data )
 {
+    // FIELD_FLOW is the host RK base state. The device update does not read
+    // it. Host fallback, coarse-grid restriction, and dual-time still do.
+    if ( SkipHostRkSlotCopy() ) return;
+
     std::string & fName = data[ 0 ];
 
     int solverType = SolverState::solverType;

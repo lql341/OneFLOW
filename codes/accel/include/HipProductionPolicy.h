@@ -171,6 +171,39 @@ inline bool HipGhostQMirrorForced()
     return value != nullptr && value[ 0 ] == '1';
 }
 
+// Host RK slot copies. FIELD_FLOW saves the step's base primitive state for
+// the host explicit update and for multigrid restriction. FIELD_RHS stores
+// the negated residual used by the multigrid defect. The device explicit
+// chain does not read either slot. A later device Advance should keep that
+// base state on the device; do not bring these full-field host copies back
+// as the resident implementation. ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0
+// restores both copies for bisection. Restart and visualization read the
+// named q mirror, not FIELD_FLOW, so this skip must not replace
+// NsRefreshHostStateMirror.
+inline bool HipSkipHostRkSlotCopyRequested()
+{
+    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
+inline bool HipSkipHostRkSlotCopy(
+    bool skipRequested,
+    bool deviceAuthoritative,
+    bool deviceStateUpdate,
+    bool finestGrid,
+    bool singleGridLevel,
+    bool explicitMultiStage,
+    bool steadyStrategy )
+{
+    return skipRequested
+        && deviceAuthoritative
+        && deviceStateUpdate
+        && finestGrid
+        && singleGridLevel
+        && explicitMultiStage
+        && steadyStrategy;
+}
+
 // Diagnostic bisection switch: skip the per-step boundary-adjacent q mirror
 // the aerodynamic force and pressure coefficient read.
 inline bool HipBoundaryStateMirrorEnabled()
