@@ -43,4 +43,11 @@ BeginNameSpace( ONEFLOW )
 // Implementation: codes/solver/src/ResidualBasePolicy.cpp.
 bool DeviceOwnsExplicitRkBookkeeping();
 
+// The named residual field and the FIELD_RHS slot are the host-side residual
+// bookkeeping used by the multigrid defect (restrict/prolong reads FIELD_RHS)
+// and by the host explicit update.  When the device owns both the base and the
+// accumulation for a single-grid steady step, nothing reads them: the device
+// residual is the only one that matters and it is downloaded only for output.
+bool HostResidualBookkeepingNeeded();
+
 EndNameSpace

@@ -101,6 +101,11 @@ void LoadResiduals( StringField & data )
 
 void ZeroResiduals( StringField & data )
 {
+    // Device path: the resident residual is zeroed on the device and the host
+    // copy is only written by the output download, so zeroing it here is a
+    // full-field host write nobody reads.
+    if ( ! HostResidualBookkeepingNeeded() ) return;
+
     FieldHome::SetField( FieldHome::GetResidualName(), zero );
 }
 
@@ -135,6 +140,10 @@ void SetField( StringField & data )
 
 void StoreRHS( StringField & data )
 {
+    // FIELD_RHS feeds the multigrid defect; the single-grid device path never
+    // reads it, and the copy is a full-field host pass per step.
+    if ( ! HostResidualBookkeepingNeeded() ) return;
+
     int fieldId = ( * fieldIdMap )[ data[ 0 ] ];
     FieldHome::SetField( fieldId, FieldHome::GetResidualName(), FLOW_RHS_ORDER );
 }

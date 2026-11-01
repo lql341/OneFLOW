@@ -72,4 +72,11 @@ bool DeviceOwnsExplicitRkBookkeeping()
 #endif
 }
 
+bool HostResidualBookkeepingNeeded()
+{
+    // Coarse grids run the host update and read FIELD_FLOW/FIELD_RHS.
+    if ( MG::nMulti > 1 ) return true;
+    return ! DeviceOwnsExplicitRkBookkeeping();
+}
+
 EndNameSpace
