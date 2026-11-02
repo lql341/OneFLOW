@@ -121,6 +121,17 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 #### 4.2 Phase B — 数值能力（0/6，退出门见 B-exit）
 
 - [ ] **B1** 无粘通量 scheme：Roe / HLLC / AUSM 系列设备化，LF 保留作 oracle
+  - 已勘察（2026-11-02）：设备侧只有 Rusanov/Lax–Friedrichs 一种通量，见
+    `CalcAndScatterPrimitiveEulerKernel` 的 `scheme == 1` 分支（通量形如
+    `0.5(fL+fR) - 0.5·λmax·(qR-qL)`）。**命名陷阱**：内核里的 `scheme` 是私有编号，
+    `1` 表示 Rusanov，而求解器的 `ISCHEME_ROE = 1`、`ISCHEME_LAX_FRIEDRICHSS = 5`
+    是另一套编号；生产调用处把 `1` 硬编码写死，因此不能按名字推断后端用的是哪种通量
+  - **B1.0** 把 `nscom.ischeme` 透传到内核，替掉硬编码的 `1`，并让 capability 守卫
+    接受新 scheme；LF 仍走现有分支，保证逐位不变
+  - **B1.1** 按 `codes/ns/src/NsInvFlux.cpp` 与 `NsInvFluxPolicy.h` 的
+    `RoeAverageState` 实现设备侧 Roe，含熵修正与正性处理，公式与主机逐项对齐
+  - **B1.2** 单点数值契约：同一左右状态在 CPU 与设备上各算一次面通量，要求
+    `max_abs ≤ 1e-14`；再进 3 步 trace（1e-10）与 200 步跨后端（1e-12）
 - [ ] **B2** limiter：Barth / Venkat（cell 邻域极值），解除 `ilim=0`
 - [ ] **B3** 层流粘性：面粘性通量、温度梯度、壁面热流。先做 E1（去 globals）
 - [ ] **B4** 湍流：SA（1 方程）；SST 可选项，不单列
