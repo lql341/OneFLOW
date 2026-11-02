@@ -307,6 +307,16 @@ public:
     void EvaluateDeviceRoe(
         const DeviceRoeSample & sample, Real flux[ 5 ] ) const;
 
+    // Single-cell-side Barth limiter factor, for the limiter contract test.
+    // One face side: linear increment dq = grad . (xFace - xCell), face normal,
+    // and the cell-local min/max range of the limited variable.
+    Real EvaluateDeviceBarth(
+        Real dqdx, Real dqdy, Real dqdz,
+        Real dx, Real dy, Real dz,
+        Real nx, Real ny, Real nz,
+        Real minv, Real maxv,
+        Real orientationSign ) const;
+
     void CalcGradient( const CellGradientView & view );
 
     // Compute the local inviscid spectral radius and timestep from resident

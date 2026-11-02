@@ -234,6 +234,27 @@ if (ONEFLOW_ENABLE_HIP_TESTS)
   gtest_discover_tests(oneflow_device_roe_contract_test
     DISCOVERY_MODE PRE_TEST)
 
+  add_executable(oneflow_device_limiter_contract_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/device_limiter_contract_test.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/HipFluxBackend.hip
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/HipBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/AccelBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/AccelRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/CpuBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/StageProfiler.cpp
+    ${CMAKE_SOURCE_DIR}/codes/parallel/src/BoundaryExchangeContract.cpp
+    ${CMAKE_SOURCE_DIR}/codes/usolver/src/ULimiterPolicy.cpp)
+  target_include_directories(oneflow_device_limiter_contract_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/codes/accel/include
+    ${CMAKE_SOURCE_DIR}/codes/parallel/include
+    ${CMAKE_SOURCE_DIR}/codes/usolver/include
+    ${CMAKE_SOURCE_DIR}/codes/basic/include
+    ${CMAKE_SOURCE_DIR}/codes/project/include)
+  target_link_libraries(oneflow_device_limiter_contract_test PRIVATE
+    GTest::gtest_main hip::host)
+  gtest_discover_tests(oneflow_device_limiter_contract_test
+    DISCOVERY_MODE PRE_TEST)
+
   add_test(
     NAME HIP.MainSolverFluxOneCall
     COMMAND $<TARGET_FILE:OneFLOWHipSmoke>)

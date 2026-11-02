@@ -1803,6 +1803,65 @@ __global__ void EvaluateDeviceRoeKernel(
 
 }
 
+namespace
+{
+
+// Mirrors BarthFunction + ReconstructFaceIncrement + FaceSideDirectionDot in
+// codes/usolver/src/ULimiterPolicy.cpp.  Kept as one function so the device and
+// the host cannot drift on the normal-dot sign convention.
+__device__ Real DeviceBarthFactor(
+    Real dqdx, Real dqdy, Real dqdz,
+    Real dx, Real dy, Real dz,
+    Real nx, Real ny, Real nz,
+    Real minv, Real maxv,
+    Real orientationSign )
+{
+    const Real dq = dqdx * dx + dqdy * dy + dqdz * dz;
+    const Real ds = sqrt( dx * dx + dy * dy + dz * dz );
+    const Real dot = orientationSign * ( nx * dx + ny * dy + nz * dz )
+        / ( ds + 1.0e-30 );
+    if ( dot < 0.0 ) return 0.0;
+    if ( dq > maxv ) return maxv / dq;
+    if ( dq < minv ) return minv / dq;
+    return 1.0;
+}
+
+__global__ void EvaluateDeviceBarthKernel(
+    Real dqdx, Real dqdy, Real dqdz,
+    Real dx, Real dy, Real dz,
+    Real nx, Real ny, Real nz,
+    Real minv, Real maxv,
+    Real orientationSign,
+    Real * result )
+{
+    *result = DeviceBarthFactor( dqdx, dqdy, dqdz, dx, dy, dz,
+                                 nx, ny, nz, minv, maxv, orientationSign );
+}
+
+}
+
+Real HipFluxBackend::EvaluateDeviceBarth(
+    Real dqdx, Real dqdy, Real dqdz,
+    Real dx, Real dy, Real dz,
+    Real nx, Real ny, Real nz,
+    Real minv, Real maxv,
+    Real orientationSign ) const
+{
+    Real * deviceResult = nullptr;
+    CheckHip( hipMalloc( &deviceResult, sizeof( Real ) ), "barth contract alloc" );
+    hipLaunchKernelGGL(
+        EvaluateDeviceBarthKernel, dim3( 1 ), dim3( 1 ), 0, 0,
+        dqdx, dqdy, dqdz, dx, dy, dz, nx, ny, nz,
+        minv, maxv, orientationSign, deviceResult );
+    CheckHip( hipGetLastError(), "barth contract kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "barth contract kernel synchronize" );
+    Real result = 0.0;
+    CheckHip( hipMemcpy( &result, deviceResult, sizeof( Real ),
+                         hipMemcpyDeviceToHost ), "barth contract copy" );
+    CheckHip( hipFree( deviceResult ), "barth contract free" );
+    return result;
+}
+
 void HipFluxBackend::EvaluateDeviceRoe(
     const DeviceRoeSample & sample, Real flux[ 5 ] ) const
 {
