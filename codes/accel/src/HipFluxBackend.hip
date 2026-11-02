@@ -1185,13 +1185,17 @@ __global__ void ReconstructFaceEulerKernel(
         // The limiter scales the reconstruction increment, not the cell value.
         // limiterMode 0 keeps the unlimited second-order projection that the
         // device path has always used.
+        // LimField::CalcFaceValue blends both sides with min(phi_l, phi_r) and
+        // applies that single factor to both reconstructions; matching it here
+        // is what keeps the device face values equal to the CPU oracle.
         const Real phiLeft = limiterMode != 0 ? limiter[ qBase + left ] : 1.0;
         const Real phiRight = limiterMode != 0 ? limiter[ qBase + right ] : 1.0;
-        leftCandidate[ eq ] = qLeft + phiLeft * (
+        const Real phiFace = phiLeft < phiRight ? phiLeft : phiRight;
+        leftCandidate[ eq ] = qLeft + phiFace * (
             gradient[ gradientBase + left ] * dxl
             + gradient[ gradientBase + totalCells + left ] * dyl
             + gradient[ gradientBase + 2 * totalCells + left ] * dzl );
-        rightCandidate[ eq ] = qRight + phiRight * (
+        rightCandidate[ eq ] = qRight + phiFace * (
             gradient[ gradientBase + right ] * dxr
             + gradient[ gradientBase + totalCells + right ] * dyr
             + gradient[ gradientBase + 2 * totalCells + right ] * dzr );
