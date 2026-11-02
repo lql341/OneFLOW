@@ -1,8 +1,8 @@
 # OneFLOW project reports
 
-> Scope note: every report below covers the **standalone 1-D Euler port**.
-> The 3-D main solver has no published performance report yet; its current
-> numbers live in `doc/plans/oneflow-development-todo.md` (A–G roadmap, G7).
+> Scope note: the 1-D reports cover the **standalone 1-D Euler port**. The
+> 3-D main solver now has its own maintained performance report, limited to the
+> validated inviscid explicit device path (see its §6 for what is not covered).
 
 This directory stores maintained project reports and selected historical snapshots.
 Plans, handoffs, runbooks, and validation evidence live in their dedicated sibling
@@ -16,6 +16,7 @@ and environment dumps belong in CI artifacts or isolated cluster run directories
 
 ## Performance
 
+- [Current 3-D Euler solver DCU performance report](performance/oneflow-3d-euler-performance-current.md)
 - [2026-10-14 standalone 1D Euler MPI/DCU strong-scaling benchmark](performance/oneflow-1d-euler-mpi-dcu-benchmark-20261014.md)
 - [2026-10-19 standalone 1D Euler rank/DCU matrix](performance/oneflow-1d-euler-mpi-rank-dcu-matrix-20261019.md)
 - [2026-09-13 CPU/DCU performance comparison](performance/oneflow-euler-performance-20260913.md)

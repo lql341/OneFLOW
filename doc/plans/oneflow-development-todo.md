@@ -153,7 +153,11 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.6 Phase F — 产品化与发布（0/4）
 
-- [ ] **F1** 3D 正式性能报告（原 `G7`/`I1`）：同节点、同 repeats、paired，Markdown 与 HTML 同 stem
+- [ ] **F1** 3D 正式性能报告（原 `G7`/`I1`）：同节点、同 repeats、paired。
+      2026-11-02 已发布 Markdown 源
+      [`oneflow-3d-euler-performance-current.md`](../reports/performance/oneflow-3d-euler-performance-current.md)：
+      8 核 CPU 288.20 vs 1 DCU 15.59 ms/step（中位数，3 样本交替），**18.5×**。
+      HTML 尚未生成，因此本项不勾
 - [ ] **F2** CI 矩阵（原 `I2`）：CPU normal/strict、DCU 单卡、DCU 多卡、nightly 长跑；PR 分支自跑门禁
 - [ ] **F3** 文档与能力矩阵（原 `I3`）：哪些 solver/scheme 在设备上已验证
 - [ ] **F4** GUI / 示例算例 / 发行说明（原 `I4`）

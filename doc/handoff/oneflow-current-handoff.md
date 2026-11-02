@@ -75,12 +75,17 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：`A2`。每个 stage 把 `q` 与梯度合成一趟界面交换，滞后与 legacy
-  逐位对应。实现前先写清“哪条消息带哪些字段、滞后如何与老代码对齐”；**别直接删轮次**，
-  “删掉 post 轮”这条先例已被 200 步跨后端门禁否掉（`2.33e-18` → `5.54e-7`）。
-- **刚完成**：`A1` 收口，18.5 ms/step。A1.1 梯度镜像只在最后 stage（−10.5%）、A1.2 残差基底改设备归零（−22.1%）、A1.3 不再搬 host 历史层（−14%，任务级 profile 里 `POST_PROCESS` 每步 7.7 ms 是最大单项）。同轮 restart auth-on/off、trace `24/0/0`、200 步 XB、CPU normal/strict 全部复跑通过。
-  restart 现在 auth-on `4.33e-15`、auth-off `4.55e-15`，两模式都 PASS；
-  同轮 trace `24/0/0`、XB `2.331035e-18`/`0.0`、CPU 5/5 + strict 5/5 未变。
+- **下一步（唯一推荐）**：Phase B 的 `B1`（Roe）单点数值契约，或先把 `F1` 的 HTML 补齐。
+  3D 性能报告已发布（18.5× @8:1 槽），Phase A 收在 15.6 ms/step；剩余的 1.7 ms 到
+  ≤14 只有动界面结构才拿得到，而本会话已验证两条捷径都不可行（见 §5）。
+- **A2 还值不值得做**：如果把每个 stage 的 `q` 与梯度合成一趟界面交换，滞后必须与
+  legacy 逐位对应。实现前先写清“哪条消息带哪些字段、滞后如何对齐”；**不要直接删轮次**。
+- **本轮已落地的性能切片**：残差账本跳过、驻留宏步驱动、策略查询缓存、壁面状态直读；
+  同节点 8:1 槽从 17.3 降到 15.6 ms/step，报告已发布。
+- **A1 已收口**：梯度镜像只在最后 stage、残差基底改设备归零、不搬 host 历史层、
+  不写 host 残差账本、驻留宏步驱动、壁面状态直读。8:1 槽 31.6 → 15.6 ms/step（1.99×）。
+- **测量结论（同轮）**：可视化输出摊薄仅 0.8 ms/step；`update_residuals` 内部已闭合
+  （父项 5.98 = 梯度 2.27 + 重构 1.96 + 通量装配 1.70）；GPU-aware 更慢。
 - **复习**：直接跳 `LOAD_RESIDUALS` 不补基底时，200 步 XB 会拓到 `5.52e-4`；
   动这个槽位先跑 XB，不要只看时间。同类教训：删 post 界面轮、删 stage 屏障这两个
   “看起来多余”的东西，一个改离散（XB 拓到 `5.54e-7`），一个完全无收益（同步 22.2 vs
@@ -150,23 +155,26 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     每步 7.7 ms，实际总 2193 ms / 300 步、只在第 0/50/100… 步输出；把 `nVisualSave`
     设成不输出后降到 0.055 ms/step。误把均值当每步开销会选错优化方向（踩过一次）。
     `ONEFLOW_STAGE_BREAKDOWN_FILE` 的 `.tsv` 是嵌套计时，不能相加求总量。
-15. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
+15. **GPU-aware MPI 探针通过不代表该用**：同节点两 rank 设备指针直达 `pass=1`，但接到
+    真实界面交换后是 48–50 ms/step，host staging 是 15.7。这条 MPI 配置下设备指针路径
+    实际更贵。开关是 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI` + `..._CONFIRMED`，保持关闭。
+16. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
     第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
     它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
-16. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
+17. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
     `27.0 ms/step`，同一作业第二次 `21.1`。跨作业/跨冷热的绝对值不可比，只有
     交替 interleaved 的 A/B 才算数；报数字要写清是不是热态。
-17. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+18. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-18. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+19. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-19. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+20. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则
