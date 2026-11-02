@@ -21,6 +21,7 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "NsRhs.h"
+#include "StageProfiler.h"
 #include "UNsBcSolver.h"
 #include "Zone.h"
 #include "DataBase.h"
@@ -174,11 +175,18 @@ void NsMirrorHostBoundaryState()
 
 void NsCalcRHS()
 {
-	NsCalcInvFlux();
-
-	NsCalcVisFlux();
-
-	NsCalcSrcFlux();
+    {
+        ScopedStageTimer timer( "rhs_inviscid" );
+        NsCalcInvFlux();
+    }
+    {
+        ScopedStageTimer timer( "rhs_viscous" );
+        NsCalcVisFlux();
+    }
+    {
+        ScopedStageTimer timer( "rhs_source" );
+        NsCalcSrcFlux();
+    }
 }
 
 

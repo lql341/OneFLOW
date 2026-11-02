@@ -477,6 +477,7 @@ void UNsInvFlux::CalcFlux()
     this->CalcInvFace();
     if ( this->UseHipBatchAdapter() )
     {
+        ScopedStageTimer fluxTimer( "flux_assembly" );
         this->CalcAndAddInvFluxHipBatch();
         this->DumpInvFluxTrace();
     }
