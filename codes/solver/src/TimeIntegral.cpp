@@ -38,6 +38,7 @@ License
 #include "ZoneState.h"
 #include "NsCom.h"
 #include "FieldWrap.h"
+#include "NsResidentMacroStep.h"
 #include "DataBase.h"
 #include "Grid.h"
 #include "Zone.h"
@@ -251,6 +252,19 @@ void TimeIntegral::Relaxation( int nCycles )
 
 void TimeIntegral::Relaxation( int nCycles, SimuContext & context )
 {
+    // Optional 1D-style driver: one call per macro-step instead of one task
+    // dispatch per stage phase.  Same entry points, same numerics; only the
+    // command-list expansion in between disappears.
+    if ( ctrl.time_integral == MULTI_STAGE
+         && NsResidentMacroStepSupported() )
+    {
+        for ( int iCycle = 0; iCycle < nCycles; ++ iCycle )
+        {
+            NsResidentMacroStep();
+        }
+        return;
+    }
+
     for ( int iCycle = 0; iCycle < nCycles; ++ iCycle )
     {
         if ( ctrl.time_integral == MULTI_STAGE )
