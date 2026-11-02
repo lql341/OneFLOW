@@ -288,17 +288,6 @@ __global__ void CalcInvFluxEulerKernel(
     Real fL[ 5 ] = {};
     Real fR[ 5 ] = {};
     Real lambdaMax = 0.0;
-    if ( scheme == 2 )
-    {
-        Real roeFlux[ 5 ] = {};
-        RoeFaceFlux( pL, pR, gamma, nx, ny, nz, vfn,
-                     entropy1, entropy2, entropyFix != 0, roeFlux );
-        for ( int eq = 0; eq < nEq; ++ eq )
-        {
-            flux[ eq * nFaces + face ] = faceArea * roeFlux[ eq ];
-        }
-        return;
-    }
     if ( scheme == 1 )
     {
         const Real ratio = sqrt( pR.density / pL.density );
@@ -581,6 +570,17 @@ __global__ void CalcAndScatterPrimitiveEulerKernel(
     Real fL[ 5 ] = {};
     Real fR[ 5 ] = {};
     Real lambdaMax = 0.0;
+    if ( scheme == 2 )
+    {
+        Real roeFlux[ 5 ] = {};
+        RoeFaceFlux( pL, pR, gamma, nx, ny, nz, vfn,
+                     entropy1, entropy2, entropyFix != 0, roeFlux );
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            flux[ eq * nFaces + face ] = faceArea * roeFlux[ eq ];
+        }
+        return;
+    }
     if ( scheme == 1 )
     {
         const Real ratio = sqrt( pR.density / pL.density );
