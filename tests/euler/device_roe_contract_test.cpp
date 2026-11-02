@@ -57,7 +57,7 @@ struct RefState
 
 // Host Roe, mirroring NsInvFlux::Roe but fed from one face's state.  Uses the
 // shared policy helpers so the reference is the production formula.
-void HostRoeFlux( const RefState & state, double gamma, double flux[ 5 ] )
+void HostRoeFlux( const RefState & state, double gammaGas, double flux[ 5 ] )
 {
     const double xfn = state.normal[ 0 ];
     const double yfn = state.normal[ 1 ];
@@ -77,8 +77,8 @@ void HostRoeFlux( const RefState & state, double gamma, double flux[ 5 ] )
 
     const double v2l = ul * ul + vl * vl + wl * wl;
     const double v2r = ur * ur + vr * vr + wr * wr;
-    const double hint_l = gamma / ( gamma - 1.0 ) * pl / rl;
-    const double hint_r = gamma / ( gamma - 1.0 ) * pr / rr;
+    const double hint_l = gammaGas / ( gammaGas - 1.0 ) * pl / rl;
+    const double hint_r = gammaGas / ( gammaGas - 1.0 ) * pr / rr;
     const double hl = TotalEnthalpy( hint_l, v2l );
     const double hr = TotalEnthalpy( hint_r, v2r );
 
@@ -95,8 +95,8 @@ void HostRoeFlux( const RefState & state, double gamma, double flux[ 5 ] )
     double hm = 0.0;
     double gamaMid = 0.0;
     RoeAverageState(
-        rl, ul, vl, wl, pl, hl, gamma,
-        rr, ur, vr, wr, pr, hr, gamma,
+        rl, ul, vl, wl, pl, hl, gammaGas,
+        rr, ur, vr, wr, pr, hr, gammaGas,
         rm, um, vm, wm, pm, hm, gamaMid );
 
     const double v2 = um * um + vm * vm + wm * wm;
@@ -137,12 +137,12 @@ void HostRoeFlux( const RefState & state, double gamma, double flux[ 5 ] )
     q1[ 1 ] = rl * ul;
     q1[ 2 ] = rl * vl;
     q1[ 3 ] = rl * wl;
-    q1[ 4 ] = pl / ( gamma - 1.0 ) + 0.5 * rl * v2l;
+    q1[ 4 ] = pl / ( gammaGas - 1.0 ) + 0.5 * rl * v2l;
     q2[ 0 ] = rr;
     q2[ 1 ] = rr * ur;
     q2[ 2 ] = rr * vr;
     q2[ 3 ] = rr * wr;
-    q2[ 4 ] = pr / ( gamma - 1.0 ) + 0.5 * rr * v2r;
+    q2[ 4 ] = pr / ( gammaGas - 1.0 ) + 0.5 * rr * v2r;
 
     double dq[ 5 ] = {};
     for ( int eq = 0; eq < 5; ++ eq ) dq[ eq ] = q2[ eq ] - q1[ eq ];
@@ -183,7 +183,8 @@ RefState MakeState( const char * name )
     return state;
 }
 
-constexpr double gamma = 1.4;
+// `gamma` is also a libm symbol; keep the gas constant under a distinct name.
+constexpr double kGamma = 1.4;
 constexpr double tolerance = 1.0e-14;
 
 }
@@ -206,7 +207,7 @@ TEST( DeviceRoeContract, SubsonicFaceMatchesHost )
         sample.right[ i ] = right[ i ];
     }
     for ( int i = 0; i < 3; ++ i ) sample.normal[ i ] = state.normal[ i ];
-    sample.gamma = gamma;
+    sample.gamma = kGamma;
     sample.entropy1 = state.entropy1;
     sample.entropy2 = state.entropy2;
     sample.entropyFix = state.entropyFix;
@@ -215,7 +216,7 @@ TEST( DeviceRoeContract, SubsonicFaceMatchesHost )
     HipFluxBackend::Shared().EvaluateDeviceRoe( sample, deviceFlux );
 
     double hostFlux[ 5 ] = {};
-    HostRoeFlux( state, gamma, hostFlux );
+    HostRoeFlux( state, kGamma, hostFlux );
 
     for ( int eq = 0; eq < 5; ++ eq )
     {
@@ -242,7 +243,7 @@ TEST( DeviceRoeContract, TransonicFaceMatchesHost )
         sample.right[ i ] = right[ i ];
     }
     for ( int i = 0; i < 3; ++ i ) sample.normal[ i ] = state.normal[ i ];
-    sample.gamma = gamma;
+    sample.gamma = kGamma;
     sample.entropy1 = state.entropy1;
     sample.entropy2 = state.entropy2;
     sample.entropyFix = state.entropyFix;
@@ -251,7 +252,7 @@ TEST( DeviceRoeContract, TransonicFaceMatchesHost )
     HipFluxBackend::Shared().EvaluateDeviceRoe( sample, deviceFlux );
 
     double hostFlux[ 5 ] = {};
-    HostRoeFlux( state, gamma, hostFlux );
+    HostRoeFlux( state, kGamma, hostFlux );
 
     for ( int eq = 0; eq < 5; ++ eq )
     {
@@ -279,7 +280,7 @@ TEST( DeviceRoeContract, EntropyFixOffMatchesHost )
         sample.right[ i ] = right[ i ];
     }
     for ( int i = 0; i < 3; ++ i ) sample.normal[ i ] = state.normal[ i ];
-    sample.gamma = gamma;
+    sample.gamma = kGamma;
     sample.entropy1 = state.entropy1;
     sample.entropy2 = state.entropy2;
     sample.entropyFix = state.entropyFix;
@@ -288,7 +289,7 @@ TEST( DeviceRoeContract, EntropyFixOffMatchesHost )
     HipFluxBackend::Shared().EvaluateDeviceRoe( sample, deviceFlux );
 
     double hostFlux[ 5 ] = {};
-    HostRoeFlux( state, gamma, hostFlux );
+    HostRoeFlux( state, kGamma, hostFlux );
 
     for ( int eq = 0; eq < 5; ++ eq )
     {
