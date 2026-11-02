@@ -48,9 +48,9 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
     return totals;
 }
 
-std::array< CategoryTotal, 76 > & Totals()
+std::array< CategoryTotal, 73 > & Totals()
 {
-    static std::array< CategoryTotal, 76 > totals = {{
+    static std::array< CategoryTotal, 73 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -174,6 +174,8 @@ void StageProfiler::Record( const char * category, double elapsedMs ) noexcept
     std::lock_guard< std::mutex > lock( OutputMutex() );
     for ( CategoryTotal & total : Totals() )
     {
+        // Unused trailing slots keep a null name; never compare against them.
+        if ( total.name == nullptr ) continue;
         if ( std::strcmp( total.name, category ) == 0 )
         {
             total.elapsedMs += elapsedMs;
@@ -225,6 +227,7 @@ void StageProfiler::Flush()
     output << "category\telapsed_ms\n";
     for ( const CategoryTotal & total : Totals() )
     {
+        if ( total.name == nullptr ) continue;
         output << total.name << "\t" << total.elapsedMs << "\n";
     }
     if ( ! output )
