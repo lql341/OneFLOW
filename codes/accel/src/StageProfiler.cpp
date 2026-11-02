@@ -150,8 +150,15 @@ std::string RankAwarePath( const char * configured )
 
 bool StageProfiler::Enabled()
 {
-    const char * path = std::getenv( "ONEFLOW_STAGE_BREAKDOWN_FILE" );
-    return path != nullptr && path[ 0 ] != '\0';
+    // Called from every ScopedStageTimer construction, i.e. hundreds of times
+    // per RK step.  The switch is a process-lifetime decision, so resolve it
+    // once instead of scanning the environment each time.
+    static const bool enabled = []()
+    {
+        const char * path = std::getenv( "ONEFLOW_STAGE_BREAKDOWN_FILE" );
+        return path != nullptr && path[ 0 ] != '\0';
+    }();
+    return enabled;
 }
 
 void StageProfiler::Record( const char * category, double elapsedMs ) noexcept

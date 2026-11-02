@@ -51,9 +51,16 @@ inline const char * CachedEnv( const char * name )
 inline bool HipProductionBackendSelected()
 {
 #ifdef ONEFLOW_ENABLE_HIP
+    // Asked by several policy helpers on every stage.  The runtime is created
+    // once per process and its kind never changes afterwards, so cache the
+    // positive answer and keep re-checking until the runtime exists.
+    static bool confirmedHip = false;
+    if ( confirmedHip ) return true;
     AccelRuntime & runtime = AccelRuntime::Instance();
-    return runtime.IsInitialized()
+    const bool hip = runtime.IsInitialized()
         && runtime.Backend().Kind() == AccelBackendKind::HIP;
+    if ( hip ) confirmedHip = true;
+    return hip;
 #else
     return false;
 #endif

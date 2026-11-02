@@ -33,6 +33,9 @@ public:
     ~UNsGrad();
 public:
     void Init() override;
+    // Field bindings resolved from the database; re-resolved only when the grid
+    // changes, because Init() runs once per RK stage.
+    const void * cachedGrid = nullptr;
     // downloadToHost / mirrorBoundaryGradient are capability decisions, not
     // environment guesses.  A device reconstruction reads the resident
     // gradient, so the host mirror is only needed where the host interface
