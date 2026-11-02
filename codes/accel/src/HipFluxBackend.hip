@@ -1149,6 +1149,8 @@ __global__ void ReconstructFaceEulerKernel(
     const ReconstructionBoundaryOperation * boundaryOperation,
     const Real * bcQ,
     int bcQStride,
+    const Real * limiter,
+    int limiterMode,
     int nCells,
     int nBoundaryFaces,
     int nFaces,
