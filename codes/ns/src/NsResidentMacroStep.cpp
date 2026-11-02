@@ -19,6 +19,8 @@ License
 #include "SolverDef.h"
 #include "SolverState.h"
 #include "ZoneState.h"
+#include "CmxTask.h"
+#include "CmxTaskNames.h"
 
 #include <cstdlib>
 
@@ -39,10 +41,8 @@ bool ResidentMacroStepRequested()
 bool NsResidentMacroStepSupported()
 {
     if ( ! ResidentMacroStepRequested() ) return false;
-    // One macro-step owns the device state for the whole RK loop.  Anything that
-    // still needs the host in between (multiple zones exchanging on the host,
-    // coarse grids, multigrid plumbing) stays on the task path.
-    if ( ZoneState::nZones > 1 || ZoneState::nLocal > 1 ) return false;
+    // One macro-step owns the device state for the whole RK loop.  Coarse grids
+    // and multigrid plumbing stay on the task path.
     if ( GridState::gridLevel != 0 || MG::nMulti > 1 ) return false;
     if ( SolverState::solverType != NS_SOLVER ) return false;
     return DeviceOwnsExplicitRkBookkeeping();
@@ -72,6 +72,15 @@ void NsResidentMacroStep()
         update.UpdateFlowField( NS_SOLVER );
         // CALC_BOUNDARY: local boundary models on the resident state.
         NsCalcBoundary( unused );
+        // UPDATE_INTERFACE_DATA: the explicit stage must publish updated
+        // boundary values before the next stage reads its ghosts.  Still one
+        // task dispatch per stage (not four), because the exchange itself is
+        // owned by the interface task and its lag must stay exactly as in the
+        // validated task path.
+        if ( ZoneState::nZones > 1 )
+        {
+            SingleSolverSingleGridTask( kUpdateInterfaceDataTaskName );
+        }
     }
     ctrl.rkStage = -1;
 }
