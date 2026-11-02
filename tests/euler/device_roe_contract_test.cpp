@@ -31,6 +31,7 @@ License
 // This is a component contract, not a substitute for the 3-step trace or the
 // 200-step cross-backend gate.
 
+#include "AccelRuntime.h"
 #include "HipFluxBackend.h"
 #include "NsInvFluxPolicy.h"
 
@@ -187,9 +188,25 @@ RefState MakeState( const char * name )
 constexpr double kGamma = 1.4;
 constexpr double tolerance = 1.0e-14;
 
+// The backend needs an initialized accelerator runtime; the probe and the
+// smoke test do the same before touching device state.
+class DeviceRoeContract : public ::testing::Test
+{
+protected:
+    static void SetUpTestSuite()
+    {
+        InitializeAccelRuntime( 0, 1 );
+    }
+
+    static void TearDownTestSuite()
+    {
+        AccelRuntime::Instance().Finalize();
+    }
+};
+
 }
 
-TEST( DeviceRoeContract, SubsonicFaceMatchesHost )
+TEST_F( DeviceRoeContract, SubsonicFaceMatchesHost )
 {
     RefState state = MakeState( "subsonic" );
     const double left[ 5 ] = { 1.0, 0.30, -0.10, 0.05, 1.0 };
@@ -225,7 +242,7 @@ TEST( DeviceRoeContract, SubsonicFaceMatchesHost )
     }
 }
 
-TEST( DeviceRoeContract, TransonicFaceMatchesHost )
+TEST_F( DeviceRoeContract, TransonicFaceMatchesHost )
 {
     RefState state = MakeState( "transonic" );
     const double left[ 5 ] = { 1.0, 0.75, 0.20, -0.10, 1.0 };
@@ -261,7 +278,7 @@ TEST( DeviceRoeContract, TransonicFaceMatchesHost )
     }
 }
 
-TEST( DeviceRoeContract, EntropyFixOffMatchesHost )
+TEST_F( DeviceRoeContract, EntropyFixOffMatchesHost )
 {
     RefState state = MakeState( "entropy-fix-off" );
     const double left[ 5 ] = { 1.0, 0.30, -0.10, 0.05, 1.0 };
