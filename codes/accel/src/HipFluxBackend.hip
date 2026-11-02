@@ -2103,6 +2103,9 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     storage->inflow.CopyFromHost( view.inflow, view.nEquations );
     storage->boundaryFaceState.Resize(
         view.nEquations * view.nBoundaryFaces );
+    storage->wallStateValid = view.deviceAuthoritativeHostMirror;
+    storage->wallStateFaces = view.nBoundaryFaces;
+    storage->wallStateEquations = view.nEquations;
     }
 
     const int blockSize = 256;
@@ -2135,7 +2138,14 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     const std::size_t ghostValues =
         static_cast< std::size_t >( view.nEquations ) * nGhost;
     const bool mirrorGhostQ = ! view.deviceAuthoritativeHostMirror;
-    const bool mirrorBcQ = view.bcQ[ 0 ] != nullptr;
+    // The boundary stage just produced bcQ on the device.  With a
+    // device-authoritative mirror nobody reads the host copy: the next
+    // reconstruction uploads it straight back.  Skip both ends of that round
+    // trip (this D2H and the matching H2D) instead of shuffling it per stage.
+    const bool bcQStaysOnDevice =
+        view.deviceAuthoritativeHostMirror && storage->wallStateValid;
+    const bool mirrorBcQ =
+        view.bcQ[ 0 ] != nullptr && ! bcQStaysOnDevice;
     if ( ghostValues > 0 && ( mirrorGhostQ || mirrorBcQ ) )
     {
         const int blockSizePack = 256;
@@ -2344,15 +2354,29 @@ void HipFluxBackend::ReconstructFaceValues(
         const std::size_t bcQValues =
             static_cast< std::size_t >( view.nEquations )
             * view.nBoundaryFaces;
-        storage->bcQ.Resize( bcQValues );
-        AccelRuntime::Instance().Backend().Copy(
-            storage->bcQ.Data(), view.bcQ[ 0 ],
-            bcQValues * sizeof( Real ),
-            AccelCopyKind::HostToDevice );
+        // The device boundary stage leaves the newest wall state in
+        // boundaryFaceState, in the same equation-major [equation][face]
+        // layout this kernel reads.  Point at it and skip the host round trip
+        // (a D2H mirror plus an H2D re-upload per stage); otherwise fall back
+        // to uploading the caller's packed buffer.
+        const bool deviceOwnsWallState =
+            storage->wallStateValid
+            && storage->wallStateFaces == view.nBoundaryFaces
+            && storage->wallStateEquations == view.nEquations
+            && storage->boundaryFaceState.Size() == bcQValues;
+        if ( ! deviceOwnsWallState )
+        {
+            storage->bcQ.Resize( bcQValues );
+            AccelRuntime::Instance().Backend().Copy(
+                storage->bcQ.Data(), view.bcQ[ 0 ],
+                bcQValues * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
     }
     else
     {
         storage->bcQ.Reset();
+        storage->bcQValid = false;
     }
     storage->cachedEquations = view.nEquations;
     storage->cachedFieldGeneration = view.fieldGeneration;
@@ -2370,7 +2394,10 @@ void HipFluxBackend::ReconstructFaceValues(
         storage->leftCell.Data(), storage->rightCell.Data(),
         storage->boundaryMaskValid ? storage->boundaryMask.Data() : nullptr,
         storage->boundaryOperation.Data(),
-        hasSolid ? storage->bcQ.Data() : nullptr,
+        hasSolid ? ( deviceOwnsWallState
+                         ? storage->boundaryFaceState.Data()
+                         : storage->bcQ.Data() )
+                 : nullptr,
         view.nBoundaryFaces,
         view.nCells, view.nBoundaryFaces, view.nFaces, view.nEquations,
         view.physicality == ReconstructionPhysicalityPolicy::None ? 0 : 1,

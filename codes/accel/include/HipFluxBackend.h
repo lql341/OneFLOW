@@ -142,6 +142,12 @@ struct HipGradientStorage
     DeviceBuffer< unsigned char > boundaryMask;
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
     DeviceBuffer< Real > bcQ;
+    // True while boundaryFaceState holds the newest wall state produced by the
+    // device boundary stage, so reconstruction can read it directly instead of
+    // mirroring it to the host and uploading it back every stage.
+    bool wallStateValid = false;
+    int wallStateFaces = 0;
+    int wallStateEquations = 0;
     DeviceBuffer< Real > boundaryFaceState;
     // Packed [equation][ghost cell] slice used for a single D2H per stage.
     DeviceBuffer< Real > boundaryGhostPack;
