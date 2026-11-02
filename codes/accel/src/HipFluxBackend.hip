@@ -1768,6 +1768,74 @@ void ReportResidentStateContract(
 
 }
 
+namespace
+{
+
+__global__ void EvaluateDeviceRoeKernel(
+    const Real * left,
+    const Real * right,
+    const Real * normal,
+    Real meshVelocityNormal,
+    Real gamma,
+    Real entropy1,
+    Real entropy2,
+    int entropyFix,
+    Real * flux )
+{
+    Primitive pL;
+    Primitive pR;
+    pL.density = left[ 0 ];
+    pL.u = left[ 1 ];
+    pL.v = left[ 2 ];
+    pL.w = left[ 3 ];
+    pL.pressure = left[ 4 ];
+    pR.density = right[ 0 ];
+    pR.u = right[ 1 ];
+    pR.v = right[ 2 ];
+    pR.w = right[ 3 ];
+    pR.pressure = right[ 4 ];
+    Real out[ 5 ] = {};
+    RoeFaceFlux( pL, pR, gamma, normal[ 0 ], normal[ 1 ], normal[ 2 ],
+                 meshVelocityNormal, entropy1, entropy2,
+                 entropyFix != 0, out );
+    for ( int eq = 0; eq < 5; ++ eq ) flux[ eq ] = out[ eq ];
+}
+
+}
+
+void HipFluxBackend::EvaluateDeviceRoe(
+    const DeviceRoeSample & sample, Real flux[ 5 ] ) const
+{
+    Real * deviceFlux = nullptr;
+    CheckHip( hipMalloc( &deviceFlux, 5 * sizeof( Real ) ), "roe contract alloc" );
+    Real * deviceLeft = nullptr;
+    Real * deviceRight = nullptr;
+    Real * deviceNormal = nullptr;
+    CheckHip( hipMalloc( &deviceLeft, 5 * sizeof( Real ) ), "roe contract alloc" );
+    CheckHip( hipMalloc( &deviceRight, 5 * sizeof( Real ) ), "roe contract alloc" );
+    CheckHip( hipMalloc( &deviceNormal, 3 * sizeof( Real ) ), "roe contract alloc" );
+    CheckHip( hipMemcpy( deviceLeft, sample.left, 5 * sizeof( Real ),
+                         hipMemcpyHostToDevice ), "roe contract copy" );
+    CheckHip( hipMemcpy( deviceRight, sample.right, 5 * sizeof( Real ),
+                         hipMemcpyHostToDevice ), "roe contract copy" );
+    CheckHip( hipMemcpy( deviceNormal, sample.normal, 3 * sizeof( Real ),
+                         hipMemcpyHostToDevice ), "roe contract copy" );
+    hipLaunchKernelGGL(
+        EvaluateDeviceRoeKernel, dim3( 1 ), dim3( 1 ), 0, 0,
+        deviceLeft, deviceRight, deviceNormal,
+        sample.meshVelocityNormal, sample.gamma,
+        sample.entropy1, sample.entropy2, sample.entropyFix ? 1 : 0,
+        deviceFlux );
+    CheckHip( hipGetLastError(), "roe contract kernel launch" );
+    CheckHip( hipDeviceSynchronize(), "roe contract kernel synchronize" );
+    CheckHip( hipMemcpy( flux, deviceFlux, 5 * sizeof( Real ),
+                         hipMemcpyDeviceToHost ), "roe contract copy" );
+    CheckHip( hipFree( deviceLeft ), "roe contract free" );
+    CheckHip( hipFree( deviceRight ), "roe contract free" );
+    CheckHip( hipFree( deviceNormal ), "roe contract free" );
+    CheckHip( hipFree( deviceFlux ), "roe contract free" );
+}
+
 void HipFluxBackend::CalcGradient( const CellGradientView & view )
 {
     ValidateCellGradientView( view );

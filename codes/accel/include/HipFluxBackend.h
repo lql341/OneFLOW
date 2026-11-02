@@ -290,6 +290,23 @@ public:
         Real entropy2 = 0.0,
         bool entropyFix = false );
 
+    // Single-face evaluation of the device Roe flux, for the numeric contract
+    // test that pins host and device to the same formula.  Not used by the
+    // solver: the production path runs the whole face array.
+    struct DeviceRoeSample
+    {
+        Real left[ 5 ] = {};      // rho, u, v, w, p
+        Real right[ 5 ] = {};     // rho, u, v, w, p
+        Real normal[ 3 ] = {};
+        Real meshVelocityNormal = 0.0;
+        Real gamma = 1.4;
+        Real entropy1 = 0.0;
+        Real entropy2 = 0.0;
+        bool entropyFix = false;
+    };
+    void EvaluateDeviceRoe(
+        const DeviceRoeSample & sample, Real flux[ 5 ] ) const;
+
     void CalcGradient( const CellGradientView & view );
 
     // Compute the local inviscid spectral radius and timestep from resident

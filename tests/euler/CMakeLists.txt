@@ -207,6 +207,31 @@ if (ONEFLOW_ENABLE_HIP_TESTS)
     ADAPTER_TEST_SOURCE
       ${CMAKE_CURRENT_SOURCE_DIR}/euler_domain_backend_adapter_test.cpp)
 
+  # Single-face Roe contract: the device flux must equal the host flux that
+  # NsInvFluxPolicy produces for the same state.  Built HIP sources come from
+  # the production backend so the test exercises the shipped kernel.
+  set_source_files_properties(
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/HipFluxBackend.hip
+    PROPERTIES LANGUAGE HIP)
+  add_executable(oneflow_device_roe_contract_test
+    ${CMAKE_CURRENT_SOURCE_DIR}/device_roe_contract_test.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/HipFluxBackend.hip
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/HipBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/AccelBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/AccelRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/CpuBackend.cpp
+    ${CMAKE_SOURCE_DIR}/codes/accel/src/StageProfiler.cpp
+    ${CMAKE_SOURCE_DIR}/codes/ns/src/NsInvFluxPolicy.cpp)
+  target_include_directories(oneflow_device_roe_contract_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/codes/accel/include
+    ${CMAKE_SOURCE_DIR}/codes/ns/include
+    ${CMAKE_SOURCE_DIR}/codes/basic/include
+    ${CMAKE_SOURCE_DIR}/codes/project/include)
+  target_link_libraries(oneflow_device_roe_contract_test PRIVATE
+    GTest::gtest_main hip::host)
+  gtest_discover_tests(oneflow_device_roe_contract_test
+    DISCOVERY_MODE PRE_TEST)
+
   add_test(
     NAME HIP.MainSolverFluxOneCall
     COMMAND $<TARGET_FILE:OneFLOWHipSmoke>)
