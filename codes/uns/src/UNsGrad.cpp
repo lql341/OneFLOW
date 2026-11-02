@@ -66,11 +66,6 @@ void UNsGrad::Init()
 {
     UnsGrid * grid = Zone::GetUnsGrid();
 
-    // Called once per RK stage.  The field pointers only change when the zone or
-    // its fields are rebound, so resolve the database names once per grid.
-    if ( grid == cachedGrid && grid != nullptr && q != nullptr ) return;
-    cachedGrid = grid;
-
     // Pin solver identity (do not rely on ambient SolverState).
     const int sid = NS_SOLVER;
     name  = FieldHome::GetGradName( sid, 0 );
