@@ -31,9 +31,14 @@ namespace
 
 bool ResidentMacroStepRequested()
 {
+    // Default on for the configuration this driver covers.  The task path stays
+    // one environment variable away (ONEFLOW_HIP_RESIDENT_MACROSTEP=0) for
+    // bisection, and remains the path for every configuration outside the
+    // device-owned explicit chain.
     const char * value =
         std::getenv( "ONEFLOW_HIP_RESIDENT_MACROSTEP" );
-    return value != nullptr && value[ 0 ] == '1';
+    if ( value != nullptr ) return value[ 0 ] != '0';
+    return true;
 }
 
 }
