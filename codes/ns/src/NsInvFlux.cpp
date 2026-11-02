@@ -21,6 +21,8 @@ License
 \*---------------------------------------------------------------------------*/
 
 #include "NsInvFlux.h"
+#include <stdexcept>
+#include <string>
 #include "NsInvFluxPolicy.h"
 #include "Zone.h"
 #include "DataBase.h"
@@ -32,6 +34,20 @@ License
 #include "Ctrl.h"
 
 BeginNameSpace( ONEFLOW )
+
+int DeviceFluxScheme( int solverScheme )
+{
+    switch ( solverScheme )
+    {
+    case ISCHEME_LAX_FRIEDRICHS:
+        // Rusanov/Lax-Friedrichs, the only device flux implemented today.
+        return 1;
+    default:
+        throw std::invalid_argument(
+            "device flux kernel has no implementation for ISCHEME_"
+            + std::to_string( solverScheme ) );
+    }
+}
 
 NsInv inv;
 

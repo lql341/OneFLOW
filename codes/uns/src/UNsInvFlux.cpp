@@ -731,7 +731,8 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
                  && Iteration::outerSteps % Iteration::nVisualSave == 0 )
             || Iteration::outerSteps >= Iteration::maxSteps;
         backend.CalcAndAddReconstructedFaceFlux(
-            connectivity, residual, 1, nscom.gama_ref,
+            connectivity, residual, DeviceFluxScheme( nscom.ischeme ),
+            nscom.gama_ref,
             hostFluxPointer, Zone::GetUnsGrid(),
             ! this->UseHipDeviceStateUpdate() || needFlux || dumpDue,
             DeviceOwnsExplicitRkBookkeeping()
@@ -795,7 +796,8 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
 
     HipFluxBackend & backend = HipFluxBackend::Shared();
     backend.CalcAndAddPrimitiveFaceFlux(
-        primitiveState, connectivity, residual, 1, hostFluxPointer, grid );
+        primitiveState, connectivity, residual,
+        DeviceFluxScheme( nscom.ischeme ), hostFluxPointer, grid );
 
     if ( needFlux )
     {
