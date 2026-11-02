@@ -2331,6 +2331,8 @@ void HipFluxBackend::ReconstructFaceValues(
         storage->boundaryMaskValid = false;
     }
     const bool hasSolid = view.hasSolidBoundary;
+    // Set inside the solid branch below and consumed at the kernel launch.
+    bool deviceOwnsWallState = false;
     if ( hasSolid )
     {
         // Solid-override faces are a prefix of the face array. Callers pack
@@ -2359,7 +2361,7 @@ void HipFluxBackend::ReconstructFaceValues(
         // layout this kernel reads.  Point at it and skip the host round trip
         // (a D2H mirror plus an H2D re-upload per stage); otherwise fall back
         // to uploading the caller's packed buffer.
-        const bool deviceOwnsWallState =
+        deviceOwnsWallState =
             storage->wallStateValid
             && storage->wallStateFaces == view.nBoundaryFaces
             && storage->wallStateEquations == view.nEquations
@@ -2376,7 +2378,7 @@ void HipFluxBackend::ReconstructFaceValues(
     else
     {
         storage->bcQ.Reset();
-        storage->bcQValid = false;
+        storage->wallStateValid = false;
     }
     storage->cachedEquations = view.nEquations;
     storage->cachedFieldGeneration = view.fieldGeneration;
