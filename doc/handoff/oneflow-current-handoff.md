@@ -158,27 +158,31 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 15. **GPU-aware MPI 探针通过不代表该用**：同节点两 rank 设备指针直达 `pass=1`，但接到
     真实界面交换后是 48–50 ms/step，host staging 是 15.7。这条 MPI 配置下设备指针路径
     实际更贵。开关是 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI` + `..._CONFIRMED`，保持关闭。
-16. **限制器在面上是"两侧取最小"，不是各用各的**：主机 `LimField::CalcFaceValue`
+16. **设备权威 q 下不要在主机算 φ**：主机梯度镜像只覆盖边界相邻单元、且只在有读者的
+    步更新。用它算限制因子得到的是陈旧值，200 步残差偏 `8.53e-05`（100 步 `3.05e-05`，
+    逐 step 累积）。限制器要么整段留 host（回退），要么把 φ 计算搬上设备，不能半搬。
+    设备路径现在只在 `ilim=0` 时启用，`UseHipGradient` 里写明了这个原因。
+17. **限制器在面上是"两侧取最小"，不是各用各的**：主机 `LimField::CalcFaceValue`
     用 `ModifyLimiter(phil, phir) = min(phil, phir)`（`ug.ireconface != 0`），
     并把同一个因子用在两侧重构上。设备若按左右各自的 φ 计算，200 步残差会差
     `8.5e-5`（实测）。改设备限制器时先对齐这条，再谈别的。
-17. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
+18. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
     第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
     它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
-18. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
+19. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
     `27.0 ms/step`，同一作业第二次 `21.1`。跨作业/跨冷热的绝对值不可比，只有
     交替 interleaved 的 A/B 才算数；报数字要写清是不是热态。
-19. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+20. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-20. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+21. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-21. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+22. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则

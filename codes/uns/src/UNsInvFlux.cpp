@@ -550,12 +550,20 @@ bool UNsInvFlux::UseHipGradient() const
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires the HIP batch path" );
     }
-    if ( ctrl.ilim != ILMT_NO && ctrl.ilim != ILMT_BARTH )
+    // The limiter factor needs the current cell gradient.  With a
+    // device-authoritative q the host gradient mirror is deliberately stale
+    // (only boundary-adjacent cells, only on reader steps), so computing the
+    // factor on the host is not valid.  Keep the device path limiter-off until
+    // the factor is computed on the device; a host-side factor reads stale
+    // gradients and silently biases the solution (measured: 8.5e-5 residual
+    // drift over 200 steps, growing per step).
+    if ( ctrl.ilim != ILMT_NO )
     {
         if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
             return false;
         throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 supports limiter off or Barth" );
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires limiter off until the "
+            "factor is computed on the device" );
     }
     if ( vis_model.vismodel != 0 )
     {

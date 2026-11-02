@@ -133,11 +133,18 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
   - **B1.2** 单点数值契约：同一左右状态在 CPU 与设备上各算一次面通量，要求
     `max_abs ≤ 1e-14`；再进 3 步 trace（1e-10）与 200 步跨后端（1e-12）
 - [ ] **B2** limiter：Barth / Venkat（cell 邻域极值），解除 `ilim=0`
-  - 已落地：设备重构开始消费主机 φ 场（`ilim=ILMT_BARTH` 不再整条回退），
-    面上按主机的 `min(φ_l, φ_r)` 混合规则施加；设备侧 Barth 因子另有契约测试
-    `oneflow_device_limiter_contract_test`（5/5，覆盖四个分支与斜面）
-  - 待做：φ 的计算本身搬上设备（邻域极值 + 每 cell 取最小），Venkat（`ilim=2`），
-    以及 `ilim=1` 的 200 步跨后端与 CPU 五算例复跑
+  - 已落地：设备侧 Barth 因子的**契约测试** `oneflow_device_limiter_contract_test`
+    （5/5，覆盖范围内、超上界、低于下界、反向法向、斜面），参考实现是主机
+    `BarthFunction` + `ReconstructFaceIncrement` + `FaceSideDirectionDot`
+  - **关键结论（2026-11-02）**：**φ 不能在主机算**。设备权威 q 下主机梯度镜像只覆盖
+    边界相邻单元、且只在有读者时才更新；用它算 φ 会得到陈旧因子。实测 `ilim=1`
+    200 步残差偏离 `8.53e-05`，逐 step 累积，且 100 步时已 `3.05e-05`。
+    因此设备路径暂时恢复为"限制器关闭才上设备"，并在 `UseHipGradient` 里写明原因
+  - 待做：**设备侧 φ** —— 邻域极值（面循环原子 min/max）+ 每 cell 对其各面取 min
+    （Barth 的收紧过程，min 可交换，与主机逐面收紧等价），并在重构内核里用
+    `min(φ_l, φ_r)` 施加（主机的 `LimField::CalcFaceValue` 语义）；再做 Venkat（`ilim=2`）
+  - 端到端要求：φ 设备化后必须同时给出 `ilim=1` 的 paired 计时（当前 φ 若走主机
+    每 stage 上传，会吃掉一部分设备收益，这一项本身要量）
 - [ ] **B3** 层流粘性：面粘性通量、温度梯度、壁面热流。先做 E1（去 globals）
 - [ ] **B4** 湍流：SA（1 方程）；SST 可选项，不单列
 - [ ] **B5** 隐式：LU-SGS 设备化（下/上扫、`dq` 交换、与 halo 的依赖），再评估双时间。依赖 A4
