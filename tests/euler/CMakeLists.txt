@@ -221,9 +221,11 @@ if (ONEFLOW_ENABLE_HIP_TESTS)
     ${CMAKE_SOURCE_DIR}/codes/accel/src/AccelRuntime.cpp
     ${CMAKE_SOURCE_DIR}/codes/accel/src/CpuBackend.cpp
     ${CMAKE_SOURCE_DIR}/codes/accel/src/StageProfiler.cpp
+    ${CMAKE_SOURCE_DIR}/codes/parallel/src/BoundaryExchangeContract.cpp
     ${CMAKE_SOURCE_DIR}/codes/ns/src/NsInvFluxPolicy.cpp)
   target_include_directories(oneflow_device_roe_contract_test PRIVATE
     ${CMAKE_SOURCE_DIR}/codes/accel/include
+    ${CMAKE_SOURCE_DIR}/codes/parallel/include
     ${CMAKE_SOURCE_DIR}/codes/ns/include
     ${CMAKE_SOURCE_DIR}/codes/basic/include
     ${CMAKE_SOURCE_DIR}/codes/project/include)
