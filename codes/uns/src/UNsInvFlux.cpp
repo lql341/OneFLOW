@@ -37,6 +37,7 @@ License
 #include "Boundary.h"
 #include "BcRecord.h"
 #include "UNsLimiter.h"
+#include "ULimiter.h"
 #include "FieldManager.h"
 #include "Iteration.h"
 #include "TurbCom.h"
@@ -402,7 +403,14 @@ void UNsInvFlux::CalcInvFace()
         view.rightCell = ug.rcf->data();
         view.boundaryGhostPolicy = hipBoundaryGhostPolicy.data();
         view.boundaryOperation = hipBoundaryOperation.data();
-        view.limiterMode = ReconstructionLimiterMode::Disabled;
+        // Barth/Venkat factors come from Limiter::CalcLimiter, which the host
+        // runs just above for this stage; the device reconstruction consumes
+        // that field instead of recomputing it.
+        const bool deviceLimiterActive =
+            ctrl.ilim != ILMT_NO && limf->limiter != nullptr;
+        view.limiterMode = deviceLimiterActive
+            ? ReconstructionLimiterMode::Cell
+            : ReconstructionLimiterMode::Disabled;
         view.physicality = ReconstructionPhysicalityPolicy::PositiveDensityPressure;
         view.densityComponent = 0;
         view.pressureComponent = nEquations == 5 ? 4 : 2;
@@ -420,6 +428,9 @@ void UNsInvFlux::CalcInvFace()
             view.dqdx[ equation ] = ( * limf->dqdx )[ equation ].data();
             view.dqdy[ equation ] = ( * limf->dqdy )[ equation ].data();
             view.dqdz[ equation ] = ( * limf->dqdz )[ equation ].data();
+            if ( deviceLimiterActive )
+                view.limiter[ equation ] =
+                    ( * limf->limiter )[ equation ].data();
             view.qLeft[ equation ] = ( * limf->qf1 )[ equation ].data();
             view.qRight[ equation ] = ( * limf->qf2 )[ equation ].data();
             if ( hipBoundaryHasSolid )
@@ -539,12 +550,12 @@ bool UNsInvFlux::UseHipGradient() const
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires the HIP batch path" );
     }
-    if ( ctrl.ilim != 0 )
+    if ( ctrl.ilim != ILMT_NO && ctrl.ilim != ILMT_BARTH )
     {
         if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
             return false;
         throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires limiter off" );
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 supports limiter off or Barth" );
     }
     if ( vis_model.vismodel != 0 )
     {

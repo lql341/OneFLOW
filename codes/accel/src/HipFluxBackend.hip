@@ -1180,14 +1180,19 @@ __global__ void ReconstructFaceEulerKernel(
         const int gradientBase = eq * 3 * totalCells;
         const Real qLeft = q[ qBase + left ];
         const Real qRight = q[ qBase + right ];
-        leftCandidate[ eq ] = qLeft
-            + gradient[ gradientBase + left ] * dxl
+        // The limiter scales the reconstruction increment, not the cell value.
+        // limiterMode 0 keeps the unlimited second-order projection that the
+        // device path has always used.
+        const Real phiLeft = limiterMode != 0 ? limiter[ qBase + left ] : 1.0;
+        const Real phiRight = limiterMode != 0 ? limiter[ qBase + right ] : 1.0;
+        leftCandidate[ eq ] = qLeft + phiLeft * (
+            gradient[ gradientBase + left ] * dxl
             + gradient[ gradientBase + totalCells + left ] * dyl
-            + gradient[ gradientBase + 2 * totalCells + left ] * dzl;
-        rightCandidate[ eq ] = qRight
-            + gradient[ gradientBase + right ] * dxr
+            + gradient[ gradientBase + 2 * totalCells + left ] * dzl );
+        rightCandidate[ eq ] = qRight + phiRight * (
+            gradient[ gradientBase + right ] * dxr
             + gradient[ gradientBase + totalCells + right ] * dyr
-            + gradient[ gradientBase + 2 * totalCells + right ] * dzr;
+            + gradient[ gradientBase + 2 * totalCells + right ] * dzr );
     }
 
     bool leftPhysical = true;
@@ -2475,10 +2480,22 @@ void HipFluxBackend::ReconstructFaceValues(
     bool downloadToHost )
 {
     ValidateCellFaceReconstructionView( view );
-    if ( view.limiterMode != ReconstructionLimiterMode::Disabled )
+    // Limiter: the host computes the per-cell/per-equation factor with the
+    // validated Limiter::CalcLimiter and uploads it.  Moving the factor
+    // computation onto the device is a separate slice; what matters here is
+    // that the reconstruction consumes exactly the host factor.
+    const bool limiterActive =
+        view.limiterMode != ReconstructionLimiterMode::Disabled;
+    if ( limiterActive )
     {
-        throw std::invalid_argument(
-            "HIP device reconstruction currently requires limiter off" );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            if ( view.limiter[ equation ] == nullptr )
+            {
+                throw std::invalid_argument(
+                    "HIP reconstruction limiter needs every equation" );
+            }
+        }
     }
     const void * cacheKey = view.cacheKey != nullptr
         ? view.cacheKey : view.ownerToken;
@@ -2651,6 +2668,28 @@ void HipFluxBackend::ReconstructFaceValues(
         storage->bcQ.Reset();
         storage->wallStateValid = false;
     }
+    // Upload the limiter factor field, one equation-major block per equation.
+    if ( limiterActive )
+    {
+        ScopedStageTimer limiterTimer( "recon_limiter_upload" );
+        const std::size_t limiterValues =
+            static_cast< std::size_t >( view.nEquations ) * totalCells;
+        storage->limiter.Resize( limiterValues );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                storage->limiter.Data()
+                    + static_cast< std::size_t >( equation ) * totalCells,
+                view.limiter[ equation ],
+                static_cast< std::size_t >( totalCells ) * sizeof( Real ),
+                AccelCopyKind::HostToDevice );
+        }
+    }
+    else
+    {
+        storage->limiter.Reset();
+    }
+
     storage->cachedEquations = view.nEquations;
     storage->cachedFieldGeneration = view.fieldGeneration;
 
@@ -2672,6 +2711,8 @@ void HipFluxBackend::ReconstructFaceValues(
                          : storage->bcQ.Data() )
                  : nullptr,
         view.nBoundaryFaces,
+        limiterActive ? storage->limiter.Data() : nullptr,
+        limiterActive ? 1 : 0,
         view.nCells, view.nBoundaryFaces, view.nFaces, view.nEquations,
         view.physicality == ReconstructionPhysicalityPolicy::None ? 0 : 1,
         view.densityComponent, view.pressureComponent,

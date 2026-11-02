@@ -142,6 +142,8 @@ struct HipGradientStorage
     DeviceBuffer< unsigned char > boundaryMask;
     DeviceBuffer< ReconstructionBoundaryOperation > boundaryOperation;
     DeviceBuffer< Real > bcQ;
+    // Per-cell/per-equation reconstruction limiter factor (host-computed).
+    DeviceBuffer< Real > limiter;
     // True while boundaryFaceState holds the newest wall state produced by the
     // device boundary stage, so reconstruction can read it directly instead of
     // mirroring it to the host and uploading it back every stage.
