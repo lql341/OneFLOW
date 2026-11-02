@@ -2492,6 +2492,17 @@ void HipFluxBackend::ReconstructFaceValues(
     // that the reconstruction consumes exactly the host factor.
     const bool limiterActive =
         view.limiterMode != ReconstructionLimiterMode::Disabled;
+    if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
+    {
+        static int printedLimiter = 0;
+        if ( printedLimiter < 3 )
+        {
+            std::cout << "HIP_LIMITER_DIAG active=" << ( limiterActive ? 1 : 0 )
+                      << " mode=" << static_cast< int >( view.limiterMode )
+                      << " equations=" << view.nEquations << std::endl;
+            ++printedLimiter;
+        }
+    }
     if ( limiterActive )
     {
         for ( int equation = 0; equation < view.nEquations; ++ equation )
