@@ -1134,6 +1134,101 @@ __global__ void UpdateBoundaryPrimitiveKernel(
 }
 
 
+__device__ Real DeviceBarthFactor(
+    Real dqdx, Real dqdy, Real dqdz,
+    Real dx, Real dy, Real dz,
+    Real nx, Real ny, Real nz,
+    Real minv, Real maxv,
+    Real orientationSign )
+{
+    const Real dq = dqdx * dx + dqdy * dy + dqdz * dz;
+    const Real ds = sqrt( dx * dx + dy * dy + dz * dz );
+    const Real dot = orientationSign * ( nx * dx + ny * dy + nz * dz )
+        / ( ds + 1.0e-30 );
+    if ( dot < 0.0 ) return 0.0;
+    if ( dq > maxv ) return maxv / dq;
+    if ( dq < minv ) return minv / dq;
+    return 1.0;
+}
+
+// Barth limiter factor on the device: neighbour range and the minimum over the
+// cell's faces, per equation.  Mirrors the host sequence
+//   BuildCellNeighborOffsetBounds -> per-face BarthFunction -> TightenLimiter
+// with one difference in form only: the host tightens while walking faces, this
+// walks one cell's faces and takes the minimum, which is the same value because
+// min() is commutative.
+__global__ void BarthLimiterKernel(
+    const Real * q,
+    const Real * gradient,
+    const Real * xFace, const Real * yFace, const Real * zFace,
+    const Real * xCell, const Real * yCell, const Real * zCell,
+    const Real * xNormal, const Real * yNormal, const Real * zNormal,
+    const int * leftCell, const int * rightCell,
+    const int * faceOffsets, const int * faceIds,
+    const unsigned char * boundaryMask,
+    const ReconstructionBoundaryOperation * boundaryOperation,
+    int nCells, int totalCells, int nFaces, int nEquations,
+    Real * phiField )
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const int total = nCells * nEquations;
+    if ( index >= total ) return;
+    const int cell = index % nCells;
+    const int eq = index / nCells;
+
+    const int qBase = eq * totalCells;
+    const int gradBase = eq * 3 * totalCells;
+    const Real own = q[ qBase + cell ];
+
+    // Pass 1: neighbour range, expressed as offsets from the cell value.
+    Real lo = own;
+    Real hi = own;
+    for ( int k = faceOffsets[ cell ]; k < faceOffsets[ cell + 1 ]; ++ k )
+    {
+        const int face = faceIds[ k ];
+        const bool isLeft = leftCell[ face ] == cell;
+        if ( isLeft && boundaryMask != nullptr && boundaryMask[ face ] != 0 )
+        {
+            // Ordinary boundary faces do not contribute to the range; interface
+            // faces contribute the remote value (host rule).
+            const ReconstructionBoundaryOperation op =
+                boundaryOperation != nullptr
+                ? boundaryOperation[ face ]
+                : ReconstructionBoundaryOperation::Preserve;
+            if ( op != ReconstructionBoundaryOperation::Preserve ) continue;
+        }
+        const int neighbour = isLeft ? rightCell[ face ] : leftCell[ face ];
+        const Real value = q[ qBase + neighbour ];
+        lo = value < lo ? value : lo;
+        hi = value > hi ? value : hi;
+    }
+    const Real minv = lo - own;
+    const Real maxv = hi - own;
+
+    // Pass 2: tighten over this cell's faces.
+    Real phi = 1.0;
+    for ( int k = faceOffsets[ cell ]; k < faceOffsets[ cell + 1 ]; ++ k )
+    {
+        const int face = faceIds[ k ];
+        const bool isLeft = leftCell[ face ] == cell;
+        const Real dx = xFace[ face ] - xCell[ cell ];
+        const Real dy = yFace[ face ] - yCell[ cell ];
+        const Real dz = zFace[ face ] - zCell[ cell ];
+        const Real factor = DeviceBarthFactor(
+            gradient[ gradBase + cell ],
+            gradient[ gradBase + totalCells + cell ],
+            gradient[ gradBase + 2 * totalCells + cell ],
+            dx, dy, dz,
+            xNormal ? xNormal[ face ] : 1.0,
+            yNormal ? yNormal[ face ] : 0.0,
+            zNormal ? zNormal[ face ] : 0.0,
+            minv, maxv,
+            isLeft ? 1.0 : -1.0 );
+        phi = factor < phi ? factor : phi;
+    }
+    phiField[ qBase + cell ] = phi;
+}
+
 __global__ void ReconstructFaceEulerKernel(
     const Real * q,
     const Real * gradient,
@@ -1820,22 +1915,6 @@ namespace
 // Mirrors BarthFunction + ReconstructFaceIncrement + FaceSideDirectionDot in
 // codes/usolver/src/ULimiterPolicy.cpp.  Kept as one function so the device and
 // the host cannot drift on the normal-dot sign convention.
-__device__ Real DeviceBarthFactor(
-    Real dqdx, Real dqdy, Real dqdz,
-    Real dx, Real dy, Real dz,
-    Real nx, Real ny, Real nz,
-    Real minv, Real maxv,
-    Real orientationSign )
-{
-    const Real dq = dqdx * dx + dqdy * dy + dqdz * dz;
-    const Real ds = sqrt( dx * dx + dy * dy + dz * dz );
-    const Real dot = orientationSign * ( nx * dx + ny * dy + nz * dz )
-        / ( ds + 1.0e-30 );
-    if ( dot < 0.0 ) return 0.0;
-    if ( dq > maxv ) return maxv / dq;
-    if ( dq < minv ) return minv / dq;
-    return 1.0;
-}
 
 __global__ void EvaluateDeviceBarthKernel(
     Real dqdx, Real dqdy, Real dqdz,
@@ -2503,17 +2582,7 @@ void HipFluxBackend::ReconstructFaceValues(
             ++printedLimiter;
         }
     }
-    if ( limiterActive )
-    {
-        for ( int equation = 0; equation < view.nEquations; ++ equation )
-        {
-            if ( view.limiter[ equation ] == nullptr )
-            {
-                throw std::invalid_argument(
-                    "HIP reconstruction limiter needs every equation" );
-            }
-        }
-    }
+
     const void * cacheKey = view.cacheKey != nullptr
         ? view.cacheKey : view.ownerToken;
     HipGradientStorage * storage = &fallbackGradientStorage_;
@@ -2685,28 +2754,36 @@ void HipFluxBackend::ReconstructFaceValues(
         storage->bcQ.Reset();
         storage->wallStateValid = false;
     }
-    // Upload the limiter factor field, one equation-major block per equation.
+    // Compute the limiter factor on the device from the resident gradient.
+    // The host copy is not usable here: with a device-authoritative q the host
+    // gradient mirror is deliberately stale, and a factor built from it biased
+    // the solution by 8.5e-5 over 200 steps.
     if ( limiterActive )
     {
-        ScopedStageTimer limiterTimer( "recon_limiter_upload" );
+        ScopedStageTimer limiterTimer( "recon_limiter_kernel" );
         const std::size_t limiterValues =
             static_cast< std::size_t >( view.nEquations ) * totalCells;
         storage->limiter.Resize( limiterValues );
-        for ( int equation = 0; equation < view.nEquations; ++ equation )
-        {
-            AccelRuntime::Instance().Backend().Copy(
-                storage->limiter.Data()
-                    + static_cast< std::size_t >( equation ) * totalCells,
-                view.limiter[ equation ],
-                static_cast< std::size_t >( totalCells ) * sizeof( Real ),
-                AccelCopyKind::HostToDevice );
-        }
+        const int limiterBlock = 256;
+        hipLaunchKernelGGL(
+            BarthLimiterKernel,
+            dim3( ( static_cast< int >( limiterValues ) + limiterBlock - 1 )
+                  / limiterBlock ),
+            dim3( limiterBlock ), 0, 0,
+            storage->cellState.Data(), storage->cellGradient.Data(),
+            storage->xFaceCenter.Data(), storage->yFaceCenter.Data(),
+            storage->zFaceCenter.Data(), storage->xCellCenter.Data(),
+            storage->yCellCenter.Data(), storage->zCellCenter.Data(),
+            storage->xNormal.Data(), storage->yNormal.Data(),
+            storage->zNormal.Data(),
+            storage->leftCell.Data(), storage->rightCell.Data(),
+            storage->cellFaceOffsets.Data(), storage->cellFaceIds.Data(),
+            storage->boundaryMaskValid ? storage->boundaryMask.Data() : nullptr,
+            storage->boundaryOperation.Data(),
+            view.nCells, totalCells, view.nFaces, view.nEquations,
+            storage->limiter.Data() );
+        CheckHip( hipGetLastError(), "Barth limiter kernel launch" );
     }
-    else
-    {
-        storage->limiter.Reset();
-    }
-
     storage->cachedEquations = view.nEquations;
     storage->cachedFieldGeneration = view.fieldGeneration;
 

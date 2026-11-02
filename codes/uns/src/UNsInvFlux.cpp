@@ -406,8 +406,7 @@ void UNsInvFlux::CalcInvFace()
         // Barth/Venkat factors come from Limiter::CalcLimiter, which the host
         // runs just above for this stage; the device reconstruction consumes
         // that field instead of recomputing it.
-        const bool deviceLimiterActive =
-            ctrl.ilim != ILMT_NO && limf->limiter != nullptr;
+        const bool deviceLimiterActive = ctrl.ilim == ILMT_BARTH;
         view.limiterMode = deviceLimiterActive
             ? ReconstructionLimiterMode::Cell
             : ReconstructionLimiterMode::Disabled;
@@ -428,9 +427,6 @@ void UNsInvFlux::CalcInvFace()
             view.dqdx[ equation ] = ( * limf->dqdx )[ equation ].data();
             view.dqdy[ equation ] = ( * limf->dqdy )[ equation ].data();
             view.dqdz[ equation ] = ( * limf->dqdz )[ equation ].data();
-            if ( deviceLimiterActive )
-                view.limiter[ equation ] =
-                    ( * limf->limiter )[ equation ].data();
             view.qLeft[ equation ] = ( * limf->qf1 )[ equation ].data();
             view.qRight[ equation ] = ( * limf->qf2 )[ equation ].data();
             if ( hipBoundaryHasSolid )
@@ -550,20 +546,17 @@ bool UNsInvFlux::UseHipGradient() const
         throw std::runtime_error(
             "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires the HIP batch path" );
     }
-    // The limiter factor needs the current cell gradient.  With a
-    // device-authoritative q the host gradient mirror is deliberately stale
-    // (only boundary-adjacent cells, only on reader steps), so computing the
-    // factor on the host is not valid.  Keep the device path limiter-off until
-    // the factor is computed on the device; a host-side factor reads stale
-    // gradients and silently biases the solution (measured: 8.5e-5 residual
-    // drift over 200 steps, growing per step).
-    if ( ctrl.ilim != ILMT_NO )
+    // Barth is computed on the device from the resident gradient.  It must not
+    // be computed on the host: with a device-authoritative q the host gradient
+    // mirror is deliberately stale, and a host-side factor biased the solution
+    // by 8.5e-5 over 200 steps.  Venkat is not implemented on the device yet.
+    if ( ctrl.ilim != ILMT_NO && ctrl.ilim != ILMT_BARTH )
     {
         if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )
             return false;
         throw std::runtime_error(
-            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 requires limiter off until the "
-            "factor is computed on the device" );
+            "ONEFLOW_ENABLE_UNS_HIP_GRADIENT=1 supports limiter off or Barth "
+            "on the device" );
     }
     if ( vis_model.vismodel != 0 )
     {
