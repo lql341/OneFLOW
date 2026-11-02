@@ -61,10 +61,24 @@ TEST( EulerInvFluxCapability, RejectsEveryUnsupportedRequestWithReason )
         { EulerInvFluxCapabilityReason::UnsupportedLimiterEquationCount,
           []( auto & request ) { request.limiterEquations = 3; } },
         { EulerInvFluxCapabilityReason::UnsupportedInviscidScheme,
-          []( auto & request ) { request.laxFriedrichsScheme = false; } },
+          []( auto & request )
+          {
+              request.laxFriedrichsScheme = false;
+              request.roeScheme = false;
+          } },
         { EulerInvFluxCapabilityReason::InterfaceExchangeEnabled,
           []( auto & request ) { request.hasInterfaceExchange = true; } },
     };
+
+    // Roe is implemented on the device; only schemes outside the implemented
+    // set are rejected.
+    {
+        auto request = SupportedRequest();
+        request.laxFriedrichsScheme = false;
+        request.roeScheme = true;
+        const auto decision = EvaluateEulerInvFluxCapability( request );
+        EXPECT_TRUE( decision.enabled );
+    }
 
     for ( const auto & testCase : cases )
     {

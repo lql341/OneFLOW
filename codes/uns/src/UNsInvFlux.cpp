@@ -628,6 +628,7 @@ bool UNsInvFlux::UseHipBatchAdapter() const
     request.limiterEquations = limf == nullptr ? 0 : limf->nEqu;
     request.laxFriedrichsScheme =
         nscom.ischeme == ISCHEME_LAX_FRIEDRICHS;
+    request.roeScheme = nscom.ischeme == ISCHEME_ROE;
     request.hasInterfaceExchange =
         ZoneState::nZones > 1 || ZoneState::nLocal > 1;
     request.backendSupportsInterfaceExchange =
@@ -737,7 +738,8 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
             ! this->UseHipDeviceStateUpdate() || needFlux || dumpDue,
             DeviceOwnsExplicitRkBookkeeping()
                 ? ResidualBase::DeviceZero
-                : ResidualBase::HostUpload );
+                : ResidualBase::HostUpload,
+            ctrl.centropy1, ctrl.centropy2, ctrl.ieigenfix == 1 );
         if ( needFlux )
         {
             for ( int equation = 0; equation < nEquations; ++ equation )
@@ -797,7 +799,8 @@ void UNsInvFlux::CalcAndAddInvFluxHipBatch()
     HipFluxBackend & backend = HipFluxBackend::Shared();
     backend.CalcAndAddPrimitiveFaceFlux(
         primitiveState, connectivity, residual,
-        DeviceFluxScheme( nscom.ischeme ), hostFluxPointer, grid );
+        DeviceFluxScheme( nscom.ischeme ), hostFluxPointer, grid,
+        ctrl.centropy1, ctrl.centropy2, ctrl.ieigenfix == 1 );
 
     if ( needFlux )
     {

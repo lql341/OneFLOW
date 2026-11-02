@@ -53,7 +53,7 @@ EulerInvFluxCapabilityDecision EvaluateEulerInvFluxCapability(
             EulerInvFluxCapabilityReason::UnsupportedLimiterEquationCount;
         return decision;
     }
-    if ( ! request.laxFriedrichsScheme )
+    if ( ! request.laxFriedrichsScheme && ! request.roeScheme )
     {
         decision.reason =
             EulerInvFluxCapabilityReason::UnsupportedInviscidScheme;

@@ -285,7 +285,10 @@ public:
         ResidualView & residual,
         int scheme,
         FaceFluxView * hostFlux = nullptr,
-        const void * cacheKey = nullptr );
+        const void * cacheKey = nullptr,
+        Real entropy1 = 0.0,
+        Real entropy2 = 0.0,
+        bool entropyFix = false );
 
     void CalcGradient( const CellGradientView & view );
 
@@ -320,7 +323,10 @@ public:
         FaceFluxView * hostFlux = nullptr,
         const void * cacheKey = nullptr,
         bool downloadResidual = true,
-        ResidualBase residualBase = ResidualBase::HostUpload );
+        ResidualBase residualBase = ResidualBase::HostUpload,
+        Real entropy1 = 0.0,
+        Real entropy2 = 0.0,
+        bool entropyFix = false );
 
     // Continue the reconstructed-flux path without a residual round trip.
     // ScaleCurrentResidual implements CALC_LHS. UpdatePrimitiveState implements

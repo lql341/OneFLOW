@@ -288,6 +288,17 @@ __global__ void CalcInvFluxEulerKernel(
     Real fL[ 5 ] = {};
     Real fR[ 5 ] = {};
     Real lambdaMax = 0.0;
+    if ( scheme == 2 )
+    {
+        Real roeFlux[ 5 ] = {};
+        RoeFaceFlux( pL, pR, gamma, nx, ny, nz, vfn,
+                     entropy1, entropy2, entropyFix != 0, roeFlux );
+        for ( int eq = 0; eq < nEq; ++ eq )
+        {
+            flux[ eq * nFaces + face ] = faceArea * roeFlux[ eq ];
+        }
+        return;
+    }
     if ( scheme == 1 )
     {
         const Real ratio = sqrt( pR.density / pL.density );
@@ -394,6 +405,136 @@ __device__ void ConservedValuesToPrimitive(
     p.soundSpeed = sqrt( fabs( gamma * p.pressure / p.density ) );
 }
 
+// Roe flux for the five-equation system, mirroring NsInvFlux::Roe and the
+// NsInvFluxPolicy helpers term for term: Roe-averaged state, Harten entropy
+// fix on the three wave speeds, then the five-equation dissipation.  Host and
+// device must agree to round-off, so the operation order follows the host
+// implementation instead of being algebraically "simplified".
+struct RoePrimitive
+{
+    Real density;
+    Real u;
+    Real v;
+    Real w;
+    Real pressure;
+    Real enthalpy;
+};
+
+__device__ void RoeFaceFlux(
+    const Primitive & left,
+    const Primitive & right,
+    Real gamma,
+    Real nx, Real ny, Real nz, Real vfn,
+    Real entropy1, Real entropy2, bool entropyFix,
+    Real * flux )
+{
+    RoePrimitive pL;
+    RoePrimitive pR;
+    pL.density = left.density;
+    pL.u = left.u;
+    pL.v = left.v;
+    pL.w = left.w;
+    pL.pressure = left.pressure;
+    pR.density = right.density;
+    pR.u = right.u;
+    pR.v = right.v;
+    pR.w = right.w;
+    pR.pressure = right.pressure;
+
+    const Real gamm1 = gamma - 1.0;
+    pL.enthalpy = gamma / gamm1 * pL.pressure / pL.density
+        + 0.5 * ( pL.u * pL.u + pL.v * pL.v + pL.w * pL.w );
+    pR.enthalpy = gamma / gamm1 * pR.pressure / pR.density
+        + 0.5 * ( pR.u * pR.u + pR.v * pR.v + pR.w * pR.w );
+
+    // RoeAverageWeights / RoeAverageComponent
+    const Real ratio = sqrt( pR.density / pL.density );
+    const Real coef = 1.0 / ( 1.0 + ratio );
+    const Real densityMid = sqrt( pL.density * pR.density );
+    const Real uMid = ( pL.u + pR.u * ratio ) * coef;
+    const Real vMid = ( pL.v + pR.v * ratio ) * coef;
+    const Real wMid = ( pL.w + pR.w * ratio ) * coef;
+    const Real pMid = ( pL.pressure + pR.pressure * ratio ) * coef;
+    const Real hMid = ( pL.enthalpy + pR.enthalpy * ratio ) * coef;
+
+    const Real speedSquared = uMid * uMid + vMid * vMid + wMid * wMid;
+    const Real vnFlow = nx * uMid + ny * vMid + nz * wMid;
+    const Real vnRel = vnFlow - vfn;
+    const Real c2 = gamm1 * ( hMid - 0.5 * speedSquared );
+    const Real c = sqrt( fabs( c2 ) );
+
+    // RoeAbsoluteEigenvalues + ApplyHartenEntropyFix
+    Real absVn = fabs( vnRel );
+    Real absVnPlusC = fabs( vnRel + c );
+    Real absVnMinusC = fabs( vnRel - c );
+    if ( entropyFix )
+    {
+        const Real maxEigenvalue =
+            absVnPlusC > absVnMinusC ? absVnPlusC : absVnMinusC;
+        const Real m1 = maxEigenvalue * entropy1;
+        const Real m2 = maxEigenvalue * entropy2;
+        absVn = m1 > absVn ? m1 : absVn;
+        absVnPlusC = m2 > absVnPlusC ? m2 : absVnPlusC;
+        absVnMinusC = m2 > absVnMinusC ? m2 : absVnMinusC;
+    }
+
+    // RoeDissipationWaveCoefficients
+    const Real xi1 = ( 2.0 * absVn - absVnPlusC - absVnMinusC )
+        / ( 2.0 * c2 );
+    const Real xi2 = ( absVnPlusC - absVnMinusC ) / ( 2.0 * c );
+
+    // Conserved jumps, matching PrimToQ on both sides.
+    Real q1[ 5 ] = {};
+    Real q2[ 5 ] = {};
+    const Real pLc[ 5 ] = { pL.density, pL.u, pL.v, pL.w, pL.pressure };
+    const Real pRc[ 5 ] = { pR.density, pR.u, pR.v, pR.w, pR.pressure };
+    const Real primLeft[ 5 ] = { pLc[ 0 ], pLc[ 1 ], pLc[ 2 ], pLc[ 3 ], pLc[ 4 ] };
+    (void) primLeft;
+    const Real eL = pL.pressure / gamm1
+        + 0.5 * pL.density * ( pL.u * pL.u + pL.v * pL.v + pL.w * pL.w );
+    const Real eR = pR.pressure / gamm1
+        + 0.5 * pR.density * ( pR.u * pR.u + pR.v * pR.v + pR.w * pR.w );
+    q1[ 0 ] = pL.density;
+    q1[ 1 ] = pL.density * pL.u;
+    q1[ 2 ] = pL.density * pL.v;
+    q1[ 3 ] = pL.density * pL.w;
+    q1[ 4 ] = eL;
+    q2[ 0 ] = pR.density;
+    q2[ 1 ] = pR.density * pR.u;
+    q2[ 2 ] = pR.density * pR.v;
+    q2[ 3 ] = pR.density * pR.w;
+    q2[ 4 ] = eR;
+    Real dq[ 5 ] = {};
+    for ( int eq = 0; eq < 5; ++ eq ) dq[ eq ] = q2[ eq ] - q1[ eq ];
+
+    // Fluxes
+    Real f[ 5 ] = {};
+    const Real massL = pL.density * ( nx * pL.u + ny * pL.v + nz * pL.w - vfn );
+    const Real massR = pR.density * ( nx * pR.u + ny * pR.v + nz * pR.w - vfn );
+    f[ 0 ] = massL + massR;
+    f[ 1 ] = massL * pL.u + nx * pL.pressure + massR * pR.u + nx * pR.pressure;
+    f[ 2 ] = massL * pL.v + ny * pL.pressure + massR * pR.v + ny * pR.pressure;
+    f[ 3 ] = massL * pL.w + nz * pL.pressure + massR * pR.w + nz * pR.pressure;
+    f[ 4 ] = massL * pL.enthalpy + vfn * pL.pressure
+        + massR * pR.enthalpy + vfn * pR.pressure;
+
+    // RoeContinuityNormalJump, RoeTotalEnthalpyJump, coupling terms
+    const Real dc = vnFlow * dq[ 0 ] - nx * dq[ 1 ] - ny * dq[ 2 ] - nz * dq[ 3 ];
+    const Real ae = gamma - 1.0;
+    Real dh = -ae * ( uMid * dq[ 1 ] + vMid * dq[ 2 ] + wMid * dq[ 3 ] - dq[ 4 ] );
+    dh += 0.5 * ae * speedSquared * dq[ 0 ];
+    const Real term1 = dh * xi1 + dc * xi2;
+    const Real term2 = c2 * dc * xi1 + dh * xi2;
+
+    f[ 0 ] -= ( absVn * dq[ 0 ] - term1 );
+    f[ 1 ] -= ( absVn * dq[ 1 ] - uMid * term1 + nx * term2 );
+    f[ 2 ] -= ( absVn * dq[ 2 ] - vMid * term1 + ny * term2 );
+    f[ 3 ] -= ( absVn * dq[ 3 ] - wMid * term1 + nz * term2 );
+    f[ 4 ] -= ( absVn * dq[ 4 ] - hMid * term1 + vnFlow * term2 );
+
+    for ( int eq = 0; eq < 5; ++ eq ) flux[ eq ] = 0.5 * f[ eq ];
+}
+
 __global__ void CalcAndScatterPrimitiveEulerKernel(
     const Real * primitiveLeft,
     const Real * primitiveRight,
@@ -411,6 +552,9 @@ __global__ void CalcAndScatterPrimitiveEulerKernel(
     int nEq,
     Real gamma,
     int scheme,
+    Real entropy1,
+    Real entropy2,
+    int entropyFix,
     Real * flux,
     Real * residual )
 {
@@ -2430,7 +2574,10 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
     FaceFluxView * hostFlux,
     const void * cacheKey,
     bool downloadResidual,
-    ResidualBase residualBase )
+    ResidualBase residualBase,
+    Real entropy1,
+    Real entropy2,
+    bool entropyFix )
 {
     ValidateFaceConnectivityView( connectivity );
     if ( residual.nCells <= 0 || residual.nEquations < 3 || gamma <= 1.0 )
@@ -2538,6 +2685,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         storage->leftCell.Data(), storage->rightCell.Data(),
         deviceBoundaryMask, connectivity.nBoundaryFaces, nFaces, nCells,
         nEq, gamma, scheme,
+        entropy1, entropy2, entropyFix ? 1 : 0,
         storage->faceFlux.Data(),
         storage->residual.Data() );
     hipLaunchKernelGGL(
@@ -4119,7 +4267,10 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
     ResidualView & residual,
     int scheme,
     FaceFluxView * hostFlux,
-    const void * cacheKey )
+    const void * cacheKey,
+    Real entropy1,
+    Real entropy2,
+    bool entropyFix )
 {
     const bool componentInput =
         state.primitiveLeft == nullptr && state.primitiveRight == nullptr
@@ -4361,6 +4512,7 @@ void HipFluxBackend::CalcAndAddPrimitiveFaceFlux(
         nEq,
         state.gamma,
         scheme,
+        entropy1, entropy2, entropyFix ? 1 : 0,
         fluxBuffer->Data(),
         residualBuffer->Data() );
     hipLaunchKernelGGL(
