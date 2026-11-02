@@ -153,11 +153,12 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.6 Phase F — 产品化与发布（0/4）
 
-- [ ] **F1** 3D 正式性能报告（原 `G7`/`I1`）：同节点、同 repeats、paired。
-      2026-11-02 已发布 Markdown 源
-      [`oneflow-3d-euler-performance-current.md`](../reports/performance/oneflow-3d-euler-performance-current.md)：
-      8 核 CPU 288.20 vs 1 DCU 15.59 ms/step（中位数，3 样本交替），**18.5×**。
-      HTML 尚未生成，因此本项不勾
+- [x] **F1** 3D 正式性能报告（原 `G7`/`I1`）：同节点、同 repeats、paired。
+      2026-11-02 发布，Markdown 与 HTML 同 stem：
+      [`…-current.md`](../reports/performance/oneflow-3d-euler-performance-current.md) /
+      [`…-current.html`](../reports/performance/oneflow-3d-euler-performance-current.html)。
+      8 核 CPU 288.20 vs 1 DCU 15.59 ms/step（中位数，3 样本交替），**18.5×**；
+      口径为 1000 步、50 步 warmup、关闭中间输出（输出摊薄实测 0.8 ms/step）
 - [ ] **F2** CI 矩阵（原 `I2`）：CPU normal/strict、DCU 单卡、DCU 多卡、nightly 长跑；PR 分支自跑门禁
 - [ ] **F3** 文档与能力矩阵（原 `I3`）：哪些 solver/scheme 在设备上已验证
 - [ ] **F4** GUI / 示例算例 / 发行说明（原 `I4`）
@@ -188,13 +189,13 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 | 阶段 | 勾选/总数 | 状态 |
 |---|---|---|
-| Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成（18.5 ms/step），A2–A4 在途 |
+| Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成（15.6 ms/step），A2–A4 在途 |
 | Phase B 数值能力 | 0/6（另有 B-exit） | ⬜ |
 | Phase C 真实算例与 IO | 0/5 | ⬜ |
 | Phase D 多卡 | 0/4 | ⬜ 卡在 D1 |
 | Phase E 架构通用化 | 0/5 | ⬜ |
-| Phase F 产品化 | 0/4 | ⬜ |
-| **阶段合计** | **1/28** | 前置层已完成，主线只走完 A1 |
+| Phase F 产品化 | 1/4 | 🟨 F1 报告已发布 |
+| **阶段合计** | **2/28** | 前置层已完成；A1 与 F1 收口 |
 | 前置层 | 6/6 | ✅ 见 §4.7 |
 
 ### 5. 下一轮任务（按序，含验收）
@@ -215,8 +216,7 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
    修法：`Restart::Dump` 在设备拥有权威场时（`NsDeviceAuthoritativeFlowEnabled()`），先回填 `q`，再用 `InitUnsteady()` 从它重建历史层。判据用「谁拥有权威场」，**不能**用刷新函数的返回值——镜像可能已被别的读者刷新，那样会静默跳过。
    修复后：auth-on `4.330e-15 / 0 / 0` PASS，auth-off `4.552e-15 / 0 / 0` PASS。同一 100 步的 dump 里 level 1 与 auth-off 差 `5.33e-15`；level 2 保留差异是设计使然（auth-on 无法复现真实上一步），steady 下不被读取。
    同一轮复跑：trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、CPU normal 5/5 + strict 5/5、热态 1000 步 `21.10/21.27/20.86 ms/step`——说明该修复不影响数值与性能。
-4. **F1** 3D 正式性能报告：同节点补 CPU 8C 1000 步 2–3 个样本，与 HIP 配对；
-   Markdown 与 HTML 同 stem；同时把本文 §0/§1 的数字同步。
+4. [x] **F1** 3D 正式性能报告已发布（Markdown + HTML 同 stem，18.5× @8:1 槽）。
 5. **D1** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
 6. **B1/B2**（可与 1–3 并行评估）：Roe + limiter 的单点数值契约与 trace 门禁。
 
