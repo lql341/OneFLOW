@@ -264,9 +264,16 @@ void UNsInvFlux::CalcInvFace()
         // readers run after the RK loop, so only the last stage's mirror is
         // visible to them.  InnerOk covers the pressure-coefficient task,
         // which is independent of nForceSave.
+        // Only two host readers consume the boundary-adjacent gradient: the
+        // aerodynamic force (nForceSave cadence), the pressure-coefficient /
+        // visualization dump (nVisualSave cadence) and the final step.  The
+        // steady inner loop itself does not, so InnerOk is not a reader.
+        const bool visualDue =
+            Iteration::nVisualSave > 0
+            && Iteration::outerSteps % Iteration::nVisualSave == 0;
         const bool postStepGradientReader =
             Iteration::ForceOk()
-            || Iteration::InnerOk()
+            || visualDue
             || Iteration::outerSteps + 1 >= Iteration::maxSteps;
         const bool hostMirrorReaderThisStep = HipGradientMirrorOnThisStage(
             HipGradientHostMirrorOnDemand(),

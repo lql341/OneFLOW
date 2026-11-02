@@ -15,6 +15,36 @@ License
 
 BeginNameSpace( ONEFLOW )
 
+// Policy flags are queried from the hottest paths in the solver: every stage
+// asks HipProductionFeatureEnabled / HipDeviceAuthoritativeStateEnabled /
+// HipSkipHostInterfaceExchange, and the interface field loop asks once per
+// field.  std::getenv scans the whole environment block on each call, so a
+// single RK step was paying hundreds of scans.  Resolve each queried name once
+// and return the cached pointer; a flag is a process-lifetime decision here.
+inline const char * CachedEnv( const char * name )
+{
+    struct Entry
+    {
+        const char * name;
+        const char * value;
+    };
+    static Entry entries[ 32 ];
+    static int count = 0;
+    for ( int i = 0; i < count; ++ i )
+    {
+        if ( std::strcmp( entries[ i ].name, name ) == 0 )
+            return entries[ i ].value;
+    }
+    const char * value = std::getenv( name );
+    if ( count < 32 )
+    {
+        entries[ count ].name = name;
+        entries[ count ].value = value;
+        ++ count;
+    }
+    return value;
+}
+
 // Production HIP follows the runtime backend selection. Legacy per-stage
 // variables remain overrides: unset selects automatically, "0" disables the
 // stage, and "1" requests it subject to capability checks.
@@ -31,13 +61,13 @@ inline bool HipProductionBackendSelected()
 
 inline bool HipProductionFeatureExplicitlyEnabled( const char * name )
 {
-    const char * value = std::getenv( name );
+    const char * value = CachedEnv(  name  );
     return value != nullptr && value[ 0 ] == '1';
 }
 
 inline bool HipProductionFeatureEnabled( const char * legacyName )
 {
-    const char * value = std::getenv( legacyName );
+    const char * value = CachedEnv(  legacyName  );
     if ( value != nullptr ) return value[ 0 ] == '1';
     if ( ! HipProductionBackendSelected() ) return false;
 
@@ -80,7 +110,7 @@ inline bool HipProductionFeatureEnabled( const char * legacyName )
 // bisection; the 200-step cross-backend gate covers the default.
 inline bool HipSkipHostInterfaceExchange()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_INTERFACE" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_SKIP_HOST_INTERFACE"  );
     if ( value != nullptr ) return value[ 0 ] != '0';
     return HipProductionBackendSelected();
 }
@@ -95,7 +125,7 @@ inline bool HipSkipHostInterfaceExchange()
 // mirror for bisection.
 inline bool HipGradientHostMirrorOnDemand()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND"  );
     return value == nullptr || value[ 0 ] != '0';
 }
 
@@ -116,7 +146,7 @@ inline bool HipGradientMirrorOnThisStage(
 
 inline bool HipPackedGradientExchangeEnabled()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_GRADIENT_PACKED" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_GRADIENT_PACKED"  );
     if ( value != nullptr ) return value[ 0 ] == '1';
     return HipProductionBackendSelected();
 }
@@ -130,14 +160,14 @@ inline bool HipPackedGradientExchangeEnabled()
 // of once per RK stage.
 inline bool HipUnusedInterfaceFieldsSkipped()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_UNUSED_INTERFACE" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_SKIP_UNUSED_INTERFACE"  );
     if ( value != nullptr && value[ 0 ] == '0' ) return false;
     return HipProductionBackendSelected();
 }
 
 inline bool HipSkipHostFieldPackRequested()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_SKIP_HOST_FIELD_PACK"  );
     return value == nullptr || value[ 0 ] != '0';
 }
 
@@ -157,7 +187,7 @@ inline bool HipSkipHostFieldPackRequested()
 inline bool HipDeviceAuthoritativeStateEnabled()
 {
     const char * value =
-        std::getenv( "ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q" );
+        CachedEnv(  "ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q"  );
     if ( value != nullptr ) return value[ 0 ] != '0';
     return HipProductionBackendSelected();
 }
@@ -167,7 +197,7 @@ inline bool HipDeviceAuthoritativeStateEnabled()
 // at the cost of the transfer).
 inline bool HipGhostQMirrorForced()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_GHOST_Q_MIRROR" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_GHOST_Q_MIRROR"  );
     return value != nullptr && value[ 0 ] == '1';
 }
 
@@ -182,7 +212,7 @@ inline bool HipGhostQMirrorForced()
 // NsRefreshHostStateMirror.
 inline bool HipSkipHostRkSlotCopyRequested()
 {
-    const char * value = std::getenv( "ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY" );
+    const char * value = CachedEnv(  "ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY"  );
     return value == nullptr || value[ 0 ] != '0';
 }
 
@@ -213,7 +243,7 @@ inline bool HipSkipHostRkSlotCopy(
 inline bool HipSkipHostHistoryShiftRequested()
 {
     const char * value =
-        std::getenv( "ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT" );
+        CachedEnv(  "ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT"  );
     return value == nullptr || value[ 0 ] != '0';
 }
 
@@ -222,7 +252,7 @@ inline bool HipSkipHostHistoryShiftRequested()
 inline bool HipBoundaryStateMirrorEnabled()
 {
     const char * value =
-        std::getenv( "ONEFLOW_HIP_BOUNDARY_STATE_MIRROR" );
+        CachedEnv(  "ONEFLOW_HIP_BOUNDARY_STATE_MIRROR"  );
     return value == nullptr || value[ 0 ] != '0';
 }
 
@@ -234,7 +264,7 @@ inline bool HipBoundaryStateMirrorEnabled()
 inline bool HipDeviceGradientInterfaceEnabled( bool viscousModelActive )
 {
     if ( viscousModelActive ) return false;
-    const char * unpack = std::getenv( "ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK" );
+    const char * unpack = CachedEnv(  "ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK"  );
     if ( unpack != nullptr && unpack[ 0 ] == '0' ) return false;
     return HipPackedGradientExchangeEnabled()
         && HipSkipHostFieldPackRequested()
