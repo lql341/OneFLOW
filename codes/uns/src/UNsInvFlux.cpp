@@ -408,7 +408,7 @@ void UNsInvFlux::CalcInvFace()
         // that field instead of recomputing it.
         const bool deviceLimiterActive = ctrl.ilim == ILMT_BARTH;
         view.limiterMode = deviceLimiterActive
-            ? ReconstructionLimiterMode::Cell
+            ? ReconstructionLimiterMode::DeviceCell
             : ReconstructionLimiterMode::Disabled;
         view.physicality = ReconstructionPhysicalityPolicy::PositiveDensityPressure;
         view.densityComponent = 0;

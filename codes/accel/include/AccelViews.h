@@ -48,7 +48,13 @@ enum class MemorySpace
 enum class ReconstructionLimiterMode
 {
     Disabled,
-    Cell
+    // The caller supplies the per-cell factor (host-computed field pointers).
+    Cell,
+    // The backend computes the factor on the device from its resident
+    // gradient; the host pointers are then not required. Used for Barth,
+    // because the host gradient mirror is stale under a device-authoritative
+    // state and a host-side factor would be built from old values.
+    DeviceCell
 };
 
 // The solver translates its BC types into these operations before dispatch.
