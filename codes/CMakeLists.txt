@@ -431,6 +431,16 @@ target_link_libraries ( ${PROJECT_NAME}
         OneFLOW_RuntimeObjects
 )
 
+# The runtime objects include HIP translation units when the backend is enabled.
+# The consuming executable then needs the HIP link rule in its own scope, which
+# enable_language() provides; without it CMake fails at generate time with
+# "CMAKE_HIP_LINK_EXECUTABLE not set" after the sources moved into an object
+# collection.
+if ( ONEFLOW_BUILD_HIP )
+    enable_language ( HIP )
+    target_link_libraries ( ${PROJECT_NAME} PRIVATE hip::host )
+endif()
+
 set ( PRJ_SYSTEM_DIR ${PRJ_ROOT_DIR}/system/ )
 set ( PRJ_DOCUMENT_DIR ${PRJ_ROOT_DIR}/doc/ )
 
