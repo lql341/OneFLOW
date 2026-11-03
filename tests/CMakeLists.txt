@@ -9,6 +9,14 @@ if ( NOT COMMAND gtest_discover_tests )
     "is loaded before adding tests.")
 endif()
 
+# Some production-integration tests link OneFLOW_RuntimeObjects, which carries
+# HIP translation units when the backend is enabled. The HIP link rule is a
+# directory-scope variable, so it must be enabled here as well; otherwise CMake
+# stops at generate time with "CMAKE_HIP_LINK_EXECUTABLE not set".
+if ( ONEFLOW_ENABLE_HIP )
+  enable_language(HIP)
+endif()
+
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # 设置默认文件夹名称
