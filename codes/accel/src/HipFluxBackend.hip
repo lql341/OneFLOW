@@ -2776,6 +2776,11 @@ void HipFluxBackend::ReconstructFaceValues(
     // the solution by 8.5e-5 over 200 steps.
     if ( limiterActive )
     {
+        // The factor kernel walks each cell's face list, so the cell->face CSR
+        // must exist before it runs; the flux stage used to build it later.
+        EnsureCellFaceConnectivity(
+            *storage, view.leftCell, view.rightCell,
+            view.nCells, view.nFaces, view.nBoundaryFaces );
         ScopedStageTimer limiterTimer( "recon_limiter_kernel" );
         const std::size_t limiterValues =
             static_cast< std::size_t >( view.nEquations ) * totalCells;
