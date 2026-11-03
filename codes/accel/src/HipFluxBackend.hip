@@ -1171,10 +1171,19 @@ __global__ void BarthLimiterKernel(
     Real * phiField )
 {
     const int index = blockIdx.x * blockDim.x + threadIdx.x;
-    const int total = nCells * nEquations;
+    const int total = totalCells * nEquations;
     if ( index >= total ) return;
-    const int cell = index % nCells;
-    const int eq = index / nCells;
+    const int cell = index % totalCells;
+    const int eq = index / totalCells;
+
+    // Ghost cells keep the neutral factor: the host initialises the whole field
+    // to one and only physical cells are tightened by its face loop, so a ghost
+    // that no physical cell tightens stays at one.
+    if ( cell >= nCells )
+    {
+        phiField[ eq * totalCells + cell ] = 1.0;
+        return;
+    }
 
     const int qBase = eq * totalCells;
     const int gradBase = eq * 3 * totalCells;
