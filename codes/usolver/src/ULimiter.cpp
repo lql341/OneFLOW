@@ -359,7 +359,10 @@ void Limiter::SetInitValue()
 
 void Limiter::FillNeutralLimiterField()
 {
-    if ( limf == nullptr || limf->limiter == nullptr ) return;
+    if ( limf == nullptr ) return;
+    // CalcLimiter() normally binds the fields; this path skips it, so bind here.
+    limf->Init();
+    if ( limf->limiter == nullptr ) return;
     for ( int iEqu = 0; iEqu < limf->nEqu; ++ iEqu )
     {
         RealField & field = ( * limf->limiter )[ iEqu ];
