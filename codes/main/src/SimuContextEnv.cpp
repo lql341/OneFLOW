@@ -26,6 +26,7 @@ License
 #include "SimulationCommandLine.h"
 #include "SimuCaseLifecycle.h"
 #include "SimuContextParameter.h"
+#include "SimuContextCaseState.h"
 #include "SimuTask.h"
 #include "Prj.h"
 #include "ParaFile.h"
@@ -38,8 +39,6 @@ License
 #include "SolverNameList.h"
 #include "Zone.h"
 #include "FieldManager.h"
-#include "DataBase.h"
-#include "DataBaseType.h"
 #include "HeatFlux.h"
 #include "NsCom.h"
 #include "NsSolver.h"
@@ -47,11 +46,9 @@ License
 #include "TurbSolver.h"
 #include "TurbCom.h"
 #include "Tolerance.h"
-#include "LogFile.h"
 #include "ActionState.h"
 #include "Iteration.h"
 #include <iostream>
-#include <exception>
 #include <filesystem>
 #include <stdexcept>
 
@@ -120,10 +117,7 @@ void SimuContext::TeardownCase()
         [&]() { ActionState::Reset(); },
         [&]() { Iteration::Reset(); },
         [&]() { FieldManagerRegistry::FreeFieldManager(); },
-        [&]() { RequireGlobalDataBase().RequireDataField().Clear(); },
-        [&]() { RequireGlobalDataBase().RequireDataPara().Clear(); },
-        [&]() { logFile.ClearCaseDir(); },
-        [&]() { Prj::ClearPrjBaseDir(); },
+        [&]() { SimuContextDetail::ClearCaseConfigurationState(); },
         [&]()
         {
             // Reset context-owned state even when an earlier release failed.
@@ -142,33 +136,32 @@ void SimuContext::FinalizeEnvironment()
         return;
     }
 
-    std::exception_ptr finalizeFailure;
-    try
-    {
-        ONEFLOW::FinalizeAccelRuntime();
-    }
-    catch ( ... )
-    {
-        finalizeFailure = std::current_exception();
-    }
+    // Commit the lifecycle transition only after every release operation
+    // has completed. If a release fails, the state remains Active so callers
+    // do not observe a false successful-finalization state.
+    // Context-owned backend states may contain device allocations. Release
+    // them while the backend is still initialized, even when callers finalize
+    // the process directly without first running TeardownCase().
+    // These releases are independent, but both depend on the accelerator
+    // runtime remaining alive. Attempt both before crossing the runtime boundary.
+#ifdef ONEFLOW_ENABLE_HIP
+    SimuCaseLifecycleDetail::ExecuteAllCleanupSteps(
+        [&]() { ClearAccelStates(); },
+        []() { HipFluxBackend::ReleaseShared(); } );
+#else
+    SimuCaseLifecycleDetail::ExecuteAllCleanupSteps(
+        [&]() { ClearAccelStates(); } );
+#endif
 
-    try
-    {
-        HXFinalize();
-    }
-    catch ( ... )
-    {
-        if ( ! finalizeFailure )
-        {
-            finalizeFailure = std::current_exception();
-        }
-    }
+    // Runtime finalization is a dependency boundary, not an independent
+    // cleanup step. If it fails, keep the parallel environment alive so the
+    // caller can diagnose the backend failure and retry finalization.
+    ONEFLOW::FinalizeAccelRuntime();
 
+    // The parallel runtime may be finalized only after accelerator shutdown
+    // has completed successfully.
+    HXFinalize();
     processLifecycle_.MarkFinalized();
-    if ( finalizeFailure )
-    {
-        std::rethrow_exception( finalizeFailure );
-    }
 }
 
 void SimuContext::TeardownEnvironment()

@@ -31,6 +31,7 @@ Numerical analysis is a branch of mathematics that solves continuous problems us
    turb_scalar_upwind
    turb_spectrum
    sa_closure
+   sa_source
    sa_eddy_viscosity
    sst_k_source
    sst_f1_blending
@@ -44,3 +45,9 @@ Numerical analysis is a branch of mathematics that solves continuous problems us
    sst_update_floors
    turb_farfield_bc
    sa_under_relax
+   lusgs_viscous_spectrum
+
+   viscous_spectral_radius
+   viscous_spectral_radius_model1
+   viscous_spectral_radius_model2
+   viscous_spectral_radius_model3

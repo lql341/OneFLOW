@@ -41,20 +41,23 @@ def run_host(
     task = registry.load(task_id)
     log_file = Path(task.log_file)
     stop_path = stop_file or (registry.records_directory / f"{task_id}.stop")
-    task = replace(
-        task,
-        host_pid=os.getpid(),
-        process_pid=None,
-        status="running",
-        updated_at=utc_now(),
-        message="Background host started.",
+    task = registry.update(
+        task_id,
+        lambda current: replace(
+            current,
+            host_pid=os.getpid(),
+            process_pid=None,
+            status=("stopping" if current.status == "stopping" else "running"),
+            updated_at=utc_now(),
+            message="Background host started.",
+        ),
     )
-    registry.save(task)
     _write_log(log_file, f"Background host PID: {os.getpid()}")
     process = None
     final_status = "failed"
     final_message = "Background host failed."
     return_code = 1
+    stop_requested = False
     try:
         with log_file.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write("Command: " + json.dumps(command, ensure_ascii=True) + "\n")
@@ -73,47 +76,61 @@ def run_host(
                     )
                 } if os.name == "nt" else {"start_new_session": True}),
             )
-            task = replace(
-                task,
-                process_pid=process.pid,
-                updated_at=utc_now(),
-                message="OneFLOW process started.",
+            task = registry.update(
+                task_id,
+                lambda current: replace(
+                    current,
+                    process_pid=process.pid,
+                    updated_at=utc_now(),
+                    message="OneFLOW process started.",
+                ),
             )
-            registry.save(task)
             while process.poll() is None:
                 if stop_path.exists():
-                    task = replace(
-                        task,
-                        status="stopping",
-                        updated_at=utc_now(),
-                        message="Stop requested.",
-                    )
-                    registry.save(task)
-                    try:
-                        if os.name == "nt":
-                            subprocess.run(
-                                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                                stdin=subprocess.DEVNULL,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
+                    task = registry.update(
+                        task_id,
+                        lambda current: (
+                            replace(
+                                current,
+                                status="stopping",
+                                updated_at=utc_now(),
+                                message="Stop requested.",
                             )
-                        else:
-                            os.killpg(process.pid, signal.SIGTERM)
-                        process.wait(timeout=5)
-                    except (OSError, subprocess.TimeoutExpired):
+                            if current.status in {"starting", "running", "stopping"}
+                            else current
+                        ),
+                    )
+                    if task.status not in {"starting", "running", "stopping"}:
+                        stop_path.unlink(missing_ok=True)
+                        continue
+                    stop_requested = True
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    else:
                         try:
-                            if os.name == "nt":
-                                process.kill()
-                            else:
-                                os.killpg(process.pid, signal.SIGKILL)
-                        except OSError:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
                             pass
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        if os.name == "nt":
+                            process.kill()
+                        else:
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
                         process.wait()
                     break
                 time.sleep(poll_interval)
             return_code = process.wait()
-        stop_requested = stop_path.exists() or task.status == "stopping"
         if stop_path.exists():
             stop_path.unlink()
         if stop_requested:
@@ -126,20 +143,25 @@ def run_host(
             final_status = "failed"
             final_message = f"Process exited with code {return_code}."
     except Exception as error:
-        final_message = f"Background host error: {error}"
-        _write_log(log_file, final_message)
+        _write_log(log_file, f"Background host error: {error}")
         if process is not None and process.poll() is None:
             process.kill()
             process.wait()
+        if stop_requested and process is not None and process.poll() is not None:
+            final_status = "stopped"
+            final_message = "Process stopped by request."
+        else:
+            final_status = "failed"
+            final_message = f"Background host error: {error}"
     finally:
-        current = registry.load(task_id)
-        registry.save(
-            replace(
+        registry.update(
+            task_id,
+            lambda current: replace(
                 current,
                 status=final_status,
                 updated_at=utc_now(),
                 message=final_message,
-            )
+            ),
         )
         _write_log(log_file, f"Final status: {final_status} ({final_message})")
     return return_code

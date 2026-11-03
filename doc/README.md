@@ -55,7 +55,23 @@
 | `reports/architecture/oneflow-euler-optimization-plan.md` | `plans/`（同名） |
 | `reports/architecture/<other>.md`（设计说明/快照） | `plans/`（同名） |
 
+
+For a broad architecture review, read [system architecture review](source/architecture_review.rst) first, then the [runtime architecture guide](source/runtime_architecture.rst). Continue with [mesh architecture](source/mesh_architecture.rst), [grid topology](source/grid_topology.rst), or [Workbench architecture](source/workbench_architecture.rst), depending on the task. The review page is a checklist; it does not claim that every general capability discussed there has already been implemented.
+
+For the normative [continuous evolution and scientific verification development specification](AI_TASK_TEMPLATE.md), use the English version or its [Chinese counterpart](AI_TASK_TEMPLATE_zh_CN.md). It defines single-workstream prioritization, implementation constraints, scientific verification and validation, references, reproducible plots, and delivery evidence.
+
+For a quick continuation of ongoing development, read [AI project context and handoff](AI_CONTEXT.md). It summarizes branch constraints, recently inspected implementation baselines, confirmed behavior, open verification gaps, and suggested next steps. It is a navigation aid, not a substitute for source inspection and verification against the target commit.
+
+For the initial inventory and planned consolidation of existing documents, see the [documentation consolidation plan](plans/oneflow-documentation-consolidation-plan.md). The plan records intended ownership and sequencing; it does not imply that every listed migration is complete.
+
+New engineering documents belong under `doc/`; do not grow the top-level `docs/` directory into a second documentation system. Follow the [document naming rules](DOCUMENT_NAMING.md) for new files in `architecture/`, `plans/`, `handoff/`, `runbooks/`, `evidence/`, `reports/`, and `_drafts/`. Existing files should not be renamed in bulk because historical links may depend on their paths.
+
+## Build the HTML documentation
+
+From the repository root:
+
 ## 4. 构建 HTML 文档
+
 
 ```bash
 cd doc

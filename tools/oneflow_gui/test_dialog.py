@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Qt
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
 from .executable_discovery import executable_candidates
 from .case_repository import load_cases
 from .models import CaseDefinition
+from .process_control import process_group_options, terminate_and_reap, terminate_process_tree
 from .runner import create_run_id
 from .user_data_paths import UserDataPaths
 from .task_types import TaskRunResult, TaskRunStatus, TaskType, task_definition
@@ -34,9 +36,19 @@ from .test_runner import (
     TestCommand,
     available_suites,
     build_cmake_command,
-    build_default_test_commands,
+    build_ctest_test_commands,
+    build_python_test_commands,
     build_regression_command,
+    format_command_arguments,
+    format_final_test_status,
+    oneflow_executable_path,
     stage_regression_tests,
+    summarize_test_output,
+)
+from .test_diagnostics import format_failure_summary, parse_test_diagnostics
+from .execution_capture import (
+    capture_python_unittest_execution,
+    is_python_unittest_command,
 )
 
 
@@ -46,10 +58,12 @@ class TestCommandWorker(QThread):
     output_line = Signal(str)
     completed = Signal(bool, str)
     command_completed = Signal(object)
+    diagnostics = Signal(object)
 
-    def __init__(self, commands: list[TestCommand]) -> None:
+    def __init__(self, commands: list[TestCommand], *, build_config: str | None = None) -> None:
         super().__init__()
         self._commands = commands
+        self._build_config = build_config
         self._cancel = threading.Event()
         self._process: subprocess.Popen[str] | None = None
         self._process_lock = threading.Lock()
@@ -58,12 +72,16 @@ class TestCommandWorker(QThread):
         self._cancel.set()
         with self._process_lock:
             process = self._process
-        if process is not None and process.poll() is None:
-            process.terminate()
+        if process is not None:
+            terminate_process_tree(process)
 
     def run(self) -> None:
         failed_labels: list[str] = []
+        passed_labels: list[str] = []
+        run_output: list[str] = []
+        failed_diagnostics = []
         for command in self._commands:
+            command_output: list[str] = []
             if self._cancel.is_set():
                 self.command_completed.emit(
                     TaskRunResult(
@@ -77,7 +95,8 @@ class TestCommandWorker(QThread):
                 self.completed.emit(False, "Test run cancelled.")
                 return
             self.output_line.emit(f"\n=== {command.label} ===")
-            self.output_line.emit("$ " + subprocess.list2cmdline(list(command.arguments)))
+            self.output_line.emit("$ " + format_command_arguments(command.arguments))
+            started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
             try:
                 if command.label.startswith("CMake configure"):
                     command.working_directory.mkdir(parents=True, exist_ok=True)
@@ -90,19 +109,29 @@ class TestCommandWorker(QThread):
                     encoding="utf-8",
                     errors="replace",
                     bufsize=1,
+                    **process_group_options(),
                 ) as process:
                     with self._process_lock:
                         self._process = process
-                    if process.stdout is not None:
-                        for line in process.stdout:
-                            self.output_line.emit(line.rstrip("\r\n"))
-                            if self._cancel.is_set() and process.poll() is None:
-                                process.terminate()
-                    return_code = process.wait()
-                    with self._process_lock:
-                        self._process = None
+                    if self._cancel.is_set():
+                        terminate_and_reap(process)
+                    try:
+                        if process.stdout is not None:
+                            for line in process.stdout:
+                                output_line = line.rstrip("\r\n")
+                                command_output.append(output_line)
+                                self.output_line.emit(output_line)
+                                if self._cancel.is_set():
+                                    terminate_and_reap(process)
+                                    break
+                        return_code = process.wait()
+                    finally:
+                        with self._process_lock:
+                            if self._process is process:
+                                self._process = None
             except OSError as error:
                 self.output_line.emit(f"ERROR: {error}")
+                run_output.append(f"ERROR: {error}")
                 self.command_completed.emit(
                     TaskRunResult(
                         task_type=command.task_type,
@@ -113,7 +142,32 @@ class TestCommandWorker(QThread):
                     )
                 )
                 failed_labels.append(command.label)
+                run_output.extend(command_output)
                 break
+            finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if is_python_unittest_command(command):
+                try:
+                    user_paths = UserDataPaths.discover()
+                    record = capture_python_unittest_execution(
+                        command,
+                        repository_root=command.working_directory,
+                        records_path=user_paths.verification_execution_records,
+                        artifact_directory=user_paths.test_run_logs,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        exit_code=return_code,
+                        output_lines=command_output,
+                        cancelled=self._cancel.is_set(),
+                        configuration=self._build_config or "",
+                    )
+                    self.output_line.emit(
+                        f"EXECUTION RECORD: {record.record_id} / {record.outcome}"
+                    )
+                except Exception as error:
+                    self.output_line.emit(
+                        f"WARNING: unable to persist execution evidence: {error}"
+                    )
+            run_output.extend(command_output)
             if self._cancel.is_set():
                 self.command_completed.emit(
                     TaskRunResult(
@@ -127,6 +181,30 @@ class TestCommandWorker(QThread):
                 self.completed.emit(False, "Test run cancelled.")
                 return
             if return_code != 0:
+                configuration = self._build_config
+                for index, argument in enumerate(command.arguments[:-1]):
+                    if argument == "-C":
+                        configuration = command.arguments[index + 1]
+                        break
+                    if argument.startswith("CMAKE_BUILD_TYPE="):
+                        configuration = argument.split("=", 1)[1]
+                framework = "GoogleTest" if "CTest" in command.label else (
+                    "unittest" if "unittest" in command.arguments else ""
+                )
+                if framework:
+                    records = parse_test_diagnostics(
+                        command_output,
+                        task_label=command.label,
+                        framework=framework,
+                        configuration=configuration,
+                        working_directory=command.working_directory,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        exit_code=return_code,
+                    )
+                    if records:
+                        failed_diagnostics.extend(records)
+                        self.diagnostics.emit(records)
                 self.command_completed.emit(
                     TaskRunResult(
                         task_type=command.task_type,
@@ -139,6 +217,7 @@ class TestCommandWorker(QThread):
                 failed_labels.append(command.label)
                 self.output_line.emit(f"FAILED: exit code {return_code}")
                 break
+            passed_labels.append(command.label)
             self.command_completed.emit(
                 TaskRunResult(
                     task_type=command.task_type,
@@ -149,10 +228,26 @@ class TestCommandWorker(QThread):
                 )
             )
             self.output_line.emit("PASSED")
+
+        not_run = len(self._commands) - len(passed_labels) - len(failed_labels)
+        report = [
+            "Test command summary:",
+            f"  Total: {len(self._commands)}",
+            f"  Passed: {len(passed_labels)}",
+            f"  Failed: {len(failed_labels)}",
+            f"  Not run: {not_run}",
+        ]
+        report.extend(
+            summarize_test_output(
+                run_output, include_failed_cases=not failed_diagnostics
+            )
+        )
+        report.extend(format_failure_summary(failed_diagnostics))
         if failed_labels:
-            self.completed.emit(False, "Failed: " + ", ".join(failed_labels))
+            report.insert(1, "  Failed commands: " + ", ".join(failed_labels))
+            self.completed.emit(False, "\n".join(report))
         else:
-            self.completed.emit(True, f"Passed all {len(self._commands)} command(s).")
+            self.completed.emit(True, "\n".join(report))
 
 
 class TestRunnerDialog(QDialog):
@@ -186,13 +281,19 @@ class TestRunnerDialog(QDialog):
             )
         )
 
-        unit_test_task = task_definition(TaskType.UNIT_TESTS)
         regression_task = task_definition(TaskType.CFD_GRID_REGRESSION)
-        self.unit_tests_check = QCheckBox(
-            f"{unit_test_task.title} (CTest and Python tests)"
+        self.ctest_check = QCheckBox("C++ Unit Tests (CTest)")
+        self.ctest_check.setToolTip(
+            "Run C++ GoogleTest targets registered in the configured CMake build tree."
         )
-        self.unit_tests_check.setChecked(True)
-        layout.addWidget(self.unit_tests_check)
+        self.ctest_check.setChecked(True)
+        layout.addWidget(self.ctest_check)
+        self.python_tests_check = QCheckBox("Python Unit Tests (unittest)")
+        self.python_tests_check.setToolTip(
+            "Run the explicitly registered Python unittest modules with the selected Python interpreter."
+        )
+        self.python_tests_check.setChecked(True)
+        layout.addWidget(self.python_tests_check)
 
         self.regression_check = QCheckBox(
             f"Optional {regression_task.title}"
@@ -283,13 +384,21 @@ class TestRunnerDialog(QDialog):
         if self._case_worker is not None and self._case_worker.isRunning():
             return
         commands: list[TestCommand] = []
-        if self.unit_tests_check.isChecked():
-            commands.extend(
-                build_default_test_commands(
-                    self._repository_root,
-                    build_config=self._build_config,
-                )
+        if self.ctest_check.isChecked():
+            ctest_commands = build_ctest_test_commands(
+                self._repository_root,
+                build_config=self._build_config,
             )
+            if not ctest_commands:
+                QMessageBox.warning(
+                    self,
+                    "CTest is not configured",
+                    "No build/CTestTestfile.cmake was found. Configure the CMake build tree first.",
+                )
+                return
+            commands.extend(ctest_commands)
+        if self.python_tests_check.isChecked():
+            commands.extend(build_python_test_commands(self._repository_root))
         if self.regression_check.isChecked():
             executable = self.executable_combo.currentText().strip()
             suite_name = self.suite_combo.currentText().strip()
@@ -301,12 +410,9 @@ class TestRunnerDialog(QDialog):
                     UserDataPaths.discover().cfd_regression_workspace,
                 )
                 executable_path = Path(executable).expanduser().resolve()
-                expected_build_executable = (
-                    self._repository_root
-                    / "build"
-                    / "bin"
-                    / self._build_config
-                    / "OneFLOW.exe"
+                expected_build_executable = oneflow_executable_path(
+                    self._repository_root,
+                    self._build_config,
                 ).resolve()
                 executable_will_be_built = (
                     executable_path == expected_build_executable
@@ -334,7 +440,7 @@ class TestRunnerDialog(QDialog):
         if not commands and not run_database:
             QMessageBox.information(
                 self, "No tests selected",
-                "Select unit tests, CFD regression, or Development Tests.",
+                "Select CTest, Python Unit Tests, CFD regression, or Development Tests.",
             )
             return
 
@@ -359,7 +465,7 @@ class TestRunnerDialog(QDialog):
         if not executable or not Path(executable).expanduser().is_file():
             QMessageBox.warning(
                 self, "Executable required",
-                "Select a valid OneFLOW.exe before running Development Tests.",
+                "Select a valid OneFLOW executable before running Development Tests.",
             )
             return
         from .main_window import RunQueueWorker
@@ -407,10 +513,11 @@ class TestRunnerDialog(QDialog):
         self.build_button.setEnabled(False)
         self.rebuild_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self._worker = TestCommandWorker(commands)
+        self._worker = TestCommandWorker(commands, build_config=self._build_config)
         self._worker.output_line.connect(self.log_view.appendPlainText)
         self._worker.completed.connect(self._completed)
         self._worker.command_completed.connect(self._command_completed)
+        self._worker.diagnostics.connect(self._show_diagnostics)
         self._worker.finished.connect(self._worker_finished)
         self._worker.start()
 
@@ -431,12 +538,36 @@ class TestRunnerDialog(QDialog):
             f"/ exit={result.return_code} / cwd={result.execution_directory}"
         )
 
+    def _show_diagnostics(self, diagnostics) -> None:
+        for item in diagnostics:
+            location = item.source_file or "unknown"
+            if item.source_line is not None:
+                location += f":{item.source_line}"
+            cause = item.exception_type or "unknown"
+            if item.message:
+                cause += f": {item.message}"
+            self.log_view.appendPlainText(
+                "\nSTRUCTURED FAILURE"
+                f"\n  Task: {item.task_label}"
+                f"\n  Framework: {item.framework}"
+                f"\n  Test: {item.test_id or 'unknown'}"
+                f"\n  Location: {location}"
+                f"\n  Cause: {cause}"
+                f"\n  Configuration: {item.configuration or 'unknown'}"
+                f"\n  Working directory: {item.working_directory or 'unknown'}"
+                f"\n  Started: {item.started_at or 'unknown'}"
+                f"\n  Finished: {item.finished_at or 'unknown'}"
+                f"\n  Exit code: {item.exit_code}"
+                f"\n  Contract links: {', '.join(item.contract_ids) or 'not resolved'}"
+                f"\n  Verification impact: {item.verification_impact}"
+            )
+
     def _completed(self, passed: bool, message: str) -> None:
         self.log_view.appendPlainText(f"\n{message}")
         if self._run_database_after_commands and passed:
             self.log_view.appendPlainText("Unit/regression commands passed; starting Development Tests.")
             return
-        self.log_view.appendPlainText("FINAL STATUS: PASS" if passed else "FINAL STATUS: FAIL")
+        self.log_view.appendPlainText(format_final_test_status(passed, message))
 
     def _worker_finished(self) -> None:
         self.run_button.setEnabled(True)

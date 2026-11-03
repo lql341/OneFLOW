@@ -35,6 +35,10 @@ void RoeAverageState(
     Real & densityMid, Real & uMid, Real & vMid, Real & wMid,
     Real & pMid, Real & hMid, Real & gamaMid );
 
+// @doc-algorithm eos
+// @doc-stage total-enthalpy
+// @doc-pure
+// @doc-formula H = h + 0.5*|u|^2
 Real TotalEnthalpy( Real internalEnthalpy, Real speedSquared );
 
 // @doc-algorithm roe-average
@@ -43,6 +47,13 @@ Real TotalEnthalpy( Real internalEnthalpy, Real speedSquared );
 // @doc-formula p = rho * (H - |u|^2/2) * (gamma - 1) / gamma
 // Reconstruct the LUSGS face pressure from the Roe-averaged total enthalpy.
 Real RoePressureFromTotalEnthalpy(
+    Real density, Real totalEnthalpy, Real speedSquared, Real gama );
+
+// Select the face-pressure closure used by compressible unstructured LUSGS.
+// Mode 0 preserves the legacy total-enthalpy closure; mode 1 keeps the
+// Roe-weighted static pressure returned by RoeAverageState.
+Real LusgsFacePressureFromMode(
+    int mode, Real roeWeightedPressure,
     Real density, Real totalEnthalpy, Real speedSquared, Real gama );
 
 Real IdealGasSoundSpeed(

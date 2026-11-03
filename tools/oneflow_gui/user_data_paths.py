@@ -93,5 +93,30 @@ class UserDataPaths:
         return self.root / "cfd-regression"
 
     @property
+    def contract_workbench(self) -> Path:
+        """Contract Workbench cache outside the source repository."""
+        return self.root / "contract-workbench"
+
+    @property
+    def contract_workbench_preview(self) -> Path:
+        """Rendered formula/curve PNG previews (writable user cache)."""
+        return self.contract_workbench / "preview"
+
+    @property
     def logs(self) -> Path:
         return self.root / "logs"
+
+    @property
+    def test_runs(self) -> Path:
+        """Root for durable test-run artifacts, separate from the source tree."""
+        return self.root / "test-runs"
+
+    @property
+    def test_run_logs(self) -> Path:
+        """Captured stdout/stderr from GUI-launched test commands."""
+        return self.test_runs / "logs"
+
+    @property
+    def verification_execution_records(self) -> Path:
+        """Append-only verification evidence, separate from workflow task history."""
+        return self.root / "verification" / "execution-records.jsonl"
