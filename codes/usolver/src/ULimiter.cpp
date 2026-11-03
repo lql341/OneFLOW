@@ -357,6 +357,16 @@ void Limiter::SetInitValue()
     }
 }
 
+void Limiter::FillNeutralLimiterField()
+{
+    if ( limf == nullptr || limf->limiter == nullptr ) return;
+    for ( int iEqu = 0; iEqu < limf->nEqu; ++ iEqu )
+    {
+        RealField & field = ( * limf->limiter )[ iEqu ];
+        std::fill( field.begin(), field.end(), one );
+    }
+}
+
 void Limiter::CalcLimiterScalar()
 {
     // SetInitValue() has already filled the complete cell field with one.

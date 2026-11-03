@@ -316,7 +316,13 @@ void UNsInvFlux::CalcInvFace()
     // the factor.
     const bool deviceLimiterOwnsFactor =
         ctrl.ilim == ILMT_BARTH && this->UseHipDeviceReconstruction();
-    if ( ! deviceLimiterOwnsFactor )
+    if ( deviceLimiterOwnsFactor )
+    {
+        // Host readers (restart/visualization dumps, the interface storage) still
+        // expect an initialised field; one fill is enough, no face loop.
+        limiter->FillNeutralLimiterField();
+    }
+    else
     {
         ScopedStageTimer timer( "limiter" );
         this->CalcLimiter();
