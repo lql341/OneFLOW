@@ -309,7 +309,16 @@ void UNsInvFlux::CalcInvFace()
         else
             uns_grad.CalcGrad();
     }
-    { ScopedStageTimer timer( "limiter" );
+    // The device reconstruction computes the Barth factor from the resident
+    // gradient. Running the host limiter as well repeated the whole face loop on
+    // the host every stage for nothing (measured: 270 ms per call, which turned
+    // an 88x device speedup into 2.9x), so skip it exactly when the device owns
+    // the factor.
+    const bool deviceLimiterOwnsFactor =
+        ctrl.ilim == ILMT_BARTH && this->UseHipDeviceReconstruction();
+    if ( ! deviceLimiterOwnsFactor )
+    {
+        ScopedStageTimer timer( "limiter" );
         this->CalcLimiter();
     }
     if ( this->UseHipDeviceReconstruction() )
