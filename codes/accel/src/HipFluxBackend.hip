@@ -1170,36 +1170,30 @@ __global__ void BarthLimiterKernel(
     int nCells, int totalCells, int nFaces, int nEquations,
     Real * phiField )
 {
-    const int index = blockIdx.x * blockDim.x + threadIdx.x;
-    const int total = totalCells * nEquations;
-    if ( index >= total ) return;
-    const int cell = index % totalCells;
-    const int eq = index / totalCells;
+    // One thread per cell with all equations in registers: the face adjacency is
+    // walked once, not once per equation. The per-(cell,equation) form traversed
+    // the connectivity list nEquations times and made the stage ~45x slower than
+    // the unlimited path.
+    const int cell = blockIdx.x * blockDim.x + threadIdx.x;
+    if ( cell >= nCells ) return;
 
-    // Ghost cells keep the neutral factor: the host initialises the whole field
-    // to one and only physical cells are tightened by its face loop, so a ghost
-    // that no physical cell tightens stays at one.
-    if ( cell >= nCells )
+    Real lo[ 5 ];
+    Real hi[ 5 ];
+    for ( int eq = 0; eq < nEquations; ++ eq )
     {
-        phiField[ eq * totalCells + cell ] = 1.0;
-        return;
+        lo[ eq ] = q[ eq * totalCells + cell ];
+        hi[ eq ] = lo[ eq ];
     }
 
-    const int qBase = eq * totalCells;
-    const int gradBase = eq * 3 * totalCells;
-    const Real own = q[ qBase + cell ];
+    const int begin = faceOffsets[ cell ];
+    const int end = faceOffsets[ cell + 1 ];
 
-    // Pass 1: neighbour range, expressed as offsets from the cell value.
-    Real lo = own;
-    Real hi = own;
-    for ( int k = faceOffsets[ cell ]; k < faceOffsets[ cell + 1 ]; ++ k )
+    for ( int k = begin; k < end; ++ k )
     {
         const int face = faceIds[ k ];
         const bool isLeft = leftCell[ face ] == cell;
         if ( isLeft && boundaryMask != nullptr && boundaryMask[ face ] != 0 )
         {
-            // Ordinary boundary faces do not contribute to the range; interface
-            // faces contribute the remote value (host rule).
             const ReconstructionBoundaryOperation op =
                 boundaryOperation != nullptr
                 ? boundaryOperation[ face ]
@@ -1207,35 +1201,48 @@ __global__ void BarthLimiterKernel(
             if ( op != ReconstructionBoundaryOperation::Preserve ) continue;
         }
         const int neighbour = isLeft ? rightCell[ face ] : leftCell[ face ];
-        const Real value = q[ qBase + neighbour ];
-        lo = value < lo ? value : lo;
-        hi = value > hi ? value : hi;
+        for ( int eq = 0; eq < nEquations; ++ eq )
+        {
+            const Real value = q[ eq * totalCells + neighbour ];
+            lo[ eq ] = value < lo[ eq ] ? value : lo[ eq ];
+            hi[ eq ] = value > hi[ eq ] ? value : hi[ eq ];
+        }
     }
-    const Real minv = lo - own;
-    const Real maxv = hi - own;
 
-    // Pass 2: tighten over this cell's faces.
-    Real phi = 1.0;
-    for ( int k = faceOffsets[ cell ]; k < faceOffsets[ cell + 1 ]; ++ k )
+    Real phi[ 5 ];
+    for ( int eq = 0; eq < nEquations; ++ eq ) phi[ eq ] = 1.0;
+
+    const Real cellX = xCell[ cell ];
+    const Real cellY = yCell[ cell ];
+    const Real cellZ = zCell[ cell ];
+    for ( int k = begin; k < end; ++ k )
     {
         const int face = faceIds[ k ];
         const bool isLeft = leftCell[ face ] == cell;
-        const Real dx = xFace[ face ] - xCell[ cell ];
-        const Real dy = yFace[ face ] - yCell[ cell ];
-        const Real dz = zFace[ face ] - zCell[ cell ];
-        const Real factor = DeviceBarthFactor(
-            gradient[ gradBase + cell ],
-            gradient[ gradBase + totalCells + cell ],
-            gradient[ gradBase + 2 * totalCells + cell ],
-            dx, dy, dz,
-            xNormal ? xNormal[ face ] : 1.0,
-            yNormal ? yNormal[ face ] : 0.0,
-            zNormal ? zNormal[ face ] : 0.0,
-            minv, maxv,
-            isLeft ? 1.0 : -1.0 );
-        phi = factor < phi ? factor : phi;
+        const Real dx = xFace[ face ] - cellX;
+        const Real dy = yFace[ face ] - cellY;
+        const Real dz = zFace[ face ] - cellZ;
+        const Real nx = xNormal ? xNormal[ face ] : 1.0;
+        const Real ny = yNormal ? yNormal[ face ] : 0.0;
+        const Real nz = zNormal ? zNormal[ face ] : 0.0;
+        const Real sign = isLeft ? 1.0 : -1.0;
+        for ( int eq = 0; eq < nEquations; ++ eq )
+        {
+            const Real minv = lo[ eq ] - q[ eq * totalCells + cell ];
+            const Real maxv = hi[ eq ] - q[ eq * totalCells + cell ];
+            const Real factor = DeviceBarthFactor(
+                gradient[ eq * 3 * totalCells + cell ],
+                gradient[ eq * 3 * totalCells + totalCells + cell ],
+                gradient[ eq * 3 * totalCells + 2 * totalCells + cell ],
+                dx, dy, dz, nx, ny, nz, minv, maxv, sign );
+            phi[ eq ] = factor < phi[ eq ] ? factor : phi[ eq ];
+        }
     }
-    phiField[ qBase + cell ] = phi;
+
+    for ( int eq = 0; eq < nEquations; ++ eq )
+        phiField[ eq * totalCells + cell ] = phi[ eq ];
+    // Ghost factor: the host initialises the whole field to one and only
+    // physical cells are tightened.
 }
 
 __global__ void ReconstructFaceEulerKernel(
@@ -2773,11 +2780,10 @@ void HipFluxBackend::ReconstructFaceValues(
         const std::size_t limiterValues =
             static_cast< std::size_t >( view.nEquations ) * totalCells;
         storage->limiter.Resize( limiterValues );
-        const int limiterBlock = 256;
+        const int limiterBlock = 128;
         hipLaunchKernelGGL(
             BarthLimiterKernel,
-            dim3( ( static_cast< int >( limiterValues ) + limiterBlock - 1 )
-                  / limiterBlock ),
+            dim3( ( view.nCells + limiterBlock - 1 ) / limiterBlock ),
             dim3( limiterBlock ), 0, 0,
             storage->cellState.Data(), storage->cellGradient.Data(),
             storage->xFaceCenter.Data(), storage->yFaceCenter.Data(),
