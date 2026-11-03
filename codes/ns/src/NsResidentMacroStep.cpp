@@ -15,6 +15,7 @@ License
 #include "Ctrl.h"
 #include "GridState.h"
 #include "Multigrid.h"
+#include "HipProductionPolicy.h"
 #include "ResidualBasePolicy.h"
 #include "SolverDef.h"
 #include "SolverState.h"
@@ -82,7 +83,7 @@ void NsResidentMacroStep()
         // task dispatch per stage (not four), because the exchange itself is
         // owned by the interface task and its lag must stay exactly as in the
         // validated task path.
-        if ( ZoneState::nZones > 1 )
+        if ( ZoneState::nZones > 1 && ! DiagNoCommunication() )
         {
             SingleSolverSingleGridTask( kUpdateInterfaceDataTaskName );
         }

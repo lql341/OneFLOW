@@ -241,6 +241,17 @@ inline bool HipSkipHostRkSlotCopy(
         && steadyStrategy;
 }
 
+// Measurement-only probe: skip the inter-zone interface exchange entirely so
+// the per-step cost of communication can be bounded. The flow is then PHYSICALLY
+// WRONG (each zone keeps stale ghosts), so it must never be used for accuracy or
+// performance claims; it only answers "how much would removing communication
+// save". Enabled solely by ONEFLOW_DIAG_NO_COMM=1.
+inline bool DiagNoCommunication()
+{
+    const char * value = CachedEnv( "ONEFLOW_DIAG_NO_COMM" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
 // Host history levels (q1/q2 and their residual counterparts) exist for the
 // dual-time scheme and for the restart stream. With the device-authoritative
 // explicit chain neither reads them during stepping: dual time is excluded by

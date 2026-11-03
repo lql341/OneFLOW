@@ -38,6 +38,7 @@ License
 #include "ZoneState.h"
 #include "NsCom.h"
 #include "FieldWrap.h"
+#include "HipProductionPolicy.h"
 #include "NsResidentMacroStep.h"
 #include "DataBase.h"
 #include "Grid.h"
@@ -315,7 +316,7 @@ void TimeIntegral::RungeKutta()
             EmitEulerStageDiagnostic( iStage, "UPDATE_FLOWFIELD" );
             ONEFLOW::SingleSolverSingleGridTask( idCalcBoundary );
             EmitEulerStageDiagnostic( iStage, "CALC_BOUNDARY" );
-            if ( ZoneState::nZones > 1 )
+            if ( ZoneState::nZones > 1 && ! DiagNoCommunication() )
             {
                 ONEFLOW::SingleSolverSingleGridTask(
                     kUpdateInterfaceDataTaskName );
