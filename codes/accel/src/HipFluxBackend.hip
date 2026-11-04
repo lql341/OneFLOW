@@ -4059,7 +4059,7 @@ void HipFluxBackend::MirrorGradientCellsToHost(
     }
 }
 
-void HipFluxBackend::PackGradientFacesToHost(
+bool HipFluxBackend::PackGradientFacesToHost(
     const void * cacheKey, const int * cellIds, int nFaces, int nEquations,
     Real * hostPacked )
 {
@@ -4086,7 +4086,10 @@ void HipFluxBackend::PackGradientFacesToHost(
          || storage.cellGradient.Size()
              < static_cast< std::size_t >( totalCells ) * 3 * nEquations )
     {
-        throw std::logic_error( "HIP gradient face pack has no resident gradient" );
+        // No resident gradient for this zone yet: the caller falls back to the
+        // host mirror. Happens on the first step and for a zone that this rank
+        // has not advanced yet (multiple zones per rank).
+        return false;
     }
     const int valueCount = nFaces * 3 * nEquations;
     storage.gradientPackIds.CopyFromHost( cellIds, nFaces );
@@ -4104,6 +4107,7 @@ void HipFluxBackend::PackGradientFacesToHost(
     // waits for the pack kernel.  An explicit device synchronize here only
     // serialized the pipeline once more per interface ghost level and stage.
     storage.gradientPackValues.CopyToHost( hostPacked, valueCount );
+    return true;
 }
 
 void HipFluxBackend::UploadGradientFacesToDevice(

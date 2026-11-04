@@ -181,9 +181,23 @@ void PackResidentGradientToInterface( UnsGrid * grid )
             grid->GetFaceTopo().GetSId( iFace, ghostId + 1, iCell );
             endpointCells[ iFace ] = iCell;
         }
-        HipFluxBackend::Shared().PackGradientFacesToHost(
-            grid, endpointCells.data(), nIFaces, nEqu,
-            packed.data() );
+        const bool packedOnDevice =
+            HipFluxBackend::Shared().PackGradientFacesToHost(
+                grid, endpointCells.data(), nIFaces, nEqu,
+                packed.data() );
+        if ( ! packedOnDevice )
+        {
+            // No resident gradient for this zone yet (first step, or a zone this
+            // rank has not advanced). The host mirror is then the authoritative
+            // state, so pack all ghost levels from it, exactly like the host
+            // path, and stop walking the device rounds.
+            for ( int component = 0; component < 3; ++ component )
+            {
+                ONEFLOW::UploadInterfaceValue(
+                    grid, fields[ component ], names[ component ], nEqu );
+            }
+            return;
+        }
         UploadInterfaceValuePacked(
             grid, fields, names, 3, nEqu, ghostId,
             packed.data() );
