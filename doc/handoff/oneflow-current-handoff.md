@@ -12,8 +12,9 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是 `A2`
-   （每个 stage 把 `q` 与梯度合成一趟界面交换）。`A1` 已有同节点 paired 证据。
+2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是**定位每步 8.9 ms 的固定基数**
+   （关通信、`rk_stage=1`、8 rank/1 DCU 下仍存在）。`A1` 已收口在 15.6 ms/step，
+   Phase A 剩下的三个方向（A2/A3/A4）都受这个基数限制，先测清再动手。
 3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，构建统一走
    `scripts/build-accel.sh`（见 §5.9），不要手拼 CMake 变量。
 4. 收尾：勾选 todo、把证据落进 `evidence/<gate>/<jobid>/`、更新本文 §4（任务指针）与
@@ -75,28 +76,33 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-- **下一步（唯一推荐）**：Phase B 的 `B1`（Roe）单点数值契约，或先把 `F1` 的 HTML 补齐。
-  3D 性能报告已发布（18.5× @8:1 槽），Phase A 收在 15.6 ms/step；剩余的 1.7 ms 到
-  ≤14 只有动界面结构才拿得到，而本会话已验证两条捷径都不可行（见 §5）。
-- **A2 还值不值得做**：如果把每个 stage 的 `q` 与梯度合成一趟界面交换，滞后必须与
-  legacy 逐位对应。实现前先写清“哪条消息带哪些字段、滞后如何对齐”；**不要直接删轮次**。
-- **本轮已落地的性能切片**：残差账本跳过、驻留宏步驱动、策略查询缓存、壁面状态直读；
-  同节点 8:1 槽从 17.3 降到 15.6 ms/step，报告已发布。
-- **A1 已收口**：梯度镜像只在最后 stage、残差基底改设备归零、不搬 host 历史层、
-  不写 host 残差账本、驻留宏步驱动、壁面状态直读。8:1 槽 31.6 → 15.6 ms/step（1.99×）。
-- **测量结论（同轮）**：可视化输出摊薄仅 0.8 ms/step；`update_residuals` 内部已闭合
-  （父项 5.98 = 梯度 2.27 + 重构 1.96 + 通量装配 1.70）；GPU-aware 更慢。
-- **复习**：直接跳 `LOAD_RESIDUALS` 不补基底时，200 步 XB 会拓到 `5.52e-4`；
-  动这个槽位先跑 XB，不要只看时间。同类教训：删 post 界面轮、删 stage 屏障这两个
-  “看起来多余”的东西，一个改离散（XB 拓到 `5.54e-7`），一个完全无收益（同步 22.2 vs
-  不 22.6），都已撤回。先 profile 再动手：`POST_PROCESS` 那种整场拷贝才是真凶。
-- **之后**：`A3` stage 融合 → `A4` HIP `Advance`。
-- **本轮交付（2026-10-31）**：`master` 三端同步到 `638276499`；`dev` 合入并推送
-  `dd1f679c7`；#238（工作区 runbook）已进 upstream；加速器构建收口成可选的后端无关 SDK
-  接口（HIP/DCU + CUDA，见 §5.9）；声速改用一次除法（更准）并据此重生成越界算例的精度
-  基线，**strict 判据不变**、昆山 normal 5/5 + strict 5/5。
-- **决策待定**：完成定义（1M 单卡 vs 100M 多卡）、性能优先还是能力优先、隐式/多重网格
-  是否设备化、zone 映射、CUDA/Kokkos 是否真做 —— 见 plan §6。
+**基线（2026-11-04 同步后）**：`master` = `origin/master` = `upstream/master` = `28c8d259e`；
+`dev` 已合并该 HEAD，无冲突。工作区干净。
+
+**本轮结论一句话**：Phase A 的 A1 收口在 **15.6 ms/step（18.5× @8:1 槽，报告已发布）**，
+但**剩下的时间不在通信、不在 kernel、也不在 cell 数**——而是一个每步约 **8.9 ms**、
+与 cell 数 / zone 数 / rank 数都无关的固定基数。这个基数尚未定位，是下一会话的第一件事。
+
+- **下一步（唯一推荐）**：定位每步固定基数。已知条件：8 zone / 8 rank / 1 DCU、
+  `ONEFLOW_DIAG_NO_COMM=1`、`rk_stage=1` 时仍有 **8.93 ms/step**。
+  做法：同配置开 `ONEFLOW_STAGE_BREAKDOWN_FILE`，比较「总时间 − 各分项之和」：
+  - 差额接近 0 → 基数藏在已计时项（`calc_time_step`、`boundary_*`、`post_*`）
+  - 差额仍有 5–7 ms → 基数在没有计时器的代码里：宏步入口、
+    `SingleSolverSingleGridTask` 派发、并行屏障，三者之一
+  验收：给出「基数 = 哪些段」的清单，各项之和与总时间差 <10%。
+- **之后（按价值）**：`A3` stage 融合（每 stage 3.29 / 1.88 / 1.20 ms 于 1/2/4 卡，
+  3 stage 合计 9.9 / 5.6 / 3.6）→ `B2` 收口（差 `1.113e-06`）→ `B3–B5`（粘性/SA/LU-SGS，
+  B-exit 的前置）→ `A4`。
+- **B1 已完成**：设备侧 Roe 与主机 `NsInvFluxPolicy` 逐项对齐，单面契约测试
+  `oneflow_device_roe_contract_test` 3/3；单 zone 200 步 `res_max_rel = 0.0`。
+  scheme 编号在设备内核与 `ISCHEME_*` 是两套，已用 `DeviceFluxScheme()` 显式映射。
+- **B2 在途**：设备侧 Barth φ 已实现并在设备上计算（`ReconstructionLimiterMode::DeviceCell`），
+  主机侧重复的 `CalcLimiter()` 已删除（它每 stage 要 270 ms，是 ilim=1 慢 13 倍的元凶）。
+  数值仍差 `1.113e-06`（`ilim=0` 是 `0.0` 逐位一致），未过 1e-12 门禁；
+  下一个怀疑点是主机 `LimField::CalcFaceValue` 用 `ckfun` 整体丢弃受限值的语义。
+- **多卡**：8/16/32 rank 对 1/2/4 DCU 已实测（todo §4.8b）。加卡越过 2 张无收益，
+  因为每 rank 计算量减半两次而每 rank halo 只降 35%/20%、全局 halo 涨 2.1 倍。
+  **不要引用“2 卡最优”**：8-zone 两次样本跨度 23%，16 与 32 的差异在噪声内。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
 
@@ -158,31 +164,48 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 15. **GPU-aware MPI 探针通过不代表该用**：同节点两 rank 设备指针直达 `pass=1`，但接到
     真实界面交换后是 48–50 ms/step，host staging 是 15.7。这条 MPI 配置下设备指针路径
     实际更贵。开关是 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI` + `..._CONFIRMED`，保持关闭。
-16. **设备权威 q 下不要在主机算 φ**：主机梯度镜像只覆盖边界相邻单元、且只在有读者的
+16. **每步固定基数与通信无关**：`ONEFLOW_DIAG_NO_COMM=1` 关掉全部界面通信，8 rank/1 DCU
+    仍从 16.5 只降到 14.3（省 2.2 ms）；`rk_stage=1` 时仍要 8.93 ms。所以 A2（合并交换轮次）
+    的理论上限就是 ~2.2 ms，不要按“通信 5 ms”的老估计算。这个基数不随 cell/zone/rank 变，
+    是本阶段唯一未定位的大项。
+17. **别用 2 个样本下结论**：8-zone 同配置两次样本 17.59 / 14.28（跨度 23%），
+    16-zone 与 32-zone 的 7% 差异完全在噪声内。要比较配置，至少 5 个样本或做配对交替。
+18. **`zones % ranks == 0` 只是配置层放行**：`Zone::CheckZoneRankCount` 只查整除，
+    但多 zone/rank 在设备路径曾直接 Fatal（`HIP gradient face pack has no resident gradient`）。
+    已改为“缺 resident gradient 时回退主机镜像”，能跑完；**但实测更慢**
+    （16.45 → 17.62 → 25.24 ms/step 于 1/2/4 zone per rank），因为它不减少 halo、
+    只按 zone 重复每步工作。不要把它当扩展手段。
+19. **`StageProfiler` 的分类表尺寸必须等于初始化项数**：声明 76 槽只填 73 项时，
+    剩余槽 `name == nullptr`，`Record()` 里 `strcmp` 解引用空指针 → 一开分项就段错误；
+    而且**未注册的分类名会被静默丢弃**，据此判断“某段没执行”会得到错误结论（踩过一次）。
+20. **上游把 runtime 源码移进 OBJECT 库后，HIP 要在 `tests/` 作用域再次 enable**：
+    `CMAKE_HIP_LINK_EXECUTABLE` 是目录作用域变量，`codes/` 里 enable 不够，否则
+    generate 阶段报错。修法见 `tests/CMakeLists.txt` 顶部。
+21. **设备权威 q 下不要在主机算 φ**：主机梯度镜像只覆盖边界相邻单元、且只在有读者的
     步更新。用它算限制因子得到的是陈旧值，200 步残差偏 `8.53e-05`（100 步 `3.05e-05`，
     逐 step 累积）。限制器要么整段留 host（回退），要么把 φ 计算搬上设备，不能半搬。
     设备路径现在只在 `ilim=0` 时启用，`UseHipGradient` 里写明了这个原因。
-17. **限制器在面上是"两侧取最小"，不是各用各的**：主机 `LimField::CalcFaceValue`
+22. **限制器在面上是"两侧取最小"，不是各用各的**：主机 `LimField::CalcFaceValue`
     用 `ModifyLimiter(phil, phir) = min(phil, phir)`（`ug.ireconface != 0`），
     并把同一个因子用在两侧重构上。设备若按左右各自的 φ 计算，200 步残差会差
     `8.5e-5`（实测）。改设备限制器时先对齐这条，再谈别的。
-18. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
+23. **post 步的 interface 轮不是冗余**：显式 RK 每个 stage 末尾都交换一次，看起来
     第 4 轮是重复；实测跳掉后 HIP 与 CPU oracle 在 200 步上偏离 `5.54e-7`（aero `4e-5`）。
     它参与 legacy 的一轮 lag。这类“看起来多余”的交换，改之前先跑 XB。
-19. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
+24. **冷启动第一次 1000 步不能当 paired 端点**：同一配置在冷 case 目录上首跑
     `27.0 ms/step`，同一作业第二次 `21.1`。跨作业/跨冷热的绝对值不可比，只有
     交替 interleaved 的 A/B 才算数；报数字要写清是不是热态。
-20. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
+25. **`HIP.MainSolverFluxOneCall` 的 boundary contract 已修，不要再按数值红灯查**：
    旧读数 `reconstruction 8.600e+00` 是第 4 个方程的期望 `bcQ`，设备侧读到 0；
    `stale-op 3.000e+00` 是旧夹具里的 `+3` 偏移，不是失败判据。原因是烟测仍按
    `nFaces` 步长填 `bcQ`，而 `1c470414a` 之后的上传按连续的 `nBoundaryFaces` 步长读。
    夹具必须与生产路径一样：固壁面是 face 数组前缀，`bcQ[equation] ==
    bcQ[0] + equation*nBoundaryFaces`。不满足时后端会在上传前拒绝，不再静默读错方程。
-21. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
+26. **`_attic` 里删构建树要留足时限**：本轮探测留下 ~3.6 GB（多份 `build/` + git
    bundle），`rm -rf` 在 15 min 的作业里被 scheduler 切断。清 `_attic` 用
    `scripts/cleanup.sh` 或单独申请 ≥30 min 的 CPU 作业，不要塞进验证作业尾部。
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
-22. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
+27. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
 
 ## 6. 本文维护规则

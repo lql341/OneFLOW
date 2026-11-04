@@ -31,15 +31,15 @@
 
 | 项 | 值 |
 |---|---|
-| refs | `master` = `origin/master` = `upstream/master` = `638276499`；`dev` = `origin/dev` = `dd1f679c7` |
+| refs | `master` = `origin/master` = `upstream/master` = `28c8d259e`（2026-11-04 同步）；`dev` 已合并该上游 HEAD，含 11 个本地切片提交 |
 | upstream PR | #159 / #160 / #203 / #227 / #238 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
-| 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**31.64 ms/step** |
+| 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**15.59 / 15.59 / 14.83（中位 15.59）ms/step**，对 8 核 CPU `288.20` → **18.5×**（报告 `doc/reports/performance/oneflow-3d-euler-performance-current.*`）；历史点 31.64（2026-10-25，不可当 A 侧） |
 | 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（上一轮证据，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`；本轮未重跑）；`HIP.MainSolverFluxOneCall` 在 1 DCU 上 PASS；全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
-| 已知红灯 | 确定性 DCU 红灯已消除。`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离） |
-| 能力边界 | `NS_SOLVER` / 5 方程 / Lax–Friedrichs / `ilim=0` / `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / 1 rank 1 zone / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast |
-| 尚未覆盖 | limiter、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；3D 尚无正式性能报告 |
+| 已知红灯 | 确定性 DCU 红灯已消除。`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离）。限制器设备化的数值偏差 `1.113e-06` 未过门禁（B2 在途，不是红灯而是未完成） |
+| 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 现可通过配置检查且能跑完，但更慢**（§4.1 A1.8），不建议使用 |
+| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；多卡实测显示加卡越过 2 张无收益（§4.8b） |
 
 ### 1.1 工作环境与固定路径（不要另建目录）
 
@@ -107,15 +107,17 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.1 Phase A — 3D 设备驻留执行（1/4）
 
-- [x] **A1 固定开销**（原 `F7.1`/`F7.2` 另加三项死拷贝；同节点 29.9 → 26.7 → 21.0 → 18.5 → 17.3 ms/step）
+- [x] **A1 固定开销**（原 `F7.1`/`F7.2` 另加三项死拷贝；同节点 29.9 → 26.7 → 21.0 → 18.5 → 17.3 → **15.6** ms/step；F1 报告已发布）
   - [x] A1.1 梯度主机镜像只在最后一个 RK 阶段做。气动力与 Cp 在步末才读，中间 stage 的镜像没人看。同节点 paired 每 stage 29.703/30.017 → 最后 stage 26.660/26.779 ms/step（−10.5%）；单 rank `gradient_mirror` 3.20 → 0.93。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage
   - [x] A1.2 RK 基线状态与残差基底不再从主机搬。第一次只删 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 写入、没补设备侧基线，残差在上一 stage 上继续叠加，200 步跨后端拓到 `5.52e-4`；把“不填 host 槽位”和“设备残差归零”绑成同一个谓词（`DeviceOwnsExplicitRkBookkeeping()`）后对齐。paired 26.91 → 20.97 ms/step（−22.1%）。多重网格、粗网格、双时间、粘性仍填槽。`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0` 恢复
   - [x] A1.3 设备权威路径不再搬 host 历史层。`UPDATE_UNSTEADY_FLOW` 每步把 `q2←q1←q` 各做一次全场拷贝；双时间被 capability 排除，restart 写盘时又从设备场重建，这些层在推进中无人读。跳过条件是 `NsDeviceAuthoritativeFlowEnabled()` + 显式定常 NS，`ONEFLOW_HIP_SKIP_HOST_HISTORY_SHIFT=0` 恢复。同节点 paired 21.50 → 18.50 ms/step（−14%）；restart auth-on `5.03e-15`、auth-off `4.84e-15` 均 PASS，trace `24/0/0`，200 步跨后端 `2.331035e-18`/`0.0`，CPU normal/strict 5/5
   - [x] A1.5 设备单网格路径不再写 host 残差账本。`ZERO_RESIDUALS`（命名残差清零）与 `STORE_RHS`（拷进 `FIELD_RHS`）只服务多重网格缺陷与 host 显式更新；设备单网格路径两者都不读，却是每步两次全场 host 写。判据统一为 `HostResidualBookkeepingNeeded()`（多重网格配置或设备不拥有账本时保留）。8 rank 门禁 3 发 `17.27 / 17.25 / 18.14 ms/step`，trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、CPU normal/strict 5/5
   - [x] A1.6 分项归因修正。任务级 profile 里 `POST_PROCESS` 的 `mean_ms` 曾显示每步 7.7 ms，实为**周期性可视化输出**摊到每一步的均值：总 2193 ms / 300 步，把 `nVisualSave` 设成不输出后该任务降到 0.055 ms/step。因此不能把它当作每步固定开销，也不能据此设计优化。教训：`mean_ms` 必须和 `count × 发生结构` 一起看。
+  - [x] A1.7 每步固定基数的边界测量（2026-11-04）。**关通信**、`rk_stage=1`、8 rank/1 DCU 下仍有 `8.93 ms/step`；该基数与 cell 数、zone 数、rank 数都基本无关（1/2/4 zone per rank 的 1-stage 分别为 8.93 / 7.61 / 8.65）。同时测得：关闭通信只省 **2.2 ms**（23.97→14.28 首发、16.51→14.34 热态），所以“通信主导”不成立，且 A2 的收益上限就是这 2.2 ms。这条把 A2/A3/A4 的目标从“通信”改成“每步基数”，但**基数具体落在哪段代码仍未定位**——这是 A 阶段唯一未闭环的问题，见 §5
+  - [x] A1.8 多 zone/rank 的可行性（2026-11-04）。`Zone::CheckZoneRankCount` 只查 `nZones % nProc`，所以 16 zone / 8 rank 能通过配置检查；但运行期死在 `HIP gradient face pack has no resident gradient`——该 rank 还没有推进过那个 zone。修法：设备侧梯度打包在缺 resident gradient 时**回退主机镜像**（此时主机场是权威初值），不再抛异常。修后 `zpr=2/4` 能跑完，但**更慢**：16.45（1 zone/rank）→ 17.62（2）→ 25.24（4）。结论：**“一 rank 多 zone”不是解法**，它不减少 halo，反而按 zone 重复每步工作
   - [x] A1.4 基准 warmup 规则。首个 `hipMalloc` 与冷 case 目录会污染短基准：同一配置冷跑 `27.0`、热跑 `18.5–21.1 ms/step`。规则落在交接 §5，不是代码改动
-- [ ] **A2 每步一次界面交换**（原 `F7.3`）。**“删掉第 4 轮”已被门禁否掉**：跳过 post 轮后 200 步跨后端从 `2.33e-18` 拓到 `5.54e-7`（aero `4.0e-5`），那一轮承载 legacy 的一步滞后，删它是改离散数据流。可行方向只剩“每个 stage 把 `q` 与梯度合成一趟过界、滞后逐位保持”，需独立切片
-- [ ] **A3 stage kernel 融合**（原 `F7.4`）：gradient → reconstruction → flux → lhs → update → boundary 在设备内串联，stage 内不再有全卡同步点。约 −6 ms
+- [ ] **A2 每步一次界面交换**（原 `F7.3`）。**两处实测已缩小它的价值，动手前先重估**：(1) “删掉第 4 轮”被门禁否掉——跳过 post 轮后 200 步跨后端从 `2.33e-18` 拓到 `5.54e-7`（aero `4.0e-5`），那一轮承载 legacy 的一步滞后；(2) 关掉**全部**界面通信只省 **2.2 ms/step**，所以把 4 轮合成 1 轮的理论上限约 1.1 ms。除非 §5 的基数定位证明通信在别的配置下更大，否则这条不应排在前面
+- [ ] **A3 stage kernel 融合**（原 `F7.4`）：gradient → reconstruction → flux → lhs → update → boundary 在设备内串联。实测每 step 的 stage 成本：1 卡 8 rank 3.29 ms → 2 卡 1.88 → 4 卡 1.20（关通信），即 3 stage 合计 9.9 / 5.6 / 3.6 ms；融合的可及收益按此估算，32 rank 场景上限约 2 ms
 - [ ] **A4 HIP `EulerDomainBackend::Advance`**（原 `F7.5`）：RK 三阶段循环进 backend，只在宏步边界回主机（输出、门控）。设备基态留在设备上，不要把 A1.2 跳过的 host 槽位拷回来。目标 12–14 ms
 
 #### 4.2 Phase B — 数值能力（0/6，退出门见 B-exit）
@@ -137,14 +139,24 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
     （5/5，覆盖范围内、超上界、低于下界、反向法向、斜面），参考实现是主机
     `BarthFunction` + `ReconstructFaceIncrement` + `FaceSideDirectionDot`
   - **关键结论（2026-11-02）**：**φ 不能在主机算**。设备权威 q 下主机梯度镜像只覆盖
-    边界相邻单元、且只在有读者时才更新；用它算 φ 会得到陈旧因子。实测 `ilim=1`
-    200 步残差偏离 `8.53e-05`，逐 step 累积，且 100 步时已 `3.05e-05`。
-    因此设备路径暂时恢复为"限制器关闭才上设备"，并在 `UseHipGradient` 里写明原因
-  - 待做：**设备侧 φ** —— 邻域极值（面循环原子 min/max）+ 每 cell 对其各面取 min
-    （Barth 的收紧过程，min 可交换，与主机逐面收紧等价），并在重构内核里用
-    `min(φ_l, φ_r)` 施加（主机的 `LimField::CalcFaceValue` 语义）；再做 Venkat（`ilim=2`）
-  - 端到端要求：φ 设备化后必须同时给出 `ilim=1` 的 paired 计时（当前 φ 若走主机
-    每 stage 上传，会吃掉一部分设备收益，这一项本身要量）
+    边界相邻单元、且只在有读者时才更新；用它算 φ 得到陈旧因子。实测 `ilim=1`
+    200 步残差偏离 `8.53e-05`，逐 step 累积
+  - **已实现（2026-11-03/04）**：设备侧 Barth φ —— 每 cell 一个线程、5 个方程在寄存器、
+    邻接表走两遍（邻域极值 + 逐面取 min）；`ReconstructionLimiterMode::DeviceCell`
+    显式声明"因子由后端算"；重构按主机语义 `min(φ_l, φ_r)` 施加。同时**删掉主机侧
+    重复的 `CalcLimiter()`**（每 stage 270 ms）改为只填中性值
+  - **当前数值状态**：`ilim=0` CPU vs HIP `0.0`（逐位一致）；`ilim=1` 200 步差
+    **`1.113e-06`**，未过 1e-12 门禁。已排除：面上混合规则、ghost φ、主干预。
+    **下一个怀疑点是主机 `LimField::CalcFaceValue` 的正性回退**：主机按面用
+    `ckfun`（`NsCheckFunction`）整组丢弃受限值，设备是逐方程判定候选后回退单元值，
+    两者不等价，量级与实测偏差相符
+  - **端到端（单 zone，1 核 vs 1 DCU，200 步，关输出）**：`ilim=0` 1621.9 vs 24.25
+    ms/step（66.9×）；`ilim=1` 2617.3 vs 63.67（41.1×）。设备限制器仍带来约
+    39 ms/step 代价，其中 `recon_limiter_kernel` 仅 0.03 ms/调用，其余未定位
+    （怀疑是每 stage 的 `FillNeutralLimiterField` 全场填充）。注意这是 **1 核 vs 1 卡**
+    口径，不能与 8:1 槽的 15.6 ms/step 直接比
+  - 待做：φ 场逐点比对定位 1.1e-6 → 过 200 步跨后端与 CPU 五算例 → 再压
+    `FillNeutralLimiterField` → 之后才是 Venkat（`ilim=2`）
 - [ ] **B3** 层流粘性：面粘性通量、温度梯度、壁面热流。先做 E1（去 globals）
 - [ ] **B4** 湍流：SA（1 方程）；SST 可选项，不单列
 - [ ] **B5** 隐式：LU-SGS 设备化（下/上扫、`dq` 交换、与 halo 的依赖），再评估双时间。依赖 A4
@@ -208,40 +220,78 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 5. F1 任何时点都能做（paired 口径已具备），建议 A 收口后立刻发一次。
 6. D2/D3 依赖 D1，拿到合法 fixture 之前只做只读评估，不出数字。
 
+#### 4.8b 并行扩展实测（2026-11-04，8/16/32 rank 对 1/2/4 DCU）
+
+同一张 m6wing（294,912 cell），按进程数切 8/16/32 zone，`ilim=0`、LF、400 步、
+关闭中间输出、每次 2 样本、每 rank 都有实际计算量（`ranks_with_work` 满分）：
+
+| zone / rank | CPU 侧 | DCU 侧 | CPU ms/step | HIP ms/step | 比值 |
+|---:|---|---|---:|---:|---:|
+| 8 | 8 核 | 1 DCU | 291.07 | 17.25 | **16.9×** |
+| 16 | 16 核 | 2 DCU | 152.78 | 14.19 | **10.8×** |
+| 32 | 32 核 | 4 DCU | 83.55 | 15.17 | **5.5×** |
+
+**不要引用“2 卡最优”**：8-zone 两次样本是 17.59 / 14.28（跨度 23%），16 与 32 的
+7% 差异在噪声内，结论只能说“16 与 32 等效”。
+
+界面量（通信规模的直接度量）：
+
+| zone | 每 rank `nIFaces` | 全局合计 |
+|---:|---:|---:|
+| 8 | 4,785 | 38,280 |
+| 16 | 3,121 | 49,936 |
+| 32 | 2,509 | 80,288 |
+
+8→16→32：每 rank 计算量减半两次，每 rank halo 只降 35% / 20%，全局 halo 涨 30% / 61%。
+这就是加卡越过 2 张后买不到收益的原因。
+
+分解（8/16/32 rank，**关闭通信**，`rk_stage=1` vs `3`，第二发样本）：
+
+| zone / rank | 1 stage | 3 stages | 每 stage 成本 |
+|---:|---:|---:|---:|
+| 8 | 8.93 | 15.51 | **3.29** |
+| 16 | 7.61 | 18.06 | 5.22（含冷启动偏差） |
+| 32 | 8.65 | 9.33 | 0.34（**该组两发差 30%，不可用**） |
+
+关键读数：**关通信后 8 rank 仍有 8.93 ms/step 的 1-stage 成本**，且该基数不随 cell 数、
+zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms）。
+
 #### 4.9 整体进度
 
 | 阶段 | 勾选/总数 | 状态 |
 |---|---|---|
 | Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成（15.6 ms/step），A2–A4 在途 |
-| Phase B 数值能力 | 0/6（另有 B-exit） | ⬜ |
+| Phase B 数值能力 | 1/6（另有 B-exit） | 🟨 B1（设备 Roe）完成；B2 在途，差 1.1e-6 |
 | Phase C 真实算例与 IO | 0/5 | ⬜ |
-| Phase D 多卡 | 0/4 | ⬜ 卡在 D1 |
+| Phase D 多卡 | 0/4 | ⬜ 卡在 D1；已有 8/16/32 rank 对 1/2/4 DCU 的只读实测（§4.8b） |
 | Phase E 架构通用化 | 0/5 | ⬜ |
 | Phase F 产品化 | 1/4 | 🟨 F1 报告已发布 |
-| **阶段合计** | **2/28** | 前置层已完成；A1 与 F1 收口 |
+| **阶段合计** | **3/28** | 前置层完成；A1、B1、F1 收口 |
 | 前置层 | 6/6 | ✅ 见 §4.7 |
 
 ### 5. 下一轮任务（按序，含验收）
 
-0. [x] **修 `HIP.MainSolverFluxOneCall` 的 boundary contract**。根因不是边界核：
-   烟测把 solid `bcQ` 按 `nFaces` 步长存，而 HIP 上传/内核从 `1c470414a` 起按
-   `nBoundaryFaces` 读连续缓冲。第 4 个方程的期望值正好是 8.6，读到的是 0；
-   打印出来的 `stale-op 3.0` 是第二次 Average 重构相对旧 `bcQ` 的 +3 偏移，检查本身是过的。
-   夹具已改成与生产路径相同的打包；不连续的 `bcQ` 在上传前直接拒绝。
-   昆山 1 DCU / `gfx906`：`OneFLOWHipSmoke` boundary contract PASS，进程退出码 0。
-   CPU 五算例未重跑：本次没有改 CPU 残差源码，上一轮 strict 5/5 仍是最新 CPU 证据。
-1. [x] **A1.1** 梯度镜像只在最后 stage。昆山同节点 paired 1000 步：每 stage 29.703/30.017，最后 stage 26.660/26.779 ms/step，均值 −10.5%。3 步 trace `24/0/0`，200 步跨后端 residual `2.331035e-18` / aero `0.0`，CPU 五算例 normal 5/5 + strict 5/5。`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0` 恢复每 stage 镜像。
-2. [x] **A1.2** 设备显式路径不再填 `LOAD_Q`/`LOAD_RESIDUALS` 的 host 槽位。第一次尝试只跳任务、不补基底，被 200 步跨后端门禁拓住（residual `5.52e-4`、aero `1.31e-3`）：`LOAD_RESIDUALS` 不是死写，它把命名残差置成 `-FIELD_RHS`，而融合通量核把它当累加基底上传。最终做法是一个共用谓词同时决定“不填槽位”和“设备侧归零”，两边不能单独改。
-   昆山同节点 paired 1000 步：填槽 26.939/26.891/26.908，不填 21.224/20.790/20.904 ms/step，均值 26.91 → 20.97（−22.1%）。trace `24/0/0`、200 步跨后端 residual `2.331035e-18` / aero `0.0`、CPU 五算例 normal 5/5 + strict 5/5、50 步 `exit 0` 且 `nonphysical_hits=0`（HIP 两种开关都跑）。`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY=0` 恢复。
-3. [x] **默认路径修复**：device 权威 q 下的 restart 历史层（`9644b84f2` + `f07c00efc`）。
-   缺陷读数：单 zone `m6wingroe_sa`、100 步 / 50+50，auth-on flow `4.761e-2`（FAIL），auth-off `5.88e-15`（PASS）；auth-on 的 100 步 `flow.dat` 与 auth-off 差 41%。
-   根因：restart 流写 `q1`/`q2` 等历史层，读盘时用 level 1 复原当前场；而设备权威路径只按需回填当前 `q`，历史层被 host 步进逻辑用旧的 `q` 覆盖，所以**写盘**旧。
-   修法：`Restart::Dump` 在设备拥有权威场时（`NsDeviceAuthoritativeFlowEnabled()`），先回填 `q`，再用 `InitUnsteady()` 从它重建历史层。判据用「谁拥有权威场」，**不能**用刷新函数的返回值——镜像可能已被别的读者刷新，那样会静默跳过。
-   修复后：auth-on `4.330e-15 / 0 / 0` PASS，auth-off `4.552e-15 / 0 / 0` PASS。同一 100 步的 dump 里 level 1 与 auth-off 差 `5.33e-15`；level 2 保留差异是设计使然（auth-on 无法复现真实上一步），steady 下不被读取。
-   同一轮复跑：trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、CPU normal 5/5 + strict 5/5、热态 1000 步 `21.10/21.27/20.86 ms/step`——说明该修复不影响数值与性能。
-4. [x] **F1** 3D 正式性能报告已发布（Markdown + HTML 同 stem，18.5× @8:1 槽）。
-5. **D1** fixture 决策：向 owner 申请 ≥1M 带 `.skl` 网格；并行评估 `GenerateLink` 修复代价。
-6. **B1/B2**（可与 1–3 并行评估）：Roe + limiter 的单点数值契约与 trace 门禁。
+0. **[最高优先] 定位每步固定基数 8.9 ms/step。** 已知条件：关通信、`rk_stage=1`、
+   8 rank/1 DCU、8 zone；该基数与 cell 数、zone 数、rank 数均无关。方法：在同配置下用
+   `ONEFLOW_STAGE_BREAKDOWN_FILE` 记录全部计时段，比较「总时间 − 分项之和」：
+   - 若差额接近 0 → 基数藏在**已计时**的项里（`calc_time_step`、`boundary_*`、`post_*`）
+   - 若差额仍有 5–7 ms → 基数在**没有计时器**的代码里，范围只剩宏步入口、
+     `SingleSolverSingleGridTask` 派发、以及并行屏障三类
+   验收：给出「基数 = 由哪些段构成」的清单，且各项之和与总时间差 <10%
+1. **A3 stage 融合**（依据 §4.8b）：每 stage 成本 3.29（1 卡）/ 1.88（2 卡）/ 1.20（4 卡），
+   3 stage 合计 9.9 / 5.6 / 3.6 ms。先做 `gradient→reconstruction→flux` 一段；
+   验收：3 步 trace `24/0/0`、200 步 XB `2.331035e-18`/`0.0`、同节点 paired 有可测收益
+2. **B2 收口**：dump CPU 与 HIP 各自的 φ 场逐点比对，定位 `1.113e-06`；若确认是
+   主机 `ckfun` 的整体丢弃语义，设备侧补同样的按面判定。再过 200 步跨后端与
+   CPU 五算例；然后压 `FillNeutralLimiterField`（当前限制器仍带来约 39 ms/step）
+3. **B3–B5**：粘性 → SA → LU-SGS。B-exit（`m6wingroe_sa` 上设备）要求 B1–B5 全通，
+   这是 Phase B 的退出门，也是旗舰算例离开 CPU 的唯一途径
+4. **D1 fixture**：≥1M cell 带 `.skl` 的合法分区网格；在此之前不做多卡结论
+5. **A4 HIP `Advance`**：等 0/1 完成后再评估——若基数确实在 host 派发层，A4 的收益
+   会比原估更大；若在设备同步，A4 收益有限
+
+**不要做**：靠加卡提升（§4.8b 已说明）；"一 rank 多 zone"（A1.8 实测更慢）；
+继续端到端盲试（本会话有 3 次因为读数噪声或归因错误而返工）
 
 ### 6. 关键开关与脚本
 
