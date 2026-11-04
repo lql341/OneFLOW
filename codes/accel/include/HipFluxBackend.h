@@ -456,8 +456,11 @@ public:
     // Pack the resident gradient at the interface send cells into a
     // [component][equation][face] host buffer.  The host then copies it into
     // the interface send storage in exchange order, so the endpoint cell
-    // gather runs on the device instead of the host.
-    void PackGradientFacesToHost(
+    // gather runs on the device instead of the host.  Returns false when this
+    // zone has no resident gradient yet (first step, or a zone this rank has
+    // not advanced); the caller then packs the host mirror, which is the
+    // authoritative state at that point.
+    bool PackGradientFacesToHost(
         const void * cacheKey,
         const int * cellIds,
         int nFaces,
