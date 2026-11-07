@@ -88,6 +88,110 @@ L0 summary output is the first practical step. It is metadata only: it does not 
 
 JSON is suitable for manifests and small metadata. Large numeric arrays may need compact typed payloads. JSON-library types should remain inside serialization adapters rather than leaking into the canonical mesh model.
 
+MeshSnapshot v1 interchange contract
+--------------------------------------
+
+The first executable interchange contract is available in
+`tools/mesh_contracts/snapshot.py`. It is deliberately a tooling-side
+manifest validator, not a replacement for the production C++ mesh container
+or a claim that runtime export is complete.
+
+The version-1 neutral data shape contains:
+
+* dimensioned nodes with positive IDs and finite coordinates;
+* cells with a declared element type and ordered node IDs;
+* faces with ordered node IDs, an owner cell, and an optional neighbour cell;
+* named region groups over cells and boundary/interface groups over faces;
+* source-format provenance.
+
+The validator accepts sparse source IDs: identity is not inferred from array
+position. It rejects duplicate IDs, invalid coordinate dimensions, non-finite
+coordinates, unsupported element arity/dimension, dangling connectivity,
+invalid face ownership, and group membership that crosses entity kinds.
+Connectivity order is retained; it is not sorted or normalized.
+
+The current contract does **not** establish geometric validity, cell closure,
+face orientation against the solver convention, complete cell-to-face
+incidence, boundary-condition meaning, partition/ghost semantics, or
+round-trip fidelity. A Gmsh Physical Group name is not itself a OneFLOW
+boundary condition. The adapter must preserve its name, dimension and
+membership first; a separate explicit mapping contract must assign solver
+semantics. The current manifest also does not carry source CAD entity identity
+or arbitrary high-order element interpolation nodes.
+
+Run the focused contract tests from the repository root:
+
+.. code-block:: bash
+
+   python -m unittest tools.mesh_contracts.test_snapshot -v
+
+The same tests are included in Linux and Windows Python CI. They validate the
+manifest contract only; they are not an experimental Gmsh Case regression.
+The latter remains a GUI manual test and is intentionally excluded from
+automatic GitHub execution.
+
+The intended adapter flow is:
+
+.. code-block:: text
+
+   Gmsh MSH 4.1 / Plot3D / SU2 / CGNS
+                    |
+             format-specific reader
+                    |
+          MeshSnapshot v1 validation
+                    |
+          explicit semantic mapping
+                    |
+             OneFLOW Mesh Core
+
+A future production C++ snapshot should implement the same semantics without
+making the Python validator or JSON representation a runtime dependency.
+The first C++ adapter should be read-only and value-based; it should not expose
+Gmsh handles or let format-specific IDs leak into solver-owned identity.
+
+Mesh Contract Workbench
+------------------------
+
+The GUI exposes Mesh as a domain independent of Formula Knowledge:
+`Contract Workbench -> Mesh`. It uses the shared information architecture
+(Overview, Principle, Reference, Architecture, Implementation, Code,
+Documentation, Verification / Evidence) while retaining mesh-specific
+topology content.
+
+The Topology tab displays Nodes, Cells, Faces, and Groups from a loaded
+MeshSnapshot JSON artifact. It is an inspection view, not a topology editor.
+
+The Code tab now previews the current Python contract validator and the C++
+Gmsh conversion implementation directly from the repository. The preview is
+bounded for large source files; the full paths remain available for opening in
+the configured source editor. The Documentation tab displays the contents of
+this architecture page and the Gmsh interface page rather than showing only
+their filenames. These are read-only source-backed views, not duplicated
+Workbench-owned documentation.
+
+The current Gmsh C++ reader still validates and summarizes MSH 4.1 records;
+it does not yet export the parsed node coordinates and element connectivity
+into MeshSnapshot. Therefore, loading the bundled JSON fixture demonstrates
+the topology browser, but it is not evidence that the Gmsh parser has populated
+that fixture. The next adapter milestone is a C++ value-based snapshot
+exporter, followed by a GUI action that consumes its generated artifact.
+The bundled `tools/mesh_contracts/examples/square_snapshot.json` is a small
+manual fixture for checking the UI.
+
+Evidence is intentionally split into two independent panels:
+
+* **MeshSnapshot contract validation** reports whether the loaded manifest
+  satisfies the currently implemented schema checks.
+* **Format conversion execution** remains NOT RUN unless a real converter
+  execution record is supplied. Opening or validating JSON never counts as
+  running Gmsh, CGNS, or a OneFLOW conversion.
+
+The current Python validator is a first-stage tooling check. It is not a
+second production mesh implementation. The target remains a read-only,
+value-based C++ MeshSnapshot exported from the OneFLOW runtime mesh, with
+format-specific adapters on the boundary. No Python data structure should
+become a solver runtime dependency.
+
 Spatial search and point-location boundary
 --------------------------------------------
 
@@ -204,3 +308,154 @@ Detailed design and audit notes remain under the documentation engineering area 
 * `doc/architecture/`: dated architecture audits and stable design notes.
 * `doc/plans/oneflow-documentation-consolidation-plan.md`: consolidation inventory and next steps.
 * Root-level `GRID_TOPOLOGY.md`, `MESH_DATA_AND_VISUALIZATION.md`, and the older top-level `docs/` mesh notes remain source material for the content review; they are not separate destinations for new documentation.
+
+
+Mesh Knowledge catalog
+----------------------
+
+Mesh in Contract Workbench is a grouped knowledge catalog rather than one
+static conversion page. Versioned entries live under
+`tools/verification/contracts/mesh/` and use the shared contract envelope:
+overview, principle, references, architecture, implementation, code,
+documentation, claims, limitations and verification evidence.
+
+The initial catalog separates **Mesh Core Concepts** from **Interchange
+Formats**. Core concepts cover identity, coordinates, ordered connectivity,
+faces, adjacency, boundaries, regions, physical groups, units, provenance
+and quality. Format entries cover Gmsh MSH, Plot3D structured grids and CGNS.
+A separate topology inspector remains available for inspecting a loaded
+MeshSnapshot fixture; it is not the primary Mesh knowledge interface.
+
+The dependency direction is:
+
+.. code-block:: text
+
+   Gmsh / Plot3D / CGNS specifications
+                  |
+          format knowledge records
+                  |
+        format-specific adapters
+                  |
+       neutral OneFLOW MeshSnapshot
+                  |
+           OneFLOW Mesh Core
+                  |
+       solver / visualization / writers
+
+The Mesh Core vocabulary is the stable center. Formats are boundary contracts
+with different capabilities. A structured Plot3D block is not an unstructured
+Gmsh element block; CGNS zones, sections, boundary types and connectivity must
+not be flattened into anonymous cells. Conversion can preserve coordinates
+while losing high-order interpolation, units, group labels or interfaces.
+Those losses must be declared and verified rather than silently discarded.
+
+The Workbench search covers titles, descriptions, source paths and references.
+Each catalog entry links source files, maintained documentation and declared
+evidence. A declared test is not a recorded execution result; a format entry
+marked proposed does not imply a production reader or writer exists.
+
+
+Gmsh reader and conversion implementation milestone
+----------------------------------------------------
+
+The MSH 4.1 ASCII reader materializes coordinates, sparse source IDs,
+geometric entity ownership, physical names, element types, and ordered
+connectivity in a C++ GmshMesh value model. The conversion path maps
+top-dimensional first-order cells into the existing Su2Grid value container
+and reuses the production CGNS zone writer. The bundled square mesh is now
+written as a real unstructured CGNS zone and independently reopened through
+the CGNS API in a focused GTest.
+
+The conversion test verifies the Base and Zone dimensions, node and cell
+counts, ordered TRI_3 connectivity, coordinate arrays, the BAR_2 boundary
+section, and the BC_t PointList. The test also checks the generated
+human-readable report. This validates a real file round trip rather than a
+placeholder or a successful writer call alone.
+
+
+Gmsh MSH 4.1 read and conversion reports
+----------------------------------------
+
+The production C++ reader maintains an explicit source-node-tag to
+zero-based node-position map while retaining each original Gmsh tag. This
+makes sparse source IDs safe for connectivity conversion without confusing
+identity with storage position.
+
+After a successful CGNS write, the conversion entry point writes two
+case-local reports under `results/`:
+
+* `*.gmsh-read-report.json`: machine-readable source tag ranges, coordinate
+  bounds, element-type counts, and geometry checks.
+* `*.gmsh-report.md`: an English inspection report covering physical groups,
+  geometric entities, element and node previews, connectivity, coordinate
+  bounds, and geometry checks.
+
+The Markdown report distinguishes Gmsh input element types from the CGNS
+boundary section types produced by conversion. For example, a two-dimensional
+Gmsh `LINE_2` boundary is represented as a CGNS `BAR_2` section. This
+boundary-section inventory is based on codimension-one elements associated
+with Physical Groups, matching the conversion path; it does not invent
+solver-specific wall, inlet, or outlet semantics.
+
+Triangle area is computed from the three-dimensional cross-product magnitude;
+the signed XY projection is reported separately as an orientation diagnostic.
+A negative XY orientation is not automatically treated as a read failure.
+Degenerate triangles are counted using a scale-relative floating-point
+threshold.
+
+The report's `READ_SUCCESS` status means that the reader's structural checks
+passed and that the declared PhysicalNames and Entities sections were parsed
+when present. It does not by itself claim that CGNS conversion succeeded:
+the reports are emitted only after the CGNS writer returns successfully, and
+the independent CGNS read-back test verifies the generated file.
+
+
+Gmsh-to-CGNS first Zone
+-----------------------
+
+The first production output path maps MSH 4.1 ASCII top-dimensional,
+first-order cells into the existing Su2Grid value container and reuses
+Su2Grid::FillSU2CgnsZone() to populate OneFLOW's CGNS zone model.
+CgnsFactory::WriteCgnsFile() serializes the prepared base and zone through
+the existing CGNS writer. The Gmsh reader itself has no dependency on the
+Gmsh SDK or CGNS library.
+
+For the bundled square sample, the semantic result is four nodes, two TRI_3
+cells, four BAR_2 boundary elements, and ordered volume connectivity
+[1, 2, 3] and [1, 3, 4]. The four lower-dimensional LINE_2 elements are
+grouped through their curve-entity physical tags and written as a CGNS
+boundary section. The matching BC_t point list references the boundary
+element IDs after the volume-cell range. Its name is preserved from
+PhysicalNames and its type is BCTypeUserDefined; this is a label, not a
+solver boundary-condition assignment.
+
+The CGNS output path keeps connectivity one-based until CGNS serialization.
+The existing SU2-to-OneFLOW runtime path still requests zero-based internal
+normalization. This distinction is explicit in the FillSU2CgnsZone option
+so the same zone-population logic can serve both runtime ingestion and file
+writing without corrupting CGNS element IDs.
+
+
+Gmsh Physical Group boundary semantics
+--------------------------------------
+
+The bundled two-dimensional Gmsh conversion Case now uses four named curve
+Physical Groups: `inflow` on the left edge, `outflow` on the right edge,
+`symmetry` on the bottom edge, and `farfield` on the top edge. The
+conversion adapter maps these explicit names to CGNS `BCInflow`,
+`BCOutflow`, `BCSymmetryPlane`, and `BCFarfield`, respectively. The canonical input spelling is `symmetry`; misspellings are not treated as
+standard boundary-condition aliases.
+
+This is a name-based semantic mapping, not geometric inference. Unrecognized
+Physical Group names remain `BCTypeUserDefined`; the converter does not
+invent a wall/inlet/outlet classification from edge coordinates. The
+round-trip test independently reads all four BC_t records and verifies both
+their CGNS type and the edge connectivity referenced by each PointList.
+
+Small Gmsh fixtures should be organized by the capability they prove:
+parser-only meshes, supported first-order 2-D and 3-D conversion meshes,
+higher-order read-only meshes, and malformed/unsupported inputs. Use one
+cell (or the minimum connected patch needed) per element family. Reader
+tests should not depend on CGNS; conversion tests should write to a temporary
+directory and independently reopen the result with the CGNS API; the manual
+Case should remain the end-to-end GUI and report-generation path.
