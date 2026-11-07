@@ -37,7 +37,11 @@
 1. **源码**：把仓库快照覆盖到 `src/OneFLOW/`（`rsync -a --delete` 或解压覆盖），
    同步更新 `src/REVISION`。不要在 `src/` 下保留多个修订目录。
 2. **构建**：`build/app` 是唯一生产（HIP）构建目录，按目标固定、增量编译。
-   - 日常增量：`scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW/fast`）。
+   - 日常增量：`scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW_RuntimeObjects`
+     再 `make -C build/app -j<N> OneFLOW/fast`）。**两个目标都要跑**：`<dir>/fast` 是
+     CMake 的"仅本目录"目标，不会重建 `OneFLOW_RuntimeObjects` 里的对象；2026-11-07
+     实测只跑 `OneFLOW/fast` 时，改过 `codes/accel/src/HipFluxBackend.hip` 也报构建成功，
+     但对象和二进制都还是旧的（`strings bin/OneFLOW` 里找不到新符号才发现）。
    - 上游改动 `CMakeLists.txt` 后 `make` 会自动 reconfigure。**不要再手拼 cmake 变量**，
      统一走仓库里的加速器 SDK 接口（`cmake/OneFLOWAccelSDK.cmake` +
      `scripts/build-accel.sh`）；它把下面三条一次配齐：
