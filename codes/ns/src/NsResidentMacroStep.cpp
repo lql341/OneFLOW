@@ -17,6 +17,7 @@ License
 #include "Multigrid.h"
 #include "HipProductionPolicy.h"
 #include "ResidualBasePolicy.h"
+#include "StageProfiler.h"
 #include "SolverDef.h"
 #include "SolverState.h"
 #include "ZoneState.h"
@@ -59,8 +60,15 @@ void NsResidentMacroStep()
     StringField unused;
 
     // CALC_TIME_STEP: local spectral radius and time step for this step.
-    UTimeStep timeStep;
-    timeStep.CalcTimeStep();
+    // The macro step bypasses the task path, so this work had no profiler
+    // category at all: every breakdown file reported calc_time_step = 0 while
+    // the per-step base was several milliseconds.  Time it here so the A1.7
+    // base accounting can name the segment instead of inferring it.
+    {
+        ScopedStageTimer timer( "macro_time_step" );
+        UTimeStep timeStep;
+        timeStep.CalcTimeStep();
+    }
 
     const int nStages = static_cast< int >( ctrl.rk_coef.size() );
     for ( int stage = 0; stage < nStages; ++ stage )
@@ -69,15 +77,27 @@ void NsResidentMacroStep()
         ctrl.lhscoef = ctrl.rk_coef[ stage ];
 
         // UPDATE_RESIDUALS: gradient, reconstruction, fused face flux, RHS.
-        NsUpdateResiduals( unused );
+        {
+            ScopedStageTimer timer( "macro_update_residuals" );
+            NsUpdateResiduals( unused );
+        }
         // CALC_LHS: scale the resident residual by dt/vol*rkcoef.
-        ULhs lhs;
-        lhs.CalcLHS( NS_SOLVER );
+        {
+            ScopedStageTimer timer( "macro_calc_lhs" );
+            ULhs lhs;
+            lhs.CalcLHS( NS_SOLVER );
+        }
         // UPDATE_FLOWFIELD: primitive state update on the device.
-        UNsUpdate update;
-        update.UpdateFlowField( NS_SOLVER );
+        {
+            ScopedStageTimer timer( "macro_update_flowfield" );
+            UNsUpdate update;
+            update.UpdateFlowField( NS_SOLVER );
+        }
         // CALC_BOUNDARY: local boundary models on the resident state.
-        NsCalcBoundary( unused );
+        {
+            ScopedStageTimer timer( "macro_calc_boundary" );
+            NsCalcBoundary( unused );
+        }
         // UPDATE_INTERFACE_DATA: the explicit stage must publish updated
         // boundary values before the next stage reads its ghosts.  Still one
         // task dispatch per stage (not four), because the exchange itself is
@@ -85,6 +105,7 @@ void NsResidentMacroStep()
         // validated task path.
         if ( ZoneState::nZones > 1 && ! DiagNoCommunication() )
         {
+            ScopedStageTimer timer( "macro_interface" );
             SingleSolverSingleGridTask( kUpdateInterfaceDataTaskName );
         }
     }
