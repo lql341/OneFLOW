@@ -2652,6 +2652,10 @@ void HipFluxBackend::ReconstructFaceValues(
         }
     }
 
+    // The limiter factor is still produced on the host and uploaded; the
+    // device reconstruction consumes exactly that field.
+    const bool limiterActive =
+        view.limiterMode != ReconstructionLimiterMode::Disabled;
     const int totalCells = view.nCells + view.nGhostCells;
     const int totalFaces = view.nFaces;
     const int totalValues = view.nEquations * totalFaces;
