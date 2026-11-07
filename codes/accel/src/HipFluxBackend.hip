@@ -50,9 +50,12 @@ void CheckHip( hipError_t status, const char * operation )
 // the flag enabled.
 bool HipDeferSyncEnabled()
 {
+    // Default on since the 2026-11-07 paired run: same node, 3 interleaved
+    // repeats each side, 15.57 -> 14.55 ms/step with the trace and the 200-step
+    // cross-backend gate green.  =0 restores the per-stage drain.
     static const bool enabled = [] {
         const char * value = std::getenv( "ONEFLOW_HIP_DEFER_SYNC" );
-        return value != nullptr && value[ 0 ] == '1';
+        return value == nullptr || value[ 0 ] != '0';
     }();
     return enabled;
 }

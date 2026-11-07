@@ -252,7 +252,7 @@ inline bool HipSkipHostRkSlotCopy(
 inline bool HipStatusCheckDeferred()
 {
     const char * value = CachedEnv( "ONEFLOW_HIP_DEFER_STATUS" );
-    return value != nullptr && value[ 0 ] == '1';
+    return value == nullptr || value[ 0 ] != '0';
 }
 
 // Issue the residual scale from the state-update entry instead of its own call.
@@ -261,7 +261,7 @@ inline bool HipStatusCheckDeferred()
 inline bool HipFuseScaleUpdate()
 {
     const char * value = CachedEnv( "ONEFLOW_HIP_FUSE_SCALE_UPDATE" );
-    return value != nullptr && value[ 0 ] == '1';
+    return value == nullptr || value[ 0 ] != '0';
 }
 
 inline bool DiagNoCommunication()
