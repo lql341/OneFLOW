@@ -14,6 +14,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <iostream>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -48,9 +49,9 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
     return totals;
 }
 
-std::array< CategoryTotal, 74 > & Totals()
+std::array< CategoryTotal, 80 > & Totals()
 {
-    static std::array< CategoryTotal, 74 > totals = {{
+    static std::array< CategoryTotal, 80 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -125,8 +126,33 @@ std::array< CategoryTotal, 74 > & Totals()
         { "bnd_prep", 0.0 },
         { "bnd_backend", 0.0 },
         { "bnd_resize", 0.0 },
+        // Macro-step segments. Record() matches by name against this table and
+        // silently drops anything that is not listed here, so a new timer has
+        // to be registered in both places or it never shows up in the TSV.
+        { "macro_time_step", 0.0 },
+        { "macro_update_residuals", 0.0 },
+        { "macro_calc_lhs", 0.0 },
+        { "macro_update_flowfield", 0.0 },
+        { "macro_calc_boundary", 0.0 },
+        { "macro_interface", 0.0 },
     }};
     return totals;
+}
+
+// Record() only accumulates into the fixed table above.  A timer whose name is
+// missing from that table used to disappear without a trace, which made a whole
+// instrumentation round look like "that segment costs nothing".  Count the
+// misses and report them on Flush so the mistake is visible next time.
+struct DroppedCategory
+{
+    unsigned long long count = 0;
+    std::string first;
+};
+
+DroppedCategory & DroppedCategories()
+{
+    static DroppedCategory dropped;
+    return dropped;
 }
 
 std::string RankAwarePath( const char * configured )
@@ -183,6 +209,16 @@ void StageProfiler::Record( const char * category, double elapsedMs ) noexcept
             return;
         }
     }
+    DroppedCategory & dropped = DroppedCategories();
+    ++dropped.count;
+    try
+    {
+        if ( dropped.first.empty() ) dropped.first = category;
+    }
+    catch ( ... )
+    {
+        // Profiling must never change solver behaviour.
+    }
 }
 
 void StageProfiler::RecordTask( int taskId, const char * taskName,
@@ -230,6 +266,13 @@ void StageProfiler::Flush()
     {
         if ( total.name == nullptr ) continue;
         output << total.name << "\t" << total.elapsedMs << "\n";
+    }
+    if ( DroppedCategories().count != 0 )
+    {
+        std::cerr << "StageProfiler: dropped " << DroppedCategories().count
+                  << " timer records for unregistered category \""
+                  << DroppedCategories().first
+                  << "\"; register it in Totals()" << std::endl;
     }
     if ( ! output )
     {
