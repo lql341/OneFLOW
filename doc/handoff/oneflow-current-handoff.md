@@ -90,6 +90,15 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
   - 差额仍有 5–7 ms → 基数在没有计时器的代码里：宏步入口、
     `SingleSolverSingleGridTask` 派发、并行屏障，三者之一
   验收：给出「基数 = 哪些段」的清单，各项之和与总时间差 <10%。
+- **该基数的候选已缩小到 round trip 数**（2026-11-07 代码勘验）：`NsResidentMacroStep`
+  自 `bd588d447` 起默认开启，每步只有一次宏步调用，stage 内不走 task 字符串派发，
+  所以"基数在 host 派发层"这条前提不再成立。剩下的是每 stage 约 12 次 kernel launch
+  和 7 次 `hipDeviceSynchronize`（gradient / local dt / reconstruction / flux /
+  residual scale / boundary pack / boundary unpack），8 rank 共享 1 卡时都是 per-rank 常数。
+  其中 gradient 与 flux 的 drain 原本无条件执行（连"不下载"的分支也 drain）。
+- **已就位但未验证**：`db3f9e413` 把上述 7 处 drain 收进 `HipDrain()`，
+  `ONEFLOW_HIP_DEFER_SYNC=1` 时只保留 `hipGetLastError` 检查、跳过 drain；默认关，
+  所以已发布的 15.6 ms/step 口径不动。它是 A1.7 的 A/B 开关，**不是已验证的结论**。
 - **之后（按价值）**：`A3` stage 融合（每 stage 3.29 / 1.88 / 1.20 ms 于 1/2/4 卡，
   3 stage 合计 9.9 / 5.6 / 3.6）→ `B2` 收口（差 `1.113e-06`）→ `B3–B5`（粘性/SA/LU-SGS，
   B-exit 的前置）→ `A4`。
