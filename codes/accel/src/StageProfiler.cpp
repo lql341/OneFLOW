@@ -49,9 +49,9 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
     return totals;
 }
 
-std::array< CategoryTotal, 80 > & Totals()
+std::array< CategoryTotal, 84 > & Totals()
 {
-    static std::array< CategoryTotal, 80 > totals = {{
+    static std::array< CategoryTotal, 84 > totals = {{
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -135,6 +135,10 @@ std::array< CategoryTotal, 80 > & Totals()
         { "macro_update_flowfield", 0.0 },
         { "macro_calc_boundary", 0.0 },
         { "macro_interface", 0.0 },
+        { "g_prep", 0.0 },
+        { "g_contract", 0.0 },
+        { "g_geom", 0.0 },
+        { "r_prep", 0.0 },
     }};
     return totals;
 }

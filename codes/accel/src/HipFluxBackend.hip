@@ -2027,34 +2027,46 @@ void HipFluxBackend::EvaluateDeviceRoe(
 
 void HipFluxBackend::CalcGradient( const CellGradientView & view )
 {
-    ValidateCellGradientView( view );
+    // Per-call host preparation is not free at this scale: the breakdown of a
+    // 1000-step run shows the parent category costing more than the kernel it
+    // wraps.  Split the entry into prep / contract / geometry so the next round
+    // can name the piece instead of guessing.
     HipGradientStorage * storage = &fallbackGradientStorage_;
     Ns3DDeviceState * owner = nullptr;
-    const auto binding = boundStates_.find( view.cacheKey );
-    if ( binding != boundStates_.end() )
+    const void * ownerToken = view.cacheKey;
+    std::uint64_t fieldGeneration = 0;
+    std::uint64_t topologyGeneration = 0;
+    int totalCells = 0;
     {
-        owner = binding->second;
-        auto * hipState =
-            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
-        if ( hipState == nullptr )
+        ScopedStageTimer prepTimer( "g_prep" );
+        ValidateCellGradientView( view );
+        const auto binding = boundStates_.find( view.cacheKey );
+        if ( binding != boundStates_.end() )
         {
-            throw std::logic_error(
-                "bound HIP Ns3D state lost its backend ownership" );
+            owner = binding->second;
+            auto * hipState =
+                dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+            if ( hipState == nullptr )
+            {
+                throw std::logic_error(
+                    "bound HIP Ns3D state lost its backend ownership" );
+            }
+            storage = &hipState->Gradient();
         }
-        storage = &hipState->Gradient();
+        totalCells = view.nCells + view.nGhostCells;
+        storage->cellState.Resize( view.nEquations * totalCells );
+        ownerToken = owner != nullptr ? owner->OwnerToken() : view.cacheKey;
+        fieldGeneration = owner != nullptr ? owner->FieldGeneration() : 0;
+        topologyGeneration = owner != nullptr ? owner->TopologyGeneration() : 0;
     }
-    const int totalCells = view.nCells + view.nGhostCells;
     const int totalGradient = view.nEquations * 3 * totalCells;
-    storage->cellState.Resize( view.nEquations * totalCells );
-    const void * ownerToken =
-        owner != nullptr ? owner->OwnerToken() : view.cacheKey;
-    const std::uint64_t fieldGeneration =
-        owner != nullptr ? owner->FieldGeneration() : 0;
-    const std::uint64_t topologyGeneration =
-        owner != nullptr ? owner->TopologyGeneration() : 0;
-    const ResidentStateSync sync = RefreshResidentPrimitiveState(
-        * storage, owner, ownerToken, topologyGeneration, fieldGeneration,
-        view.nCells, view.nGhostCells, view.nEquations, view.q );
+    ResidentStateSync sync = ResidentStateSync::None;
+    {
+        ScopedStageTimer contractTimer( "g_contract" );
+        sync = RefreshResidentPrimitiveState(
+            * storage, owner, ownerToken, topologyGeneration, fieldGeneration,
+            view.nCells, view.nGhostCells, view.nEquations, view.q );
+    }
     if ( owner != nullptr && ResidentContractCheckRequested() )
     {
         // The contract diagnostic compares the resident field against the host
@@ -2117,6 +2129,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
         && storage->cachedBoundaryFaces == view.nBoundaryFaces;
     if ( ! cacheMatches )
     {
+        ScopedStageTimer geomTimer( "g_geom" );
         storage->xFaceCenter.CopyFromHost( view.xFace, view.nFaces );
         storage->yFaceCenter.CopyFromHost( view.yFace, view.nFaces );
         storage->zFaceCenter.CopyFromHost( view.zFace, view.nFaces );
@@ -2602,56 +2615,41 @@ void HipFluxBackend::ReconstructFaceValues(
     const CellFaceReconstructionView & view,
     bool downloadToHost )
 {
-    ValidateCellFaceReconstructionView( view );
-    // Limiter: the host computes the per-cell/per-equation factor with the
-    // validated Limiter::CalcLimiter and uploads it.  Moving the factor
-    // computation onto the device is a separate slice; what matters here is
-    // that the reconstruction consumes exactly the host factor.
-    const bool limiterActive =
-        view.limiterMode != ReconstructionLimiterMode::Disabled;
-    if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
-    {
-        static int printedLimiter = 0;
-        if ( printedLimiter < 3 )
-        {
-            std::cout << "HIP_LIMITER_DIAG active=" << ( limiterActive ? 1 : 0 )
-                      << " mode=" << static_cast< int >( view.limiterMode )
-                      << " equations=" << view.nEquations << std::endl;
-            ++printedLimiter;
-        }
-    }
-
-    const void * cacheKey = view.cacheKey != nullptr
-        ? view.cacheKey : view.ownerToken;
     HipGradientStorage * storage = &fallbackGradientStorage_;
-    Ns3DDeviceState * owner = nullptr;
-    const auto binding = boundStates_.find( cacheKey );
-    if ( binding != boundStates_.end() )
+    std::uint64_t topologyGeneration = view.topologyGeneration;
     {
-        owner = binding->second;
-        auto * hipState =
-            dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
-        if ( hipState == nullptr )
+        ScopedStageTimer reconPrepTimer( "r_prep" );
+        ValidateCellFaceReconstructionView( view );
+        const void * cacheKey = view.cacheKey != nullptr
+            ? view.cacheKey : view.ownerToken;
+        Ns3DDeviceState * owner = nullptr;
+        const auto binding = boundStates_.find( cacheKey );
+        if ( binding != boundStates_.end() )
+        {
+            owner = binding->second;
+            auto * hipState =
+                dynamic_cast< HipNs3DBackendState * >( owner->BackendState() );
+            if ( hipState == nullptr )
+            {
+                throw std::logic_error(
+                    "bound HIP Ns3D state lost its backend ownership" );
+            }
+            storage = &hipState->Gradient();
+            topologyGeneration = owner->TopologyGeneration();
+        }
+        if ( storage->cellState.Size() <
+                 static_cast< std::size_t >( view.nEquations )
+                     * ( view.nCells + view.nGhostCells )
+             || storage->cellGradient.Size() <
+                 static_cast< std::size_t >( view.nEquations ) * 3
+                     * ( view.nCells + view.nGhostCells )
+             || ! storage->geometryCacheValid
+             || storage->cachedFaces != view.nFaces
+             || storage->cachedBoundaryFaces != view.nBoundaryFaces )
         {
             throw std::logic_error(
-                "bound HIP Ns3D state lost its backend ownership" );
+                "HIP reconstruction requires a preceding compatible gradient" );
         }
-        storage = &hipState->Gradient();
-    }
-    const std::uint64_t topologyGeneration = owner != nullptr
-        ? owner->TopologyGeneration() : view.topologyGeneration;
-    if ( storage->cellState.Size() <
-             static_cast< std::size_t >( view.nEquations )
-                 * ( view.nCells + view.nGhostCells )
-         || storage->cellGradient.Size() <
-             static_cast< std::size_t >( view.nEquations ) * 3
-                 * ( view.nCells + view.nGhostCells )
-         || ! storage->geometryCacheValid
-         || storage->cachedFaces != view.nFaces
-         || storage->cachedBoundaryFaces != view.nBoundaryFaces )
-    {
-        throw std::logic_error(
-            "HIP reconstruction requires a preceding compatible gradient" );
     }
 
     const int totalCells = view.nCells + view.nGhostCells;
