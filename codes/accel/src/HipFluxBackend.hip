@@ -38,6 +38,30 @@ void CheckHip( hipError_t status, const char * operation )
         std::string( operation ) + ": " + hipGetErrorString( status ) );
 }
 
+// Every kernel batch in the device-resident path used to be followed by a full
+// queue drain, including the batches whose next statement only launches another
+// kernel and whose result is never read back on the host in between.  Eight
+// ranks share one card, so those drains are paid eight times per stage.  Each
+// drain here is an error check only: every real host read goes through
+// hipMemcpy, which blocks on its own.  ONEFLOW_HIP_DEFER_SYNC=1 keeps the
+// launch-error check (hipGetLastError) and drops the drain.  The default stays
+// off so the validated timing basis does not move until the gates rerun with
+// the flag enabled.
+bool HipDeferSyncEnabled()
+{
+    static const bool enabled = [] {
+        const char * value = std::getenv( "ONEFLOW_HIP_DEFER_SYNC" );
+        return value != nullptr && value[ 0 ] == '1';
+    }();
+    return enabled;
+}
+
+void HipDrain( const char * operation )
+{
+    if ( HipDeferSyncEnabled() ) return;
+    CheckHip( hipDeviceSynchronize(), operation );
+}
+
 std::unique_ptr< HipFluxBackend > sharedHipFluxBackend;
 
 class HipNs3DBackendState final : public Ns3DBackendState
@@ -2158,7 +2182,7 @@ void HipFluxBackend::CalcGradient( const CellGradientView & view )
             view.nCells, view.nBoundaryFaces, view.nEquations );
     }
     CheckHip( hipGetLastError(), "gradient kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "gradient kernel synchronize" );
+    HipDrain( "gradient kernel synchronize" );
     }
     if ( ! view.downloadToHost ) return;
     // One contiguous device->host transfer plus a host-side scatter instead of
@@ -2345,9 +2369,7 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
             view.nCells );
         CheckHip( hipGetLastError(), "local timestep cap kernel launch" );
     }
-    CheckHip(
-        hipDeviceSynchronize(),
-        "local timestep kernel synchronize" );
+    HipDrain( "local timestep kernel synchronize" );
 
     storage->cachedTimeStepHost = view.timeStep;
     storage->residentTimeStepReady = true;
@@ -2832,7 +2854,7 @@ void HipFluxBackend::ReconstructFaceValues(
         view.densityComponent, view.pressureComponent,
         storage->qf1.Data(), storage->qf2.Data() );
     CheckHip( hipGetLastError(), "reconstruction kernel launch" );
-    CheckHip( hipDeviceSynchronize(), "reconstruction kernel synchronize" );
+    HipDrain( "reconstruction kernel synchronize" );
 
     if ( downloadToHost )
     {
@@ -2982,8 +3004,7 @@ void HipFluxBackend::CalcAndAddReconstructedFaceFlux(
         storage->residual.Data() );
     CheckHip( hipGetLastError(),
               "reconstructed primitive flux kernel launch" );
-    CheckHip( hipDeviceSynchronize(),
-              "reconstructed primitive flux kernel synchronize" );
+    HipDrain( "reconstructed primitive flux kernel synchronize" );
     }
     if ( downloadResidual && residual.values != nullptr )
     {
@@ -3058,9 +3079,7 @@ void HipFluxBackend::ScaleCurrentResidual(
         storage.cellVolume.Data(), view.nCells, view.nEquations,
         view.rkCoefficient );
     CheckHip( hipGetLastError(), "state residual scale kernel launch" );
-    CheckHip(
-        hipDeviceSynchronize(),
-        "state residual scale kernel synchronize" );
+    HipDrain( "state residual scale kernel synchronize" );
     storage.residualMetricsValid = true;
 }
 
@@ -3256,9 +3275,7 @@ BoundaryBufferView HipFluxBackend::PackBoundary(
 
     if ( mode == BoundaryTransferMode::DeviceDirect )
     {
-        CheckHip(
-            hipDeviceSynchronize(),
-            "boundary pack kernel synchronize" );
+        HipDrain( "boundary pack kernel synchronize" );
         return {
             boundary.values.Data(),
             valueCount,
@@ -3577,9 +3594,7 @@ void HipFluxBackend::UnpackBoundary(
             cellCount, static_cast< int >( endpoint.cellIds.size() ),
             nEquations, storage.cellState.Data() );
         CheckHip( hipGetLastError(), "boundary unpack kernel launch" );
-        CheckHip(
-            hipDeviceSynchronize(),
-            "boundary unpack kernel synchronize" );
+        HipDrain( "boundary unpack kernel synchronize" );
     }
     // The paired host exchange wrote the same ghost cells, and those values
     // were just received into the state-owned device q.  The ghost epoch is now
