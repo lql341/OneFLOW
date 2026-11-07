@@ -11,6 +11,7 @@ License
 #include "AccelRuntime.h"
 #include "EulerCpuAdapter.h"
 #include "DeviceBuffer.h"
+#include "HipProductionPolicy.h"
 #include "StageProfiler.h"
 
 #include <hip/hip_runtime.h>
@@ -60,6 +61,15 @@ void HipDrain( const char * operation )
 {
     if ( HipDeferSyncEnabled() ) return;
     CheckHip( hipDeviceSynchronize(), operation );
+}
+
+// Scalar status reads are full round trips: the driver has to drain the queue
+// to return four bytes.  The hot path did one per time step and one per stage
+// update.  With ONEFLOW_HIP_DEFER_STATUS=1 the flag stays on the device and the
+// macro step checks it once through CheckResidentStatus().
+bool HipDeferStatusEnabled()
+{
+    return HipStatusCheckDeferred();
 }
 
 std::unique_ptr< HipFluxBackend > sharedHipFluxBackend;
@@ -2366,11 +2376,14 @@ void HipFluxBackend::CalcLocalInviscidTimeStep(
         view.cfl, view.nCells, storage->timeStep.Data(),
         storage->minTimeStep.Data(), storage->timeStepStatus.Data() );
     CheckHip( hipGetLastError(), "local timestep kernel launch" );
-    storage->timeStepStatus.CopyToHost( & status, 1 );
-    if ( status != 0 )
+    if ( ! HipDeferStatusEnabled() )
     {
-        throw std::runtime_error(
-            "HIP local timestep produced an invalid spectral radius" );
+        storage->timeStepStatus.CopyToHost( & status, 1 );
+        if ( status != 0 )
+        {
+            throw std::runtime_error(
+                "HIP local timestep produced an invalid spectral radius" );
+        }
     }
     if ( view.maxTimeRatio > 0.0 )
     {
@@ -3085,6 +3098,36 @@ void HipFluxBackend::ScaleCurrentResidual(
     storage.residualMetricsValid = true;
 }
 
+void HipFluxBackend::CheckResidentStatus()
+{
+    // Only bound states carry the flags; the fallback storage is used by the
+    // contract tests, which check their own status synchronously.
+    for ( auto & entry : boundStates_ )
+    {
+        auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+            entry.second->BackendState() );
+        if ( hipState == nullptr ) continue;
+        HipGradientStorage & storage = hipState->Gradient();
+        int timeStepStatus = 0;
+        int updateStatus = 0;
+        storage.timeStepStatus.CopyToHost( & timeStepStatus, 1 );
+        storage.stateUpdateStatus.CopyToHost( & updateStatus, 1 );
+        if ( timeStepStatus != 0 )
+        {
+            throw std::runtime_error(
+                "HIP local timestep produced an invalid spectral radius" );
+        }
+        if ( updateStatus != 0 )
+        {
+            throw std::runtime_error(
+                "HIP primitive state update produced a non-physical state" );
+        }
+        int zero = 0;
+        storage.timeStepStatus.CopyFromHost( & zero, 1 );
+        storage.stateUpdateStatus.CopyFromHost( & zero, 1 );
+    }
+}
+
 void HipFluxBackend::UpdatePrimitiveState(
     const CellStateUpdateView & view,
     bool downloadToHost )
@@ -3118,7 +3161,11 @@ void HipFluxBackend::UpdatePrimitiveState(
     }
 
     int status = 0;
-    storage.stateUpdateStatus.CopyFromHost( & status, 1 );
+    const bool deferStatus = HipDeferStatusEnabled();
+    if ( ! deferStatus )
+    {
+        storage.stateUpdateStatus.CopyFromHost( & status, 1 );
+    }
     const int blockSize = 256;
     { ScopedStageTimer updateTimer( "state_update" );
     hipLaunchKernelGGL(
@@ -3129,11 +3176,14 @@ void HipFluxBackend::UpdatePrimitiveState(
         view.nCells, totalCells, view.gamma,
         storage.stateUpdateStatus.Data() );
     CheckHip( hipGetLastError(), "primitive state update kernel launch" );
-    storage.stateUpdateStatus.CopyToHost( & status, 1 );
-    if ( status != 0 )
+    if ( ! deferStatus )
     {
-        throw std::runtime_error(
-            "HIP primitive state update produced a non-physical state" );
+        storage.stateUpdateStatus.CopyToHost( & status, 1 );
+        if ( status != 0 )
+        {
+            throw std::runtime_error(
+                "HIP primitive state update produced a non-physical state" );
+        }
     }
 
     if ( downloadToHost )

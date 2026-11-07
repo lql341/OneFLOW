@@ -246,6 +246,15 @@ inline bool HipSkipHostRkSlotCopy(
 // WRONG (each zone keeps stale ghosts), so it must never be used for accuracy or
 // performance claims; it only answers "how much would removing communication
 // save". Enabled solely by ONEFLOW_DIAG_NO_COMM=1.
+// Keep the time-step / state-update status flags on the device and check them
+// once per macro step instead of after every stage call.  Opt-in so the
+// validated path keeps its per-call error detection.
+inline bool HipStatusCheckDeferred()
+{
+    const char * value = CachedEnv( "ONEFLOW_HIP_DEFER_STATUS" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
 inline bool DiagNoCommunication()
 {
     const char * value = CachedEnv( "ONEFLOW_DIAG_NO_COMM" );

@@ -16,6 +16,7 @@ License
 #include "GridState.h"
 #include "Multigrid.h"
 #include "HipProductionPolicy.h"
+#include "HipFluxBackend.h"
 #include "ResidualBasePolicy.h"
 #include "StageProfiler.h"
 #include "SolverDef.h"
@@ -110,6 +111,16 @@ void NsResidentMacroStep()
         }
     }
     ctrl.rkStage = -1;
+
+#ifdef ONEFLOW_ENABLE_HIP
+    // With ONEFLOW_HIP_DEFER_STATUS=1 the non-physical/non-finite flags stay on
+    // the device while the stages run; check them once here instead of paying a
+    // blocking 4-byte round trip after every stage.
+    if ( HipStatusCheckDeferred() )
+    {
+        HipFluxBackend::Shared().CheckResidentStatus();
+    }
+#endif
 }
 
 EndNameSpace
