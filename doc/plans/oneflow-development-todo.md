@@ -31,7 +31,7 @@
 
 | 项 | 值 |
 |---|---|
-| refs | `master` = `origin/master` = `upstream/master` = `28c8d259e`（2026-11-04 同步）；`dev` 已合并该上游 HEAD，含 11 个本地切片提交 |
+| refs | `master` = `origin/master` = `upstream/master` = `f2fc6ea2e`（2026-11-07 三端同步，PR #252）；`dev` 已合并该上游 HEAD，领先 upstream 402 个提交（其中非 merge 切片 375 个） |
 | upstream PR | #159 / #160 / #203 / #227 / #238 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
 | 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**15.59 / 15.59 / 14.83（中位 15.59）ms/step**，对 8 核 CPU `288.20` → **18.5×**（报告 `doc/reports/performance/oneflow-3d-euler-performance-current.*`）；历史点 31.64（2026-10-25，不可当 A 侧） |
@@ -91,7 +91,7 @@
 | **时间推进调度（RK stage 循环）** | **host task 序列** | 每 stage 派发 + fence，是剩余固定开销的主因（§4 F7） |
 | gradient / reconstruction / flux+residual / state update / 本地边界 / 本地时间步 | device | 每 stage 一批 kernel，q 不回写 |
 | q 与 gradient 的 interface 交换 | device pack + host MPI | 每步 4 轮（3 stage + 1 post），§4 A2 |
-| limiter / LUSGS / multigrid / 双时间 | host | 能力外，回退 |
+| limiter / LUSGS / multigrid / 双时间 | limiter = device（Barth）/ 其余 host | Barth 的 φ 由设备 `ReconstructionLimiterMode::DeviceCell` 计算（主机侧重复的 `CalcLimiter()` 已删）；数值仍差 1.1e-6 未过门禁，默认 `ilim=0`；Venkat 未实现，LUSGS/multigrid/双时间回退 host |
 | 粘性 / 湍流 / SA | host | 能力外，回退；旗舰算例正在此列 |
 | 残差诊断 / 正性检查 | device 归约标量 | 单 zone 已闭环，多 solver 聚合待做 |
 | restart / 可视化 / 气动力 / Cp | host | 按需 D2H（气动力只回拉边界相邻 cell） |
@@ -122,18 +122,19 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.2 Phase B — 数值能力（0/6，退出门见 B-exit）
 
-- [ ] **B1** 无粘通量 scheme：Roe / HLLC / AUSM 系列设备化，LF 保留作 oracle
-  - 已勘察（2026-11-02）：设备侧只有 Rusanov/Lax–Friedrichs 一种通量，见
-    `CalcAndScatterPrimitiveEulerKernel` 的 `scheme == 1` 分支（通量形如
-    `0.5(fL+fR) - 0.5·λmax·(qR-qL)`）。**命名陷阱**：内核里的 `scheme` 是私有编号，
-    `1` 表示 Rusanov，而求解器的 `ISCHEME_ROE = 1`、`ISCHEME_LAX_FRIEDRICHSS = 5`
-    是另一套编号；生产调用处把 `1` 硬编码写死，因此不能按名字推断后端用的是哪种通量
-  - **B1.0** 把 `nscom.ischeme` 透传到内核，替掉硬编码的 `1`，并让 capability 守卫
-    接受新 scheme；LF 仍走现有分支，保证逐位不变
-  - **B1.1** 按 `codes/ns/src/NsInvFlux.cpp` 与 `NsInvFluxPolicy.h` 的
-    `RoeAverageState` 实现设备侧 Roe，含熵修正与正性处理，公式与主机逐项对齐
-  - **B1.2** 单点数值契约：同一左右状态在 CPU 与设备上各算一次面通量，要求
-    `max_abs ≤ 1e-14`；再进 3 步 trace（1e-10）与 200 步跨后端（1e-12）
+- [x] **B1** 无粘通量 scheme：**Roe 已设备化并过单面契约**；HLLC/AUSM 未开始，
+    需要时按同一路径另开子项；LF 保留作 oracle
+  - [x] **B1.0** scheme 透传：`nscom.ischeme` 经 `DeviceFluxScheme()` 显式映射进内核，
+    替掉原先硬编码的 `1`。**命名陷阱保留作记录**：内核私有编号 `1`=Rusanov、`2`=Roe，
+    与求解器的 `ISCHEME_ROE = 1`、`ISCHEME_LAX_FRIEDRICHSS = 5` 是两套编号，映射函数
+    就是为了不让两边按名字互相推断；未实现的 scheme 抛 `invalid_argument`，
+    capability 增加 `roeScheme` 位后接受 Roe
+  - [x] **B1.1** 设备侧 Roe：`HipFluxBackend.hip` 的 `RoeFaceFlux` 按 `codes/ns` 的
+    `NsInvFluxPolicy` 逐项对齐（Roe 平均态、Harten 熵修正、绝对特征值与耗散波系数、
+    法向跳跃与耦合项），由 `scheme == 2` 分支调用；LF 分支保持逐位不变
+  - [x] **B1.2** 单点数值契约：`oneflow_device_roe_contract_test` 3/3；单 zone 200 步
+    `res_max_rel = 0.0`。**未记录**：3 步多区 trace 与 CPU 五算例的 Roe 口径还没跑过，
+    在补这两条之前 Roe 只能算"单 zone 已验证"，不能当生产结论
 - [ ] **B2** limiter：Barth / Venkat（cell 邻域极值），解除 `ilim=0`
   - 已落地：设备侧 Barth 因子的**契约测试** `oneflow_device_limiter_contract_test`
     （5/5，覆盖范围内、超上界、低于下界、反向法向、斜面），参考实现是主机
@@ -261,7 +262,7 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
 | 阶段 | 勾选/总数 | 状态 |
 |---|---|---|
 | Phase A 设备驻留执行 | 1/4 | 🟨 A1 完成（15.6 ms/step），A2–A4 在途 |
-| Phase B 数值能力 | 1/6（另有 B-exit） | 🟨 B1（设备 Roe）完成；B2 在途，差 1.1e-6 |
+| Phase B 数值能力 | 1/6（另有 B-exit） | 🟨 B1（设备 Roe）完成（HLLC/AUSM 未开始，Roe 只到单 zone 证据）；B2 在途，差 1.1e-6 |
 | Phase C 真实算例与 IO | 0/5 | ⬜ |
 | Phase D 多卡 | 0/4 | ⬜ 卡在 D1；已有 8/16/32 rank 对 1/2/4 DCU 的只读实测（§4.8b） |
 | Phase E 架构通用化 | 0/5 | ⬜ |

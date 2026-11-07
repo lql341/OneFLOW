@@ -102,7 +102,8 @@ task 通过全局 `ug / unsf / nscom / ctrl / ZoneState::zid` 隐式定位到"�
    让"哪个 zone 的哪份 device state 是当前的"靠隐式约定；本轮 device-authoritative
    工作反复踩到（初始化上传、`ug.Init()` 重绑定、contract 失效）。
 2. **host 调度 + 逐 stage kernel**：每个 stage 至少一次 kernel fence、一次 task 派发、
-   若干次 host 侧整场循环；这正是 3D 目前"31.6 ms 里 kernel 只占 1.5 ms"的原因。
+   若干次 host 侧整场循环；这正是 3D 固定开销占比高的原因（在 31.6 ms/step 口径下
+   测得 kernel 只占约 1.5 ms；A1 收口后总时间降到 15.6，这个结构性问题仍在）。
 3. **capability 判断分散**：`HipProductionPolicy` 的开关 + 各文件里的 `UseHip*`
    守卫 + 两个 capability 枚举；能力扩展时会组合爆炸。
 4. **双实现 + 只有 trace 级等价**：host 路径是唯一 oracle，device 路径没有单元级
@@ -131,8 +132,8 @@ Phase A（执行模型）
 
 | 子项 | 内容 | 预期 | 证据/入口 |
 |---|---|---|---|
-| A1 | 固定开销：F7.1（gradient 镜像只在最后 stage）与 F7.2（设备残差基底归零，不再填 host RK 槽位）均已完成，同节点相对每 stage 镜像累计 −22%（29.9 → 26.7 → 21.0 ms/step）。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup | 相对每 stage 镜像累计约 −22% | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
-| A2 | 每步一次界面交换：每个 stage 把 `q` 与梯度合成一趟过界，滞后保持不变。先例已否：直接删掉 post 轮会让 200 步跨后端拓到 `5.54e-7`。3D DeviceDirect / GPU-aware 重测属 D2，等 D1 的合法 fixture | −2.8 ms | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
+| A1 | 固定开销：F7.1（gradient 镜像只在最后 stage）与 F7.2（设备残差基底归零，不再填 host RK 槽位）均已完成；A1.3（跳 host 历史层）与 A1.5（跳 host 残差账本）再各去掉一次全场 host 写，同节点累计到 **15.6 ms/step**（F1 报告，18.5× @8:1 槽）。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup | 相对每 stage 镜像累计 −22%（29.9 → 26.7 → 21.0），A1 收口 **15.6** | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
+| A2 | 每步一次界面交换：每个 stage 把 `q` 与梯度合成一趟过界，滞后保持不变。先例已否：直接删掉 post 轮会让 200 步跨后端拓到 `5.54e-7`。3D DeviceDirect / GPU-aware 重测属 D2，等 D1 的合法 fixture | 上限约 **1.1 ms**（实测关闭全部界面通信只省 2.2），**不是当前优先级** | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
 | A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，stage 内不再有 host 同步点 | −6 ms | `HipFluxBackend` 各 kernel + `TimeIntegral` |
 | A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend（复用已有 seam 与 `stageCallback`），host 只负责 INIT/输出/门控；每宏步结束按需 Download | 达到 12–14 ms | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
 
@@ -145,7 +146,9 @@ Phase A（执行模型）
 
 ### Phase B — 数值能力（决定这条后端是否有实用价值）
 
-现状：设备路径只接受 `MULTI_STAGE + Lax-Friedrichs(5) + ilim=0 + vismodel=0`。
+现状：设备路径接受 `MULTI_STAGE + (Lax-Friedrichs 或 Roe) + ilim∈{0, Barth} + vismodel=0`。
+Barth 的 φ 已在设备上算，但数值还差 `1.1e-6` 未过 1e-12 门禁，因此默认仍是 `ilim=0`；
+Venkat / HLLC / AUSM 未实现，显式请求直接 fail-fast。
 仓库自带的旗舰算例 `test/cfd/m6wingroe_sa` 是 `LU-SGS + Roe + SA`，**完全在 host**。
 
 | 子项 | 内容 | 依赖 | 关键文件 |
@@ -284,7 +287,10 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 
 ## 7. 立刻可执行的三件事（两周内）
 
-1. **A2**：每个 stage 把 `q` 与梯度合成一趟过界，滞后与 legacy 逐位对应。“删掉第 4 轮”
-   已被 200 步跨后端门禁否掉（`2.33e-18` → `5.54e-7`）。
-2. **F1 3D 正式性能报告**：同节点补 CPU 8C 1000 步 2–3 个样本。不要用 31.6 当 A 侧。
+1. **定位每步 8.9 ms 固定基数**：关通信、`rk_stage=1`、8 rank/1 DCU 仍有的基数，
+   与 cell 数 / zone 数 / rank 数无关（todo §4.1 A1.7、§5 第 0 条）。A2 的上限只有约 1.1 ms，已不在当前优先级。
+2. **A3 stage 融合**：每 stage 3.29 / 1.88 / 1.20 ms（1/2/4 卡，关通信），先合
+   `gradient→reconstruction→flux` 一段。
 3. **D1 fixture 决策**：向 owner 申请 ≥1M cell 带 `.skl` 的网格，或评估 `GenerateLink`。
+
+（F1 3D 正式报告已于 2026-11-02 发布，不再列为待办。）

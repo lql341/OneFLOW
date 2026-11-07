@@ -76,7 +76,7 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**基线（2026-11-04 同步后）**：`master` = `origin/master` = `upstream/master` = `28c8d259e`；
+**基线（2026-11-07 同步后）**：`master` = `origin/master` = `upstream/master` = `f2fc6ea2e`；
 `dev` 已合并该 HEAD，无冲突。工作区干净。
 
 **本轮结论一句话**：Phase A 的 A1 收口在 **15.6 ms/step（18.5× @8:1 槽，报告已发布）**，
@@ -116,9 +116,10 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    buffer，3 步内 non-physical；收益只有 0.3–0.7 ms/step，不值。
 5. **异常排查**：`Simulation::RunImpl` 的 `catch(...)` 会先 `MPI_Finalize` 再重抛，
    跨 rank 抛异常时 stderr 可能永远打不出来；临时在 catch 里先打印 `what()`。
-6. **capability 边界**：只有 `NS_SOLVER / 5 方程 / Lax–Friedrichs / ilim=0 / vismodel=0 /
-   单 grid level / 稳态显式 RK / 1 rank 1 zone` 走设备；其它配置回退 host，显式请求
-   不支持的项 fail-fast。旗舰算例 `m6wingroe_sa` 是 `LU-SGS + Roe + SA`，仍在 host。
+6. **capability 边界**：只有 `NS_SOLVER / 5 方程 / (Lax–Friedrichs 或 Roe) / ilim∈{0, Barth} /
+   vismodel=0 / 单 grid level / 稳态显式 RK / 1 rank 1 zone` 走设备；Barth 的数值还差
+   `1.1e-6` 未过门禁，默认不放行；Venkat / HLLC / AUSM 未实现，显式请求 fail-fast。
+   其它残缺配置回退 host。旗舰算例 `m6wingroe_sa` 是 `LU-SGS + Roe + SA`，仍在 host。
 7. **短基准的假象**：`bnd_resize` 的首个 `hipMalloc` 会被平均进 ≤100 步的基准
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
 8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
