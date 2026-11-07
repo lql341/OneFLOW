@@ -3108,23 +3108,37 @@ void HipFluxBackend::CheckResidentStatus()
             entry.second->BackendState() );
         if ( hipState == nullptr ) continue;
         HipGradientStorage & storage = hipState->Gradient();
-        int timeStepStatus = 0;
-        int updateStatus = 0;
-        storage.timeStepStatus.CopyToHost( & timeStepStatus, 1 );
-        storage.stateUpdateStatus.CopyToHost( & updateStatus, 1 );
-        if ( timeStepStatus != 0 )
+        // A zone that never ran the resident time step (or never updated the
+        // state) has an empty flag buffer; reading it would trip the copy
+        // guard rather than report a status.
+        if ( storage.timeStepStatus.Size() < 1
+             && storage.stateUpdateStatus.Size() < 1 )
         {
-            throw std::runtime_error(
-                "HIP local timestep produced an invalid spectral radius" );
-        }
-        if ( updateStatus != 0 )
-        {
-            throw std::runtime_error(
-                "HIP primitive state update produced a non-physical state" );
+            continue;
         }
         int zero = 0;
-        storage.timeStepStatus.CopyFromHost( & zero, 1 );
-        storage.stateUpdateStatus.CopyFromHost( & zero, 1 );
+        if ( storage.timeStepStatus.Size() >= 1 )
+        {
+            int timeStepStatus = 0;
+            storage.timeStepStatus.CopyToHost( & timeStepStatus, 1 );
+            if ( timeStepStatus != 0 )
+            {
+                throw std::runtime_error(
+                    "HIP local timestep produced an invalid spectral radius" );
+            }
+            storage.timeStepStatus.CopyFromHost( & zero, 1 );
+        }
+        if ( storage.stateUpdateStatus.Size() >= 1 )
+        {
+            int updateStatus = 0;
+            storage.stateUpdateStatus.CopyToHost( & updateStatus, 1 );
+            if ( updateStatus != 0 )
+            {
+                throw std::runtime_error(
+                    "HIP primitive state update produced a non-physical state" );
+            }
+            storage.stateUpdateStatus.CopyFromHost( & zero, 1 );
+        }
     }
 }
 
