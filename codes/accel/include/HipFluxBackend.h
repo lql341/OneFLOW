@@ -178,6 +178,11 @@ struct HipGradientStorage
     const int * cachedBoundaryRightCell = nullptr;
     const int * cachedBoundaryType = nullptr;
     bool boundaryGeometryCacheValid = false;
+    // Inflow values are tiny but the upload is a blocking H2D, so it became the
+    // drain point for every deferred kernel in the stage. Compare the values
+    // (not just the pointer) and upload only when they actually change.
+    Real cachedInflowValues[ 8 ] = {};
+    int cachedInflowCount = 0;
     std::unordered_map<
         HipBoundaryEndpointKey,
         HipBoundaryEndpointStorage,

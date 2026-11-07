@@ -2525,7 +2525,20 @@ void HipFluxBackend::UpdateBoundaryState( const BoundaryStateView & view )
     // unconditional even when the static boundary metadata is cached.
     {
     ScopedStageTimer staticTimer( "bnd_static_upload" );
-    storage->inflow.CopyFromHost( view.inflow, view.nEquations );
+    bool inflowChanged = storage->cachedInflowCount != view.nEquations;
+    for ( int equation = 0;
+          ! inflowChanged && equation < view.nEquations; ++ equation )
+    {
+        inflowChanged = storage->cachedInflowValues[ equation ]
+            != view.inflow[ equation ];
+    }
+    if ( inflowChanged )
+    {
+        storage->inflow.CopyFromHost( view.inflow, view.nEquations );
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+            storage->cachedInflowValues[ equation ] = view.inflow[ equation ];
+        storage->cachedInflowCount = view.nEquations;
+    }
     storage->boundaryFaceState.Resize(
         view.nEquations * view.nBoundaryFaces );
     storage->wallStateValid = view.deviceAuthoritativeHostMirror;
