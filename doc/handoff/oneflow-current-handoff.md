@@ -98,7 +98,18 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
   其中 gradient 与 flux 的 drain 原本无条件执行（连"不下载"的分支也 drain）。
 - **已就位但未验证**：`db3f9e413` 把上述 7 处 drain 收进 `HipDrain()`，
   `ONEFLOW_HIP_DEFER_SYNC=1` 时只保留 `hipGetLastError` 检查、跳过 drain；默认关，
-  所以已发布的 15.6 ms/step 口径不动。它是 A1.7 的 A/B 开关，**不是已验证的结论**。
+  所以已发布的 15.6 ms/step 口径不动。
+- **2026-11-07 实测（昆山 1 DCU / 8 rank / 8 zone / 1000 步）**：门禁全绿（trace `24/0/0`、
+  200 步 XB PASS、CPU 五算例 normal 5/5 + strict 5/5）；`rk_stage=3` **15.58 ms/step**，
+  与 F1 的 15.59 同口径复现；`rk_stage=1` + 关通信 **6.88**；`ONEFLOW_HIP_DEFER_SYNC=1`
+  只到 **15.25**（−2.1%，1 stage 时 6.88→6.39）。**drain 不是基数**，基数 ≈ 5.5 ms/step。
+- **口径更正（重要）**：每次启动固定约 **1.4–1.6 s**，100 步口径会把它摊成 +14 ms/step、
+  200 步 +7。A1.7 的 8.93 属于短基准读数；引用基数必须写步数并扣启动，
+  或用 1000 步的斜率（本次每 stage 边际 4.35 ms）。单发样本噪声可达 ±20%，
+  必须交错重复取中位（同一作业内 A/B 交替），不能跨作业比。
+- **`6ce57b79d`** 给宏步补了 `macro_time_step` / `macro_update_residuals` /
+  `macro_calc_lhs` / `macro_update_flowfield` / `macro_calc_boundary` / `macro_interface`
+  分段（profiler 不开时零成本）。下一轮用它把 5.5 ms/step 归到具体段。
 - **之后（按价值）**：`A3` stage 融合（每 stage 3.29 / 1.88 / 1.20 ms 于 1/2/4 卡，
   3 stage 合计 9.9 / 5.6 / 3.6）→ `B2` 收口（差 `1.113e-06`）→ `B3–B5`（粘性/SA/LU-SGS，
   B-exit 的前置）→ `A4`。
