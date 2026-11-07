@@ -3142,6 +3142,129 @@ void HipFluxBackend::CheckResidentStatus()
     }
 }
 
+void HipFluxBackend::ScaleAndUpdatePrimitiveState(
+    const CellStateUpdateView & view,
+    bool downloadToHost )
+{
+    // Issuing the scale and the update from one entry removes a host entry and
+    // its queue drain per stage without touching either formula: the two
+    // kernels keep their own launch geometry and the residual field is written
+    // back exactly as before.
+    ValidateCellStateUpdateView( view );
+    const auto binding = boundStates_.find( view.cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP fused scale/update requires a bound Ns3D state" );
+    }
+    Ns3DDeviceState * owner = binding->second;
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        owner->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error(
+            "bound HIP state update is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = view.nCells + view.nGhostCells;
+    if ( ! storage.residualValid
+         || storage.residualCells != view.nCells
+         || storage.residualEquations != view.nEquations
+         || storage.cachedCells != view.nCells
+         || storage.cachedGhostCells != view.nGhostCells
+         || storage.cachedVolume != view.cellVolume
+         || storage.cellVolume.Size()
+             < static_cast< std::size_t >( view.nCells )
+         || storage.cellState.Size()
+             < static_cast< std::size_t >( totalCells * view.nEquations ) )
+    {
+        throw std::logic_error(
+            "HIP fused scale/update requires resident state and residual" );
+    }
+
+    const bool residentTimeStepUsable =
+        view.preferResidentTimeStep
+        && storage.residentTimeStepReady
+        && storage.cachedTimeStepHost == view.timeStep
+        && storage.cachedTimeStepCells == view.nCells;
+    if ( ! residentTimeStepUsable )
+    {
+        storage.timeStep.CopyFromHost( view.timeStep, view.nCells );
+        storage.cachedTimeStepHost = view.timeStep;
+        storage.cachedTimeStepCells = view.nCells;
+        storage.residentTimeStepReady = true;
+    }
+
+    const int blockSize = 256;
+    {
+        ScopedStageTimer timer( "fused_scale" );
+        const int total = view.nCells * view.nEquations;
+        hipLaunchKernelGGL(
+            ScaleResidualKernel,
+            dim3( ( total + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0,
+            storage.residual.Data(), storage.timeStep.Data(),
+            storage.cellVolume.Data(), view.nCells, view.nEquations,
+            view.rkCoefficient );
+        CheckHip( hipGetLastError(), "state residual scale kernel launch" );
+    }
+    storage.residualMetricsValid = true;
+
+    int status = 0;
+    const bool deferStatus = HipDeferStatusEnabled();
+    if ( ! deferStatus )
+    {
+        storage.stateUpdateStatus.CopyFromHost( & status, 1 );
+    }
+    {
+        ScopedStageTimer timer( "state_update" );
+        hipLaunchKernelGGL(
+            UpdatePrimitiveStateKernel,
+            dim3( ( view.nCells + blockSize - 1 ) / blockSize ),
+            dim3( blockSize ), 0, 0,
+            storage.cellState.Data(), storage.residual.Data(),
+            view.nCells, totalCells, view.gamma,
+            storage.stateUpdateStatus.Data() );
+        CheckHip( hipGetLastError(), "primitive state update kernel launch" );
+    }
+    if ( ! deferStatus )
+    {
+        storage.stateUpdateStatus.CopyToHost( & status, 1 );
+        if ( status != 0 )
+        {
+            throw std::runtime_error(
+                "HIP primitive state update produced a non-physical state" );
+        }
+    }
+    if ( downloadToHost )
+    {
+        for ( int equation = 0; equation < view.nEquations; ++ equation )
+        {
+            AccelRuntime::Instance().Backend().Copy(
+                view.primitive[ equation ],
+                storage.cellState.Data() + equation * totalCells,
+                view.nCells * sizeof( Real ),
+                AccelCopyKind::DeviceToHost );
+        }
+    }
+    owner->MarkFieldChanged();
+    storage.residualValid = false;
+    if ( view.retainResidentState && downloadToHost )
+    {
+        storage.residentContract.NoteDeviceFieldUpdate(
+            owner->FieldGeneration() );
+    }
+    else if ( view.retainResidentState && view.deviceAuthoritative )
+    {
+        storage.residentContract.NoteDeviceFieldAdvance(
+            owner->FieldGeneration() );
+    }
+    else
+    {
+        storage.residentContract.Invalidate();
+    }
+}
+
 void HipFluxBackend::UpdatePrimitiveState(
     const CellStateUpdateView & view,
     bool downloadToHost )
@@ -3174,6 +3297,15 @@ void HipFluxBackend::UpdatePrimitiveState(
             "HIP primitive update requires resident state and residual" );
     }
 
+    if ( storage.residualScalePending )
+    {
+        CellStateUpdateView fused = view;
+        fused.rkCoefficient = storage.residualScaleCoefficient;
+        fused.preferResidentTimeStep = true;
+        storage.residualScalePending = false;
+        ScaleAndUpdatePrimitiveState( fused, downloadToHost );
+        return;
+    }
     int status = 0;
     const bool deferStatus = HipDeferStatusEnabled();
     if ( ! deferStatus )

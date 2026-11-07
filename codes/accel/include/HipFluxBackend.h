@@ -220,6 +220,13 @@ struct HipGradientStorage
     // The state update consumes residualValid, but the diagnostics still need
     // the scaled residual, so the two flags are tracked separately.
     bool residualMetricsValid = false;
+    // CALC_LHS and UPDATE_FLOWFIELD are two element-wise passes over the same
+    // resident arrays with nothing host-visible in between.  With
+    // ONEFLOW_HIP_FUSE_SCALE_UPDATE=1 the scale kernel is deferred and issued
+    // from the update entry, so a stage pays one host entry and one drain
+    // instead of two.
+    bool residualScalePending = false;
+    Real residualScaleCoefficient = 1.0;
     const Real * cachedStateQ[ 5 ] = {};
     // Cells whose gradient is mirrored to the host for the host-side interface
     // exchange.  Kept resident so the mirror does not re-upload ids per stage.
@@ -370,6 +377,15 @@ public:
     // the five-equation primitive -> conserved -> primitive flow update and
     // mirrors the internal-cell primitive state to host when requested.
     void ScaleCurrentResidual( const CellStateUpdateView & view );
+    // One entry for the two element-wise per-cell stages of the explicit
+    // chain.  ScaleCurrentResidual and UpdatePrimitiveState each launched a
+    // kernel, drained, and repeated the same binding/extent checks; the two
+    // kernels have no host-visible state between them, so they can be issued
+    // back to back from a single entry with a single check at the end.
+    void ScaleAndUpdatePrimitiveState(
+        const CellStateUpdateView & view,
+        bool downloadToHost );
+
     void UpdatePrimitiveState(
         const CellStateUpdateView & view,
         bool downloadToHost = true );

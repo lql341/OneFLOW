@@ -255,6 +255,15 @@ inline bool HipStatusCheckDeferred()
     return value != nullptr && value[ 0 ] == '1';
 }
 
+// Issue the residual scale from the state-update entry instead of its own call.
+// Both kernels touch the same resident arrays and no host reader sits between
+// them; the default keeps the two separate entries for bisection.
+inline bool HipFuseScaleUpdate()
+{
+    const char * value = CachedEnv( "ONEFLOW_HIP_FUSE_SCALE_UPDATE" );
+    return value != nullptr && value[ 0 ] == '1';
+}
+
 inline bool DiagNoCommunication()
 {
     const char * value = CachedEnv( "ONEFLOW_DIAG_NO_COMM" );
