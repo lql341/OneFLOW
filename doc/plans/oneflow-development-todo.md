@@ -351,6 +351,13 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
 
 #### 5.2 P1 — Phase A 收口（目标 ≤14 ms/step）
 
+- [x] **A1.9 梯度 unpack 路径的两处重复工作**（2026-11-08）：ghost-face→cell 映射按
+      (grid, ghost level) 缓存（`006f9ff39`+`6174b21bd`），unpack 的 ghost id 列表按指针复用
+      上传（`bbecf8241`）。门禁全绿（trace `24/0/0`、XB `2.331035e-18`）。
+      500 步分项：`gradient` 5.27 → 4.87、`swap_download` 5.04 → 4.55；
+      但 1000 步墙钟在噪声内（14.61–15.56），**尚未换成端到端收益**。
+      剩下的 `swap_download` 约 4.5 ms 是每个 stage 的 D2H + unpack，延迟队列的阻塞点，
+      下一步要把 ghost level 的多次 unpack 合成一次（或用非阻塞拷贝）
 - [ ] **A3 stage 融合，第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
       单卡可及收益按"每步往返次数 × 单次开销"估：每 stage 6 次 → 4 次，约 −4 ms/step
       验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 有可测收益
