@@ -76,39 +76,42 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**基线**：`master` = `origin/master` = `upstream/master` = `f2fc6ea2e`；`dev` 已合并该 HEAD。
-昆山工作区的源码快照与 `src/REVISION` 每次作业前覆盖，当前对应 `dev` 最新提交。
+**基线**：`master` = `origin/master` = `upstream/master` = `68b1e5f6a`（2026-11-08 三端同步，
+PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖。
 
-**这一轮的结论（2026-11-07/08）**
+**这一轮的结论（2026-11-08）**
 
-- **默认配置已经变快**：8 zone / 8 rank / 1 DCU / 1000 步，同节点交错 5 对
-  （15.472/15.559/15.521/15.532/15.580 vs 14.578/14.601/14.669/14.617/14.820）
-  → 中位 **15.53 → 14.62 ms/step（−5.9%）**，5 对全部同向、无重叠。
-- **门禁全绿**：trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0`、
+- **单卡性能**：8 zone / 8 rank / 1 DCU / 1000 步，同节点交错 5 对中位
+  **15.53 → 14.62 ms/step（−5.9%）**。三个开关默认生效：drain 只在回读处
+  （`ONEFLOW_HIP_DEFER_SYNC`）、非物理标志留设备宏步末查一次（`ONEFLOW_HIP_DEFER_STATUS`）、
+  残差缩放并入状态更新入口（`ONEFLOW_HIP_FUSE_SCALE_UPDATE`）；另有队列深度上限
+  （`ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`，默认 32，多 rank 不设上限会在 libgalaxyhip 里 abort）。
+- **门禁**：trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0`、
   CPU 五算例 normal 5/5 + strict 5/5。
-- **改了什么**：drain 只在需要回读处（`ONEFLOW_HIP_DEFER_SYNC`）、非物理标志留设备
-  宏步末查一次（`ONEFLOW_HIP_DEFER_STATUS`）、残差缩放并入状态更新入口
-  （`ONEFLOW_HIP_FUSE_SCALE_UPDATE`）、inflow 值不变不再每 stage 重传、
-  未完成批次数上限（`ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`，默认 32）。
-  这些开关默认全开，`=0` 逐个回退。
-- **口径教训**：短基准（100/200 步）会把 1.4–1.6 s 的启动摊成 +7~14 ms/step，
-  旧的 8.93 就是这么来的；所有基数/增益必须同节点、1000 步、交错重复取中位。
-- **多卡暂时无数据**：16/32 zone 的分区与 manifest 已跑通（runbook §1b，
-  `zones=16 interfaces=52946`、`zones=32 interfaces=73434` 均 `MULTIZONE_FIXTURE_PASS`），
-  但 16 rank/2 DCU 跑 400 步 >17 分钟（≈2.6 s/step），旧配置同样如此 →
-  ad-hoc 分区的 HIP 路径不可用，§4.8b 的 16/32 zone 数字已标记不可复现。
-  多卡结论等 D1（外部 ≥1M cell 合法分区网格）。
+- **扩展性（本轮最重要的修正）**：强扩展 67% 是**网格过分割**造成的假象——固定
+  294,912 cell 时 32 核每 rank 只剩 9,216 cell。改成每核固定 ≈8,000 cell 后：
+  CPU 8/16/32 核 58.33 / 60.42 / 66.30 ms（弱扩展 88%），
+  DCU 8/16/32 rank（1/2/4 卡）5.06 / 6.14 / 7.54 ms（弱扩展 67%），
+  同 per-rank 负载 DCU 比 CPU 快 **8.8–11.5×**。**不要再引用"2 卡以上无收益"**。
+- **两个测量陷阱**：①单 zone cube `nIFaces = 0`，不能当弱扩展基线（曾误报 94%）；
+  ②DCU 单发噪声可达 3–4 倍（32 rank/4 卡三发 5.87/23.32/7.54），必须取中位、同作业内比较。
+- **修掉的 bug**：`codes/special/src/Transfinite.cpp` 3D 插值两处复制粘贴错误
+  （k 方向用了 j 向边值；`uv` 末项乘 `ck` 应为 `cj`），修复前 65³ 网格 24% 单元负体积。
+- **B2.0 已完成**：新增 `ONEFLOW_UNS_LIMITER_DUMP`，单 zone 1 步 `ilim=1` 逐点比对——
+  φ 0.45% 单元不同（形态 0 vs 1）、面值 0.9% 不同（eq=1 为主），说明是**极值判定差异**，
+  不是公式整体错。下一步核对设备 `BarthLimiterKernel` 的邻域是否排除了边界/界面面。
 
 **下一步（按价值）**
 
-1. **A2′ 接口交换设备直发**：`swap_upload/swap_download` 现在是延迟队列的新阻塞点，
-   4 轮 host-staged 是剩余开销大头。
-2. **A3 第一段**：`gradient → reconstruction → flux` 合并成一次进入设备。
-3. **B2 收口**：`1.113e-06`。
-4. **D1**：外部 fixture，越早启动越好。
+1. **B2.1**：按差异单元核对 Barth 邻域 stencil（设备按 `boundaryMask`/`boundaryOperation`
+   跳过边界；主机 `Limiter::CalcLimiterScalar` 需逐项对照），再决定是否补整组正性判据。
+2. **A2 接口聚合**：DCU 弱扩展 67% vs CPU 88%，差在接口；把每 rank 的多个 zone-pair
+   小消息合成 1 条（GPU-aware 直发已验证**不可用**：探针 PASS 但求解器在 libgalaxyhip abort）。
+3. **A4**：RK 循环下沉设备（结构性，单卡 14.6 → 目标 9–10）。
+4. **D1**：外部 ≥1M cell 合法分区网格。
 
-**不要做**：用 ad-hoc 16/32 zone 出多卡数字；用短基准（<1000 步）报 ms/step；
-跨节点比 ms/step。
+**不要做**：单 zone 当弱扩展基线；用 <1000 步的短基准报 ms/step；跨节点比单发数字；
+用 ad-hoc 分区做多卡结论（必须显式 RK + manifest 校验）。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
 
