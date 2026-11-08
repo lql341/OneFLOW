@@ -4428,7 +4428,13 @@ void HipFluxBackend::UnpackGradientFacesFromDevice(
                              needed * sizeof( Real ) ),
                   "gradient receive zero fill" );
     }
-    storage.gradientPackIds.CopyFromHost( ghostCellIds, nFaces );
+    if ( storage.cachedGradientPackIdsHost != ghostCellIds
+         || storage.cachedGradientPackIdCount != nFaces )
+    {
+        storage.gradientPackIds.CopyFromHost( ghostCellIds, nFaces );
+        storage.cachedGradientPackIdsHost = ghostCellIds;
+        storage.cachedGradientPackIdCount = nFaces;
+    }
     const int valueCount = nFaces * 3 * nEquations;
     const int blockSize = 256;
     hipLaunchKernelGGL(

@@ -237,6 +237,10 @@ struct HipGradientStorage
     // exchange.  Kept resident so the mirror does not re-upload ids per stage.
     DeviceBuffer< int > gradientMirrorCellIds;
     DeviceBuffer< int > gradientPackIds;
+    // The unpack caller now passes a cached, stable id list for the partition;
+    // re-uploading it was a blocking H2D per ghost level per stage.
+    const int * cachedGradientPackIdsHost = nullptr;
+    int cachedGradientPackIdCount = -1;
     DeviceBuffer< Real > gradientPackValues;
     std::vector< int > cachedGradientMirrorCellIds;
     DeviceBuffer< Real > gradientMirrorValues;
