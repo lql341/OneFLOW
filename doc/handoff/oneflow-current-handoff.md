@@ -27,7 +27,7 @@
 | 本地临时 | `/tmp` | 一次性脚本、打包、比较 | 不入库；需要保留的结论写进文档 |
 | 集群接入 | `$HOME/.agents/skills/scnet-hpc`（OpenAPI 优先，SSH 次之） | 查询、提交、上传、探测 | 走技能提供的入口；不要手搓 ssh/scp 循环，也不要静默切换后端 |
 | 昆山工作区 | **`$HOME/oneflow/`（唯一）** | `src/ build/ fixtures/ evidence/ snapshots/ scripts/ logs/ _attic/` | 固定布局，见下表与 runbook |
-| 门禁证据 | `$HOME/oneflow/evidence/<gate>/<jobid>/` | `gate` / `paired-ab` / `cpu-regression` | 只增不改；`*.stage` 等大二进制提取指标后可删 |
+| 门禁证据 | `$HOME/oneflow/evidence/<category>/<jobid>/` | **6 个固定 category**：`gate` / `paired-ab` / `cpu-regression` / `probe` / `fixture` / `build` | 只增不改；不要按实验临时起目录名（规则见 runbook §1c）；`*.stage` 等大二进制提取指标后可删 |
 | 源码快照 | `$HOME/oneflow/src/OneFLOW` + `src/REVISION` | 每轮覆盖 | 不建 `OneFLOW-<hash>` 目录 |
 | 构建 | `$HOME/oneflow/build/app` | 唯一增量构建 | **不要重新 configure**（节点 DTK 的 hip CMake 校验会失败） |
 | fixture | `$HOME/oneflow/fixtures/m6-8zone-cpu8/` | 唯一**登记**的分区算例（8 zone / 294,912 cell） | 只读；派生副本用 `prep-case.sh`。其它 zone 数用 runbook §1b 的配方现生成 |
@@ -50,7 +50,9 @@
 - 按 job 号或轮次新建 build/run 目录（`build/<jobid>`、`runs/<name>-<jobid>`）；
 - 在仓库里提交绝对私有路径、主机名、账号、作业号、原始 CI/Slurm 日志；
 - 为一次会话新建 dated handoff 或多份并行计划（本文就地更新）；
-- 直接跑 `scnet`/`ssh` 绕开技能去改远端状态。
+- 直接跑 `scnet`/`ssh` 绕开技能去改远端状态；
+- 按实验内容临时给证据目录或作业起名（`a17`/`ab2`/`attr` 这类）。作业名固定
+  `of-<category>[-<purpose>]`，证据目录固定 `evidence/<category>/<jobid>/`，规则见 runbook §1c。
 
 ## 2. 昆山环境常量
 

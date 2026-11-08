@@ -25,7 +25,7 @@
 ├── build/port/                 预留：standalone 1D 端口 contract 构建
 ├── build/platform/             预留：CPU-only root 构建
 ├── fixtures/m6-8zone-cpu8/     唯一合法可分区 fixture（只读）
-├── evidence/<gate>/<jobid>/    门禁证据：gate | paired-ab | cpu-regression
+├── evidence/<category>/<jobid>/  证据：6 个固定 category，见 §1 第 4 条
 ├── snapshots/*.tgz             源码快照，保留最近 5 个
 ├── scripts/                    env.sh + 标准作业脚本 + cleanup.sh
 ├── logs/                       作业 stdout/stderr，保留 14 天
@@ -87,8 +87,21 @@
 3. **fixture**：`fixtures/m6-8zone-cpu8/` 只读。派生算例用
    `scripts/prep-case.sh <dest> <steps>` 写到 `evidence/.../<jobid>/` 或
    `$TMPDIR`，作业结束随手清掉。
-4. **证据**：`evidence/<gate>/<jobid>/` 只增不改；`*.stage` 这类大二进制在
+4. **证据**：`evidence/<category>/<jobid>/` 只增不改；`*.stage` 这类大二进制在
    记录完指标后可以删除，但 `result.txt`、rank breakdown、作业输出必须保留。
+   `<category>` 只能用下面 6 个固定值，**不要按实验内容临时起名**（命名规则见 §1c）：
+
+   | category | 放什么 |
+   |---|---|
+   | `gate` | 标准门禁：3 步 trace / 200 步 XB / 500 步分项 / 3×1000 步 |
+   | `paired-ab` | 同节点同作业内的 A/B 交替测量 |
+   | `cpu-regression` | CPU 五算例 normal/strict |
+   | `probe` | 探索性测量：分项剖析、启动/扩展性扫描、单点 A/B、诊断 dump |
+   | `fixture` | 分区、网格生成、manifest 导出与校验 |
+   | `build` | 构建、工具链、链接问题 |
+
+   实验身份由**作业名 + 日志名**承载（`logs/of-<category>-<purpose>-<jobid>.out`），
+   不靠目录名。旧轮次留下的临时类别目录按 `evidence/probe/<jobid>/` 归位。
 5. **日志**：Slurm 的 `-o/-e` 指向 `logs/`（见脚本头），不要再落到 `$HOME`；
    `scripts/cleanup.sh` 保留 14 天。
 6. **废弃**：旧 build/run/源码快照不要就地留着，移入 `_attic/<date>/`，下一轮
@@ -148,6 +161,21 @@ sed -i -E 's/^int[[:space:]]+time_integral[[:space:]]*=.*/int time_integral = 1;
             s/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0;/' <case>/script/cfd.txt
 sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' <case>/script/solver.txt
 ```
+
+## 1c. 命名规范（作业名、证据目录、脚本）
+
+沿用 `doc/DOCUMENT_NAMING.md` 的 kebab-case 原则，只是把范围延伸到集群侧：
+
+| 对象 | 语法 | 例 |
+|---|---|---|
+| 作业名 | `of-<category>[-<purpose>]` | `of-gate`、`of-paired`、`of-cpu-regression`、`of-probe-scaling`、`of-fixture-partition`、`of-build` |
+| 证据目录 | `evidence/<category>/<jobid>/` | `evidence/probe/127303578/` |
+| 作业日志 | `logs/of-<category>[-<purpose>]-<jobid>.out` | `logs/of-probe-scaling-127303578.out` |
+| 一次性脚本 | `_attic/<YYYYMMDD>/`，可复用才提升为 `scripts/` | `scripts/build-app.sh` |
+
+`<category>` 是上表的 6 个固定值；`<purpose>` 只在需要区分同一类别下的多次实验时使用，
+用一两个单词（`scaling`、`startup`、`limiter`），**不要**用 `a17`、`ab2`、`attr`、`bnd`
+这类缩写或序号——那些信息应该由作业名和结论文档承载。
 
 ## 2. 作业规范
 
