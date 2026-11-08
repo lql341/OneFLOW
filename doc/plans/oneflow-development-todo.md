@@ -354,8 +354,16 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
 - [ ] **A3 stage 融合，第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
       单卡可及收益按"每步往返次数 × 单次开销"估：每 stage 6 次 → 4 次，约 −4 ms/step
       验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 有可测收益
-- [ ] **A2′ 接口交换设备直发**：4 轮 host-staged（`swap_upload/swap_download` 是延迟队列的
-      新阻塞点）→ DeviceDirect 或合并轮次；这是当前剩余开销的大头
+- [ ] **A2′ 接口交换**：4 轮、每轮每 rank 约 3 条 zone-pair 小消息，32 zone/4 卡时
+      `interface_mpi` 3.05 ms/step（占每步 29%），是**延迟主导**而不是带宽主导。
+      2026-11-08 已验证两条路：
+      - **GPU-aware 设备直发不可用**：`ci/kunshan/gpu-aware-mpi-probe.cpp` 在 2 rank/2 DCU
+        单节点 **PASS**（device→device 点对点），但求解器开
+        `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI=1 ONEFLOW_GPU_AWARE_MPI_CONFIRMED=1` 后，
+        8 rank 与 32 rank 都在 `libgalaxyhip`/`hsa-runtime64` 里 abort（signal 6，
+        rc=134）。探针不足以放行求解器路径。
+      - 所以剩下的可行方向是**减少消息数**（把每个 rank 的多个 zone-pair 聚合成一条消息，
+        或用 allgather 一次取全 halo），而不是换传输方式
 - [ ] **A4 HIP `EulerDomainBackend::Advance`**：RK 阶段循环进 backend，只在宏步边界回主机。
       **前置**：A1.7+ 的定位结论——基数若在 host 派发层，A4 收益大于原估；若在设备同步则有限
 - **A2 已降级，不排期**：上限只有约 1.1 ms（实测关全部界面通信仅省 2.2 ms/step），§4.1 A2 保留原证据
