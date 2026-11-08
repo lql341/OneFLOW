@@ -103,13 +103,12 @@ struct GradientEndpointCacheEntry
 // per grid and ghost level; the face count and cell extent catch a re-partition
 // that reuses the same grid address.
 GradientEndpointCacheEntry & CachedGradientEndpoints(
-    const UnsGrid * grid, int ghostId, int nIFaces, int totalCells )
+    UnsGrid * grid, int ghostId, int nIFaces, int totalCells )
 {
-    static std::map< std::pair< const UnsGrid *, int >,
+    static std::map< std::pair< UnsGrid *, int >,
                      GradientEndpointCacheEntry > cache;
     GradientEndpointCacheEntry & entry =
-        cache[ std::make_pair< const UnsGrid *, int >(
-            grid, static_cast< int >( ghostId ) ) ];
+        cache[ std::make_pair( grid, ghostId ) ];
     if ( entry.nInterfaceFaces != nIFaces
          || entry.totalCells != totalCells
          || static_cast< int >( entry.cells.size() ) != nIFaces )
@@ -219,8 +218,7 @@ void UNsGrad::CalcGradHip( bool downloadToHost, bool packedExchange,
                 if ( nIFaces <= 0 ) continue;
                 packed.resize(
                     static_cast< std::size_t >( 3 ) * nEqu * nIFaces );
-                const int totalCells =
-                    grid->nCells + ( grid->nTCell - grid->nCells );
+                const int totalCells = ug.nTCell;
                 const std::vector< int > & cachedCells =
                     CachedGradientEndpoints(
                         grid, ghostId, nIFaces, totalCells ).cells;
