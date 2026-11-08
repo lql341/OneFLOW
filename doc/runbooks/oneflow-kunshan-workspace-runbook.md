@@ -136,6 +136,19 @@ python3 "$ONEFLOW_SRC/ci/kunshan/verify-multizone-fixture.py" \
 2026-11-08 结果：16 zone / 16 rank，`zones=16 interfaces=52946`，
 `MULTIZONE_FIXTURE_PASS`。32 zone 用同一配方（`npartproc=32`）。
 
+**必须同时把算例改成显式 RK**：从 `test/cfd/m6wingroe_sa` 派生的算例带
+`int time_integral = 2`（LU-SGS），设备驻留链路只在 `time_integral = 1` 下启用。
+2026-11-08 就因为漏了这一行，16/32 zone 的 HIP 跑成了 host LU-SGS，报出
+2.6 s/step 的假数字，被当成“多卡扩展性差”。派生算例至少显式设置：
+
+```bash
+sed -i -E 's/^int[[:space:]]+time_integral[[:space:]]*=.*/int time_integral = 1;/;
+            s/^int[[:space:]]+rk_stage[[:space:]]*=.*/int rk_stage = 3;/;
+            s/^int[[:space:]]+ischeme[[:space:]]*=.*/int ischeme = 5;/;
+            s/^int[[:space:]]+vismodel[[:space:]]*=.*/int vismodel = 0;/' <case>/script/cfd.txt
+sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' <case>/script/solver.txt
+```
+
 ## 2. 作业规范
 
 | 约定 | 值 |
