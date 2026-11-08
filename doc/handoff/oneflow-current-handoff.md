@@ -76,53 +76,39 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**基线（2026-11-07 同步后）**：`master` = `origin/master` = `upstream/master` = `f2fc6ea2e`；
-`dev` 已合并该 HEAD，无冲突。工作区干净。
+**基线**：`master` = `origin/master` = `upstream/master` = `f2fc6ea2e`；`dev` 已合并该 HEAD。
+昆山工作区的源码快照与 `src/REVISION` 每次作业前覆盖，当前对应 `dev` 最新提交。
 
-**本轮结论一句话**：Phase A 的 A1 收口在 **15.6 ms/step（18.5× @8:1 槽，报告已发布）**，
-但**剩下的时间不在通信、不在 kernel、也不在 cell 数**——而是一个每步约 **8.9 ms**、
-与 cell 数 / zone 数 / rank 数都无关的固定基数。这个基数尚未定位，是下一会话的第一件事。
+**这一轮的结论（2026-11-07/08）**
 
-- **下一步（唯一推荐）**：定位每步固定基数。已知条件：8 zone / 8 rank / 1 DCU、
-  `ONEFLOW_DIAG_NO_COMM=1`、`rk_stage=1` 时仍有 **8.93 ms/step**。
-  做法：同配置开 `ONEFLOW_STAGE_BREAKDOWN_FILE`，比较「总时间 − 各分项之和」：
-  - 差额接近 0 → 基数藏在已计时项（`calc_time_step`、`boundary_*`、`post_*`）
-  - 差额仍有 5–7 ms → 基数在没有计时器的代码里：宏步入口、
-    `SingleSolverSingleGridTask` 派发、并行屏障，三者之一
-  验收：给出「基数 = 哪些段」的清单，各项之和与总时间差 <10%。
-- **该基数的候选已缩小到 round trip 数**（2026-11-07 代码勘验）：`NsResidentMacroStep`
-  自 `bd588d447` 起默认开启，每步只有一次宏步调用，stage 内不走 task 字符串派发，
-  所以"基数在 host 派发层"这条前提不再成立。剩下的是每 stage 约 12 次 kernel launch
-  和 7 次 `hipDeviceSynchronize`（gradient / local dt / reconstruction / flux /
-  residual scale / boundary pack / boundary unpack），8 rank 共享 1 卡时都是 per-rank 常数。
-  其中 gradient 与 flux 的 drain 原本无条件执行（连"不下载"的分支也 drain）。
-- **已就位但未验证**：`db3f9e413` 把上述 7 处 drain 收进 `HipDrain()`，
-  `ONEFLOW_HIP_DEFER_SYNC=1` 时只保留 `hipGetLastError` 检查、跳过 drain；默认关，
-  所以已发布的 15.6 ms/step 口径不动。
-- **2026-11-07 实测（昆山 1 DCU / 8 rank / 8 zone / 1000 步）**：门禁全绿（trace `24/0/0`、
-  200 步 XB PASS、CPU 五算例 normal 5/5 + strict 5/5）；`rk_stage=3` **15.58 ms/step**，
-  与 F1 的 15.59 同口径复现；`rk_stage=1` + 关通信 **6.88**；`ONEFLOW_HIP_DEFER_SYNC=1`
-  只到 **15.25**（−2.1%，1 stage 时 6.88→6.39）。**drain 不是基数**，基数 ≈ 5.5 ms/step。
-- **口径更正（重要）**：每次启动固定约 **1.4–1.6 s**，100 步口径会把它摊成 +14 ms/step、
-  200 步 +7。A1.7 的 8.93 属于短基准读数；引用基数必须写步数并扣启动，
-  或用 1000 步的斜率（本次每 stage 边际 4.35 ms）。单发样本噪声可达 ±20%，
-  必须交错重复取中位（同一作业内 A/B 交替），不能跨作业比。
-- **`6ce57b79d`** 给宏步补了 `macro_time_step` / `macro_update_residuals` /
-  `macro_calc_lhs` / `macro_update_flowfield` / `macro_calc_boundary` / `macro_interface`
-  分段（profiler 不开时零成本）。下一轮用它把 5.5 ms/step 归到具体段。
-- **之后（按价值）**：`A3` stage 融合（每 stage 3.29 / 1.88 / 1.20 ms 于 1/2/4 卡，
-  3 stage 合计 9.9 / 5.6 / 3.6）→ `B2` 收口（差 `1.113e-06`）→ `B3–B5`（粘性/SA/LU-SGS，
-  B-exit 的前置）→ `A4`。
-- **B1 已完成**：设备侧 Roe 与主机 `NsInvFluxPolicy` 逐项对齐，单面契约测试
-  `oneflow_device_roe_contract_test` 3/3；单 zone 200 步 `res_max_rel = 0.0`。
-  scheme 编号在设备内核与 `ISCHEME_*` 是两套，已用 `DeviceFluxScheme()` 显式映射。
-- **B2 在途**：设备侧 Barth φ 已实现并在设备上计算（`ReconstructionLimiterMode::DeviceCell`），
-  主机侧重复的 `CalcLimiter()` 已删除（它每 stage 要 270 ms，是 ilim=1 慢 13 倍的元凶）。
-  数值仍差 `1.113e-06`（`ilim=0` 是 `0.0` 逐位一致），未过 1e-12 门禁；
-  下一个怀疑点是主机 `LimField::CalcFaceValue` 用 `ckfun` 整体丢弃受限值的语义。
-- **多卡**：8/16/32 rank 对 1/2/4 DCU 已实测（todo §4.8b）。加卡越过 2 张无收益，
-  因为每 rank 计算量减半两次而每 rank halo 只降 35%/20%、全局 halo 涨 2.1 倍。
-  **不要引用“2 卡最优”**：8-zone 两次样本跨度 23%，16 与 32 的差异在噪声内。
+- **默认配置已经变快**：8 zone / 8 rank / 1 DCU / 1000 步，同节点交错 5 对
+  （15.472/15.559/15.521/15.532/15.580 vs 14.578/14.601/14.669/14.617/14.820）
+  → 中位 **15.53 → 14.62 ms/step（−5.9%）**，5 对全部同向、无重叠。
+- **门禁全绿**：trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0`、
+  CPU 五算例 normal 5/5 + strict 5/5。
+- **改了什么**：drain 只在需要回读处（`ONEFLOW_HIP_DEFER_SYNC`）、非物理标志留设备
+  宏步末查一次（`ONEFLOW_HIP_DEFER_STATUS`）、残差缩放并入状态更新入口
+  （`ONEFLOW_HIP_FUSE_SCALE_UPDATE`）、inflow 值不变不再每 stage 重传、
+  未完成批次数上限（`ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`，默认 32）。
+  这些开关默认全开，`=0` 逐个回退。
+- **口径教训**：短基准（100/200 步）会把 1.4–1.6 s 的启动摊成 +7~14 ms/step，
+  旧的 8.93 就是这么来的；所有基数/增益必须同节点、1000 步、交错重复取中位。
+- **多卡暂时无数据**：16/32 zone 的分区与 manifest 已跑通（runbook §1b，
+  `zones=16 interfaces=52946`、`zones=32 interfaces=73434` 均 `MULTIZONE_FIXTURE_PASS`），
+  但 16 rank/2 DCU 跑 400 步 >17 分钟（≈2.6 s/step），旧配置同样如此 →
+  ad-hoc 分区的 HIP 路径不可用，§4.8b 的 16/32 zone 数字已标记不可复现。
+  多卡结论等 D1（外部 ≥1M cell 合法分区网格）。
+
+**下一步（按价值）**
+
+1. **A2′ 接口交换设备直发**：`swap_upload/swap_download` 现在是延迟队列的新阻塞点，
+   4 轮 host-staged 是剩余开销大头。
+2. **A3 第一段**：`gradient → reconstruction → flux` 合并成一次进入设备。
+3. **B2 收口**：`1.113e-06`。
+4. **D1**：外部 fixture，越早启动越好。
+
+**不要做**：用 ad-hoc 16/32 zone 出多卡数字；用短基准（<1000 步）报 ms/step；
+跨节点比 ms/step。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
 

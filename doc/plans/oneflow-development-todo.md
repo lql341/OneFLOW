@@ -34,12 +34,12 @@
 | refs | `master` = `origin/master` = `upstream/master` = `f2fc6ea2e`（2026-11-07 三端同步，PR #252）；`dev` 已合并该上游 HEAD，领先 upstream 402 个提交（其中非 merge 切片 375 个） |
 | upstream PR | #159 / #160 / #203 / #227 / #238 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
-| 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、50 步 warmup、paired：**15.59 / 15.59 / 14.83（中位 15.59）ms/step**，对 8 核 CPU `288.20` → **18.5×**（报告 `doc/reports/performance/oneflow-3d-euler-performance-current.*`）；历史点 31.64（2026-10-25，不可当 A 侧） |
-| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（上一轮证据，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`；本轮未重跑）；`HIP.MainSolverFluxOneCall` 在 1 DCU 上 PASS；全量 GoogleTest 未重跑 |
+| 性能基线 | 8 zone / 8 rank / 1 DCU，1000 步、paired：**14.62 ms/step**（2026-11-07 同节点交错 5 对中位；旧默认 15.53）。对 8 核 CPU `288.20` → **19.7×**（CPU 侧仍是 F1 报告的 2026-11-02 口径，未重测）。历史点：15.59（F1 报告）、31.64（2026-10-25，不可当 A 侧） |
+| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（2026-11-08 复跑，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`）；`HIP.MainSolverFluxOneCall` 在 1 DCU 上 PASS；全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
-| 已知红灯 | 确定性 DCU 红灯已消除。`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离）。限制器设备化的数值偏差 `1.113e-06` 未过门禁（B2 在途，不是红灯而是未完成） |
-| 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 现可通过配置检查且能跑完，但更慢**（§4.1 A1.8），不建议使用 |
-| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture；多卡实测显示加卡越过 2 张无收益（§4.8b） |
+| 已知红灯 | 确定性 DCU 红灯已消除。`ActionMapReadFileTest` 仅在 `ctest -j16` 全量并发下偶发（测试隔离）。限制器设备化的数值偏差 `1.113e-06` 未过门禁（B2 在途，不是红灯而是未完成）。**多卡/ad-hoc 分区的 HIP 路径不可用**：16 zone/2 DCU 在 400 步内跑到 ≈2.6 s/step（旧配置同样），manifest 已验证通过，但仍远慢于 8 zone 单卡的 14.6 ms/step，多卡结论必须等 D1 |
+| 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 可通过配置检查**，但 1 rank 多 zone 更慢（§4.1 A1.8），多卡 ad-hoc 分区当前不可用（见“已知红灯”），不建议使用 |
+| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡缺 ≥1M 合法分区 fixture（D1，外部依赖）。§4.8b 的 16/32 zone 数字不可复现，已标记停用 |
 
 ### 1.1 工作环境与固定路径（不要另建目录）
 
@@ -299,23 +299,20 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
 
 #### 5.1 P0 — 先把基线恢复到可引用
 
-- [ ] **G0 门禁复跑**（2026-11-07 合入 upstream `f2fc6ea2e`，含 #249–#252 之后必做）。
-      顺序：3 步多区 trace（含 resident contract）→ 200 步跨后端 → CPU 五算例
-      normal/strict → 50 步稳定性。**在这一轮绿之前，任何性能数字都不可引用。**
-      验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、CPU 5/5 + 5/5、50 步稳定
-- [ ] **A1.7+ 定位每步 8.93 ms 固定基数**（§4.1 A1.7）。已知：关通信、`rk_stage=1`、
-      8 rank/1 DCU 仍有该基数，且与 cell 数 / zone 数 / rank 数无关。
-      方法：同配置开 `ONEFLOW_STAGE_BREAKDOWN_FILE`，比较「总时间 − 分项之和」：
-      - 差额接近 0 → 基数藏在**已计时**项里（`calc_time_step`、`boundary_*`、`post_*`）
-      - 差额仍有 5–7 ms → 基数在**没有计时器**的代码里，只剩宏步入口、
-        `SingleSolverSingleGridTask` 派发、并行屏障三类
-      验收：给出「基数 = 由哪些段构成」的清单，各项之和与总时间差 <10%
+- [x] **G0 门禁复跑**（合入 upstream `f2fc6ea2e` 后）。2026-11-08 全绿：
+      trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0`、
+      CPU 五算例 normal 5/5 + strict 5/5、1000 步 rc=0
+- [x] **A1.7+ 固定基数已归因**（详见 §4.1 A1.7b/A1.7c）。结论：短基准把 1.4–1.6 s 的启动
+      摊进 ms/step，旧的 8.93 属于这类读数；按 1000 步斜率，每步成本 ≈ 同步往返次数 × 单次开销，
+      与 cell 数无关。据此做的第一版改动见 A1.7c（默认生效，14.62 ms/step）
 
 #### 5.2 P1 — Phase A 收口（目标 ≤14 ms/step）
 
 - [ ] **A3 stage 融合，第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
-      依据 §4.8b：每 stage 3.29 / 1.88 / 1.20 ms（1/2/4 卡，关通信），3 stage 合计 9.9 / 5.6 / 3.6 ms
-      验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点 paired 有可测收益
+      单卡可及收益按"每步往返次数 × 单次开销"估：每 stage 6 次 → 4 次，约 −4 ms/step
+      验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 有可测收益
+- [ ] **A2′ 接口交换设备直发**：4 轮 host-staged（`swap_upload/swap_download` 是延迟队列的
+      新阻塞点）→ DeviceDirect 或合并轮次；这是当前剩余开销的大头
 - [ ] **A4 HIP `EulerDomainBackend::Advance`**：RK 阶段循环进 backend，只在宏步边界回主机。
       **前置**：A1.7+ 的定位结论——基数若在 host 派发层，A4 收益大于原估；若在设备同步则有限
 - **A2 已降级，不排期**：上限只有约 1.1 ms（实测关全部界面通信仅省 2.2 ms/step），§4.1 A2 保留原证据
@@ -335,7 +332,9 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
 #### 5.4 P2 — 外部依赖与后续
 
 - [ ] **D1 合法 fixture**：≥1M cell 带 `.skl` 的分区网格（或修 `GenerateLink`）。
-      外部依赖，越早启动越好；拿到之前 D2/D3 只做只读评估、不出数字
+      外部依赖，越早启动越好；拿到之前 D2/D3 只做只读评估、不出数字。
+      2026-11-08：分区配方与 manifest 校验已跑通（runbook §1b，16/32 zone 均 PASS），
+      但 ad-hoc 分区的 HIP 路径仍慢到不可用，多卡结论继续挂起
 - [ ] **B4 SA**（依赖 B3）
 - [ ] **B5 LU-SGS**（依赖 A4）
 - [ ] **B6 multigrid**（依赖 A4）
@@ -354,7 +353,10 @@ C1–C5、D2–D4、E2–E5、F2–F4 均未启动，定义见 §4，不在本�
 | 后端选择 | `ONEFLOW_ACCEL_BACKEND=CPU|HIP` |
 | 设备权威 q（默认开） | `ONEFLOW_HIP_DEVICE_AUTHORITATIVE_Q=0` 回退旧行为；`ONEFLOW_HIP_GHOST_Q_MIRROR=1` 只把 ghost q 的 D2H 加回（bisect） |
 | 其它性能开关（默认全开） | `ONEFLOW_HIP_SKIP_HOST_INTERFACE`、`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND`（默认只在最后 RK stage 镜像；`=0` 恢复每 stage）、`ONEFLOW_HIP_SKIP_HOST_RK_SLOT_COPY`（默认跳过设备显式路径上的 `LOAD_Q`/`LOAD_RESIDUALS` 槽位拷贝；`=0` 恢复）、`ONEFLOW_HIP_CACHE_INTERFACE_HANDSHAKE`、`ONEFLOW_HIP_SKIP_HOST_FIELD_PACK`、`ONEFLOW_HIP_SKIP_UNUSED_INTERFACE`、`ONEFLOW_HIP_DEVICE_GRADIENT_UNPACK` |
+| 本轮新增（默认全开，`=0` 回退） | `ONEFLOW_HIP_DEFER_SYNC`（drain 只在需要回读处）、`ONEFLOW_HIP_DEFER_STATUS`（非物理标志留设备，宏步末检查一次）、`ONEFLOW_HIP_FUSE_SCALE_UPDATE`（残差缩放并入状态更新入口） |
+| 队列深度 | `ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`（默认 32；多 rank 下不设上限会在 `libgalaxyhip` 里 AQL 溢出 abort） |
 | 诊断 | `ONEFLOW_STAGE_BREAKDOWN_FILE`、`ONEFLOW_UNS_STAGE_TRACE_FILE`、`ONEFLOW_UNS_HIP_RESIDENT_CONTRACT=1`、`ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC=1` |
+| 多 zone fixture 制作 | runbook §1b：`script/grid.txt`（并列入 `control.txt`）→ `simutask=Grid` → 补 `grid/bcRegionMap.txt` → 导出/merge/verify manifest |
 | 门禁脚本（仓库内） | `ci/kunshan/f2-main-solver-{multizone-trace,cross-backend-residual,stability}.sh`、`f2-main-solver-paired-performance.slurm` |
 | 标准作业脚本（集群固定工作区） | `scripts/{env,rank,build-app,prep-case,gate,paired-ab,cpu-regression,cleanup}`，规则见 [`runbooks/oneflow-kunshan-workspace-runbook.md`](../runbooks/oneflow-kunshan-workspace-runbook.md) |
 | 加速器构建（仓库内，可选） | `scripts/build-accel.sh`；参数只有 `ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类自动推断；不设则 CPU/CI 不受影响 |
