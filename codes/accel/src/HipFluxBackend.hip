@@ -60,9 +60,28 @@ bool HipDeferSyncEnabled()
     return enabled;
 }
 
+// Deferring every drain lets the software queue grow without bound: with 16 or
+// 32 ranks on one card the driver aborted inside libgalaxyhip (AQL packet dump,
+// signal 6) because the hardware queue filled up.  Bound the number of kernel
+// batches that may be outstanding; the default keeps the per-stage savings but
+// never lets the queue overflow.
+int MaxLaunchesPerDrain()
+{
+    static const int limit = [] {
+        const char * value =
+            std::getenv( "ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN" );
+        if ( value == nullptr || value[ 0 ] == '\0' ) return 32;
+        const int parsed = std::atoi( value );
+        return parsed > 0 ? parsed : 32;
+    }();
+    return limit;
+}
+
 void HipDrain( const char * operation )
 {
-    if ( HipDeferSyncEnabled() ) return;
+    static int sinceDrain = 0;
+    if ( HipDeferSyncEnabled() && ++ sinceDrain < MaxLaunchesPerDrain() ) return;
+    sinceDrain = 0;
     CheckHip( hipDeviceSynchronize(), operation );
 }
 
