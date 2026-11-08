@@ -16,15 +16,24 @@ Reading order for the accelerator mainline:
 2. `plans/oneflow-development-todo.md` — capability ledger (§4) and the current round (§5).
 3. `handoff/oneflow-current-handoff.md` — fixed paths, environment constants, and **the trap
    list in §5**. Read §5 before touching the cluster: it records each mistake that cost a round.
-4. `runbooks/oneflow-kunshan-workspace-runbook.md` — single workspace layout, build recipe and
-   the multi-zone fixture recipe (§1b).
+4. `runbooks/oneflow-kunshan-workspace-runbook.md` — single workspace layout, build recipe,
+   the multi-zone fixture recipe (§1b) and the naming rules (§1c).
+
+**Handoff means exactly two reads, both living files edited in place — never create a dated copy:**
+
+| Question | Read |
+|---|---|
+| What is done, what is next | `plans/oneflow-development-todo.md` §4 (ledger) and §5 (this round) |
+| How to run it, what already burned us | `handoff/oneflow-current-handoff.md` §1–§3 (paths/constants/commands), §4 (task pointer), §5 (traps) |
+
+When closing a session, update those two files only: §5 of the todo and §4/§5 of the handoff.
 
 Do not improvise these:
 
 | Item | Value |
 |---|---|
 | Cluster access | skill `$HOME/.agents/skills/scnet-hpc`, **OpenAPI only** (SSH returns Permission denied as of 2026-11-08) |
-| Cluster workspace | `$HOME/oneflow/` with `src/ build/app/ fixtures/ evidence/<gate>/<jobid>/ snapshots/ scripts/ logs/` |
+| Cluster workspace | `$HOME/oneflow/` with `src/ build/app/ fixtures/ evidence/<category>/<jobid>/ snapshots/ scripts/ logs/` (six fixed categories, runbook §1c) |
 | Source transfer | `git archive` → `upload` to `snapshots/` → job unpacks into `src/OneFLOW` (no rsync: OpenAPI has no `exec`) |
 | Build | `scripts/build-app.sh` — rebuilds `OneFLOW_RuntimeObjects` **then** `OneFLOW/fast` |
 | Gates | `scripts/gate.slurm`, `scripts/cpu-regression.slurm`, `scripts/paired-ab.slurm` |
