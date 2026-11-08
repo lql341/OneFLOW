@@ -1,3 +1,40 @@
+<!-- Entry point. Added 2026-11-08 so a fresh session finds the right mainline,
+     the fixed cluster paths and the trap list before reading 600 lines of history. -->
+
+## Start here (2026-11-08)
+
+This repository carries **two independent mainlines**. Decide which one a request targets first.
+
+| Mainline | Entry | Branch |
+|---|---|---|
+| Runtime / case-configuration refactor (R1) | `## 1. Read this first` further down this page | `hexin` |
+| **DCU accelerator mainline (3D Euler device residency)** | [`plans/oneflow-development-plan.md`](plans/oneflow-development-plan.md) + [`plans/oneflow-development-todo.md`](plans/oneflow-development-todo.md) | `dev`; `master` kept identical to upstream |
+
+Reading order for the accelerator mainline:
+
+1. `AGENTS.md` — branch model, gate order, measurement discipline, workspace rules.
+2. `plans/oneflow-development-todo.md` — capability ledger (§4) and the current round (§5).
+3. `handoff/oneflow-current-handoff.md` — fixed paths, environment constants, and **the trap
+   list in §5**. Read §5 before touching the cluster: it records each mistake that cost a round.
+4. `runbooks/oneflow-kunshan-workspace-runbook.md` — single workspace layout, build recipe and
+   the multi-zone fixture recipe (§1b).
+
+Do not improvise these:
+
+| Item | Value |
+|---|---|
+| Cluster access | skill `$HOME/.agents/skills/scnet-hpc`, **OpenAPI only** (SSH returns Permission denied as of 2026-11-08) |
+| Cluster workspace | `$HOME/oneflow/` with `src/ build/app/ fixtures/ evidence/<gate>/<jobid>/ snapshots/ scripts/ logs/` |
+| Source transfer | `git archive` → `upload` to `snapshots/` → job unpacks into `src/OneFLOW` (no rsync: OpenAPI has no `exec`) |
+| Build | `scripts/build-app.sh` — rebuilds `OneFLOW_RuntimeObjects` **then** `OneFLOW/fast` |
+| Gates | `scripts/gate.slurm`, `scripts/cpu-regression.slurm`, `scripts/paired-ab.slurm` |
+
+Measurement rules that already invalidated results once: 1000-step minimum, subtract the
+1.4–1.6 s startup, never compare single samples across nodes, and report weak scaling only with
+a fixed cell count per rank. Details: handoff §5 items 12–22.
+
+---
+
 ## 2026-11-07 continuation: mesh boundary algorithm note and contract references
 
 The user reported 1269/1269 tests passing before this slice. Documentation and

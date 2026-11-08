@@ -12,13 +12,12 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo 文首 **§5 下一轮任务**：当前唯一推荐项是**定位每步 8.9 ms 的固定基数**
-   （关通信、`rk_stage=1`、8 rank/1 DCU 下仍存在）。`A1` 已收口在 15.6 ms/step，
-   Phase A 剩下的三个方向（A2/A3/A4）都受这个基数限制，先测清再动手。
-3. 要动集群就先读 runbook：工作区固定为 `$HOME/oneflow/`，构建统一走
-   `scripts/build-accel.sh`（见 §5.9），不要手拼 CMake 变量。
-4. 收尾：勾选 todo、把证据落进 `evidence/<gate>/<jobid>/`、更新本文 §4（任务指针）与
-   §5（新坑）；环境或路径有变化时同步 runbook 与 todo §1.1。
+2. 打开 todo **§5 下一轮任务**：当前主线是 **B2.1（Barth 邻域 stencil 对齐）**，
+   之后 A2（接口消息聚合）、A4（RK 循环下沉）。A1 已收口在 14.62 ms/step。
+3. 要动集群先读 §1（固定路径）与 runbook：**SSH 已不可用，只能走 OpenAPI 技能**，
+   因此一切远端操作必须写成作业脚本提交，不能在交互 shell 里敲。
+4. 收尾：勾选 todo、证据落 `evidence/<gate>/<jobid>/`、更新本文 §4 与 §5；
+   环境或路径变化同步 runbook 与 todo §1.1。
 
 ## 1. 环境与固定路径（不要另建目录）
 
@@ -35,6 +34,15 @@
 | 快照归档 | `$HOME/oneflow/snapshots/*.tgz` | 保留最近 5 个 | `cleanup.sh` 轮转 |
 | 日志 | `$HOME/oneflow/logs/` | 作业 stdout/stderr | 保留 14 天 |
 | 弃用 | `$HOME/oneflow/_attic/<date>/` | 待删物 | 观察一轮后清（`cleanup.sh`，7 天） |
+
+**集群接入现状（2026-11-08）**：`ssh kseshell` 返回 `Permission denied (publickey)`（密钥
+失效或 IP 白名单变更），**只能用 OpenAPI**。由此带来的硬约束：
+
+- 一切远端动作都要写成**作业脚本**用 `submit --command` 提交（建目录、解包、构建、清理都是）；
+- OpenAPI 没有 `exec`，所以不能交互式 `make`，也不能 rsync；源码以
+  `git archive` 打 tgz → `upload` 到 `snapshots/` → 作业内解包到 `src/OneFLOW`；
+- 提交参数有内存/CPU 比例上限（`--memory` 过大直接被 sbatch 拒绝），4 核请用 ≤8G；
+- 偶发 `Socket timed out` / `HTTP 502`：隔十几秒原样重试即可，不要当成作业失败。
 
 **禁止清单**（写在这里就是为了不再重复）：
 
@@ -114,6 +122,40 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
 用 ad-hoc 分区做多卡结论（必须显式 RK + manifest 校验）。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
+
+**测量与工具链（2026-11-08 新增，全部踩过）**
+
+12. **`make OneFLOW/fast` 不会重编 `codes/` 下的源文件**：`<dir>/fast` 是 CMake 的"仅本目录"
+    目标，只重链 `main/src/OneFlow.cpp`。必须两步：`make OneFLOW_RuntimeObjects` 再
+    `make OneFLOW/fast`（`scripts/build-app.sh` 已修）。验证办法：`strings bin/OneFLOW |
+    grep <新符号>`，没有就是没编进去。
+13. **`StageProfiler` 会静默丢弃未登记的类别**：名字必须先出现在 `StageProfiler.cpp` 的
+    `Totals()` 表里，否则计时被丢掉、TSV 里看起来"该段零成本"。现在 `Flush()` 会打印
+    `dropped N timer records for unregistered category ...`，看到就补表。
+14. **启动固定开销 1.4–1.6 s**：100 步口径把它摊成 +14 ms/step、200 步 +7。所有 ms/step
+    必须写步数并扣启动（同一算例跑 1 步与 N 步取斜率）。旧的"8.93 ms 固定基数"就是这类读数。
+15. **跨节点/单发噪声很大**：同一配置跨节点差 32%（13.12 vs 9.93），DCU 单发可达 3–4 倍
+    （5.87 / 23.32 / 7.54）。**只比同作业内交错重复的中位**，跨节点单发一律不算数。
+16. **延迟 drain 会让队列溢出**：`ONEFLOW_HIP_DEFER_SYNC=1` 下不设上限时，16/32 rank 会在
+    `libgalaxyhip` 里 AQL 溢出 abort。`ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`（默认 32）必须保留。
+17. **GPU-aware 探针通过 ≠ 求解器可用**：`gpu-aware-mpi-probe` 2 rank 单节点 PASS，但求解器
+    开 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI=1` 后 8/32 rank 都 abort。别再据此放行。
+
+**集群作业与算例（同上）**
+
+18. **派生算例必须显式设 `time_integral = 1`**：`test/cfd/m6wingroe_sa` 自带 `= 2`（LU-SGS），
+    设备驻留链路只在 1 下启用；漏了会跑成 host LU-SGS 并伪装成"多卡扩展性差"（实测 2.6 s/step）。
+    同时显式设 `rk_stage=3`、`ischeme=5`、`ilim=0`、`vismodel=0`，并删掉 `solver.txt` 的
+    `TurbSolver`。
+19. **分区参数分两处**：`gridObj = 3` 在 `script/grid.txt`，`npartproc`/`part_uns_file` 在
+    `script/part.txt`（control.txt 里后者后加载，**覆盖**前者）。只在 grid.txt 写 `npartproc`
+    会得到 `The number of partitions should be greater than 1`。
+20. **求解算例必须带 `grid/bcRegionMap.txt`**：缺它会在 `UNsBcSolver::CalcBcRegion` 段错误，
+    在分片导出阶段表现为 SIGSEGV。
+21. **单 zone 算例 `nIFaces = 0`**，不做 halo 交换 —— 不能当弱扩展基线。弱扩展必须每核/每 rank
+    固定 cell 数（≈8,000），且以多 zone 点为基准。
+22. **分区作业的 case 目录要传绝对路径**：`... OneFLOW 0 .` 会静默什么都不写（rc=0 但没有输出
+    文件），看起来像分区失败。
 
 1. **设备权威不能从初始化就开始**：bound 状态的第一次 `FullField` 上传依赖 host 的
    ghost 区；跳过条件必须是 `HostMirrorStale(grid)`，否则第一步就偏离 CPU oracle。
