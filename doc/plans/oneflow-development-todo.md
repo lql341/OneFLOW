@@ -128,7 +128,10 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
       改动：残差缩放并入状态更新入口（`ONEFLOW_HIP_FUSE_SCALE_UPDATE`）、非物理标志留在设备上
       逐步检查（`ONEFLOW_HIP_DEFER_STATUS`，每步少 4 次 4 字节阻塞 D2H）、drain 只在需要回读处
       （`ONEFLOW_HIP_DEFER_SYNC`）、inflow 值不变时不再每 stage 重传（原来它成了延迟队列的阻塞点，
-      `bnd_static_upload` 曾显示 4.2 ms/step）。开关默认仍关，主线行为未变
+      `bnd_static_upload` 曾显示 4.2 ms/step）。**三个开关已改为默认开**（`=0` 回退），
+      另加 `ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`（默认 32）防止多 rank 下队列溢出 abort。
+      收口复跑（2026-11-08）：gate 三发 14.75 / 15.08 / 15.78（该节点，跨度 1.0），
+      trace `24/0/0`、XB PASS、CPU 五算例 5/5 + 5/5；性能口径仍以同节点 paired 的 14.62 为准
   - [x] A1.8 多 zone/rank 的可行性（2026-11-04）。`Zone::CheckZoneRankCount` 只查 `nZones % nProc`，所以 16 zone / 8 rank 能通过配置检查；但运行期死在 `HIP gradient face pack has no resident gradient`——该 rank 还没有推进过那个 zone。修法：设备侧梯度打包在缺 resident gradient 时**回退主机镜像**（此时主机场是权威初值），不再抛异常。修后 `zpr=2/4` 能跑完，但**更慢**：16.45（1 zone/rank）→ 17.62（2）→ 25.24（4）。结论：**“一 rank 多 zone”不是解法**，它不减少 halo，反而按 zone 重复每步工作
   - [x] A1.4 基准 warmup 规则。首个 `hipMalloc` 与冷 case 目录会污染短基准：同一配置冷跑 `27.0`、热跑 `18.5–21.1 ms/step`。规则落在交接 §5，不是代码改动
 - [ ] **A2 每步一次界面交换**（原 `F7.3`）。**两处实测已缩小它的价值，动手前先重估**：(1) “删掉第 4 轮”被门禁否掉——跳过 post 轮后 200 步跨后端从 `2.33e-18` 拓到 `5.54e-7`（aero `4.0e-5`），那一轮承载 legacy 的一步滞后；(2) 关掉**全部**界面通信只省 **2.2 ms/step**，所以把 4 轮合成 1 轮的理论上限约 1.1 ms。除非 §5 的基数定位证明通信在别的配置下更大，否则这条不应排在前面
