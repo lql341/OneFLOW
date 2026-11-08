@@ -94,6 +94,48 @@
 6. **废弃**：旧 build/run/源码快照不要就地留着，移入 `_attic/<date>/`，下一轮
    清空。
 
+## 1b. 多 zone fixture 的制作（16/32 zone，用于扩展性测量）
+
+`fixtures/m6-8zone-cpu8` 是唯一登记的 fixture；更大 zone 数必须自己划分，并走完
+manifest 校验，否则数据不可用（2026-10-23 的 ad-hoc 16-zone 就是因为缺 manifest 被排除）。
+下面这条配方 2026-11-08 逐条验证过，缺一步就会失败：
+
+```bash
+# 1) 划分：参数必须放 script/grid.txt，并且 control.txt 里要列出 "grid.txt";
+#    否则 gridObj 读不到，objective 回落到默认 ConvertOnly，报
+#    "Unsupported grid conversion: oneflow -> oneflow"。
+cat > <case>/script/grid.txt <<'TXT'
+int gridObj = 3;
+string sourceGridFileName = "grid/m6wing.ofl";
+string sourceGridType = "oneflow";
+string targetGridType = "oneflow";
+string topoType = "u";
+int npartproc = 16;
+int partition_type = 1;
+string part_uns_file = "grid/m6wing-16.ofl";
+TXT
+sed -i '1i "grid.txt";' <case>/script/control.txt
+printf 'string simutask = "Grid";\n' > <case>/script/simu.txt
+mpirun -np 1 "$ONEFLOW_BIN" 0 <case>        # 约 20 s
+
+# 2) 求解算例指向新网格，并且必须补 grid/bcRegionMap.txt
+#    （缺它会在 UNsBcSolver::CalcBcRegion 段错误，导出阶段直接 SIGSEGV）
+sed -i -E 's#^string gridFileName.*#string gridFileName = "grid/m6wing-16.ofl";#' <case>/script/cfd.txt
+printf '4\n1 BCFarfield1\n0 BCOutflow0\n2 BCSymmetryPlane2\n3 BCWall0\n' > <case>/grid/bcRegionMap.txt
+printf 'string simutask = "Solve";\n' > <case>/script/simu.txt
+
+# 3) 导出 rank 分片 → 合并 → 验证（verify 通过才算合法 fixture）
+mpirun -np 16 env ONEFLOW_ACCEL_BACKEND=CPU \
+    ONEFLOW_MZ_FIXTURE_EXPORT_DIR=<shards> "$ONEFLOW_BIN" 0 <case>
+python3 "$ONEFLOW_SRC/ci/kunshan/merge-multizone-fixture.py" \
+    --shards <shards> --output fixture-metadata.json
+python3 "$ONEFLOW_SRC/ci/kunshan/verify-multizone-fixture.py" \
+    --metadata fixture-metadata.json --expected-ranks 16
+```
+
+2026-11-08 结果：16 zone / 16 rank，`zones=16 interfaces=52946`，
+`MULTIZONE_FIXTURE_PASS`。32 zone 用同一配方（`npartproc=32`）。
+
 ## 2. 作业规范
 
 | 约定 | 值 |
