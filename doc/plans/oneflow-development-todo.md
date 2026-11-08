@@ -174,8 +174,18 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
     39 ms/step 代价，其中 `recon_limiter_kernel` 仅 0.03 ms/调用，其余未定位
     （怀疑是每 stage 的 `FillNeutralLimiterField` 全场填充）。注意这是 **1 核 vs 1 卡**
     口径，不能与 8:1 槽的 15.6 ms/step 直接比
-  - 待做：φ 场逐点比对定位 1.1e-6 → 过 200 步跨后端与 CPU 五算例 → 再压
-    `FillNeutralLimiterField` → 之后才是 Venkat（`ilim=2`）
+  - **B2.0 逐点比对已完成（2026-11-08，单 zone / 1 步 / `ilim=1`）**：新增
+    `ONEFLOW_UNS_LIMITER_DUMP=<dir>`，把主机与设备的 φ 和面值各写一份二进制后再比：
+    - `phi`：1,474,560 个值中 **6,665 个不一致（0.45%）**，形态是主机 0 / 设备 1（幅度 1.0），
+      即"该单元是否取极值"判定不同；
+    - `qf1/qf2`：各 4,481,280 个值中 **40,562 / 38,415 个不一致（≈0.9%）**，
+      最大差 7.49e-01，集中在 eq=1（u 分量），且差异面与 φ 差异单元对应。
+    结论：**不是整体公式错，而是少量单元/面的判定不同**，与"整组丢弃 vs 逐方程回退"或
+    "邻域 stencil 不同（边界/ghost 面是否参与 min/max）"两类假设都相容。
+  - 待做（B2.1）：按差异面清单核对 Barth 邻域构造（设备 `BarthLimiterKernel` 走 cell→face CSR
+    且按 `boundaryMask`/`boundaryOperation` 跳过边界；主机 `Limiter::CalcLimiterScalar` 的邻域
+    需逐项对照），再决定是补整组判据还是对齐 stencil；之后过 200 步跨后端与 CPU 五算例，
+    再压 `FillNeutralLimiterField`，最后才是 Venkat（`ilim=2`）
 - [ ] **B3** 层流粘性：面粘性通量、温度梯度、壁面热流。先做 E1（去 globals）
 - [ ] **B4** 湍流：SA（1 方程）；SST 可选项，不单列
 - [ ] **B5** 隐式：LU-SGS 设备化（下/上扫、`dq` 交换、与 halo 的依赖），再评估双时间。依赖 A4
