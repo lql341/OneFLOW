@@ -234,6 +234,74 @@ void UNsInvFlux::CalcLimiter()
     limiter->CalcLimiter();
 }
 
+namespace {
+
+// Diagnostic for the limiter work (B2): write the per-cell factor and the
+// reconstructed face values once per run so a CPU run and a HIP run of the same
+// case can be compared face by face.  Never enabled on a validated path.
+void DumpLimiterState( const char * side, LimField * limf, UnsGrid * grid,
+                       int nEquations, bool deviceResident )
+{
+    const char * dir = std::getenv( "ONEFLOW_UNS_LIMITER_DUMP" );
+    if ( dir == nullptr || dir[ 0 ] == '\0' ) return;
+    static bool alreadyDone = false;
+    if ( alreadyDone ) return;
+    alreadyDone = true;
+
+    const int nCells = grid->nCells;
+    const int nFaces = grid->nFaces;
+    const std::size_t phiCount =
+        static_cast< std::size_t >( nEquations ) * nCells;
+    const std::size_t faceCount =
+        static_cast< std::size_t >( nEquations ) * nFaces;
+    std::vector< Real > phi( phiCount, 0.0 );
+    std::vector< Real > qf1( faceCount, 0.0 );
+    std::vector< Real > qf2( faceCount, 0.0 );
+
+    if ( deviceResident )
+    {
+#ifdef ONEFLOW_ENABLE_HIP
+        HipFluxBackend::Shared().CopyLimiterStateToHost(
+            grid, nCells, nFaces, nEquations,
+            phi.data(), qf1.data(), qf2.data() );
+#endif
+    }
+    else
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+        {
+            for ( int cell = 0; cell < nCells; ++ cell )
+                phi[ static_cast< std::size_t >( equation ) * nCells + cell ] =
+                    ( * limf->limiter )[ equation ][ cell ];
+            for ( int face = 0; face < nFaces; ++ face )
+            {
+                qf1[ static_cast< std::size_t >( equation ) * nFaces + face ] =
+                    ( * limf->qf1 )[ equation ][ face ];
+                qf2[ static_cast< std::size_t >( equation ) * nFaces + face ] =
+                    ( * limf->qf2 )[ equation ][ face ];
+            }
+        }
+    }
+
+    auto write = [ dir, side ]( const char * suffix,
+                                const std::vector< Real > & values,
+                                int nEquations, int count )
+    {
+        std::string path = std::string( dir ) + "/" + side + "-" + suffix;
+        std::ofstream out( path, std::ios::out | std::ios::binary );
+        const int header[ 2 ] = { nEquations, count };
+        out.write( reinterpret_cast< const char * >( header ), sizeof( header ) );
+        out.write( reinterpret_cast< const char * >( values.data() ),
+                   static_cast< std::streamsize >(
+                       values.size() * sizeof( Real ) ) );
+    };
+    write( "phi.bin", phi, nEquations, nCells );
+    write( "qf1.bin", qf1, nEquations, nFaces );
+    write( "qf2.bin", qf2, nEquations, nFaces );
+}
+
+}
+
 void UNsInvFlux::CalcInvFace()
 {
     {
@@ -455,6 +523,7 @@ void UNsInvFlux::CalcInvFace()
                  && std::getenv( "ONEFLOW_UNS_STAGE_TRACE_FILE" )[ 0 ] != '\0' );
         HipFluxBackend::Shared().ReconstructFaceValues(
             view, needFaceTrace );
+        DumpLimiterState( "dev", limf, grid, nEquations, true );
 #else
         throw std::runtime_error(
             "HIP device reconstruction was requested without HIP support" );
@@ -464,6 +533,11 @@ void UNsInvFlux::CalcInvFace()
     { ScopedStageTimer timer( "reconstruction" );
         this->GetQlQrField();
         this->ReconstructFaceValueField();
+    }
+    if ( limf != nullptr )
+    {
+        DumpLimiterState( "host", limf, Zone::GetUnsGrid(),
+                          limf->nEqu, false );
     }
     { ScopedStageTimer timer( "boundary_reconstruction" );
         this->BoundaryQlQrFixField();

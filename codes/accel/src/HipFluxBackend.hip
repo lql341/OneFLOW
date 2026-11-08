@@ -2002,6 +2002,69 @@ __global__ void EvaluateDeviceBarthKernel(
 
 }
 
+void HipFluxBackend::CopyLimiterStateToHost(
+    const void * cacheKey, int nCells, int nFaces, int nEquations,
+    Real * phi, Real * faceLeft, Real * faceRight )
+{
+    const auto binding = boundStates_.find( cacheKey );
+    if ( binding == boundStates_.end() )
+    {
+        throw std::logic_error(
+            "HIP limiter dump requires a bound state" );
+    }
+    auto * hipState = dynamic_cast< HipNs3DBackendState * >(
+        binding->second->BackendState() );
+    if ( hipState == nullptr )
+    {
+        throw std::logic_error( "bound HIP state is not HIP-owned" );
+    }
+    HipGradientStorage & storage = hipState->Gradient();
+    const int totalCells = storage.residentContract.Cells()
+        + storage.residentContract.GhostCells();
+    auto copyComponent = []( DeviceBuffer< Real > & buffer,
+                             Real * destination, std::size_t componentStride,
+                             std::size_t component, std::size_t count )
+    {
+        AccelRuntime::Instance().Backend().Copy(
+            destination,
+            buffer.Data() + component * componentStride,
+            count * sizeof( Real ),
+            AccelCopyKind::DeviceToHost );
+    };
+    if ( phi != nullptr
+         && storage.limiter.Size()
+                >= static_cast< std::size_t >( nEquations ) * totalCells )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+            copyComponent( storage.limiter,
+                           phi + static_cast< std::size_t >( equation ) * nCells,
+                           totalCells, static_cast< std::size_t >( equation ),
+                           static_cast< std::size_t >( nCells ) );
+    }
+    if ( faceLeft != nullptr
+         && storage.qf1.Size()
+                >= static_cast< std::size_t >( nEquations ) * nFaces )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+            copyComponent( storage.qf1,
+                           faceLeft
+                               + static_cast< std::size_t >( equation ) * nFaces,
+                           nFaces, static_cast< std::size_t >( equation ),
+                           static_cast< std::size_t >( nFaces ) );
+    }
+    if ( faceRight != nullptr
+         && storage.qf2.Size()
+                >= static_cast< std::size_t >( nEquations ) * nFaces )
+    {
+        for ( int equation = 0; equation < nEquations; ++ equation )
+            copyComponent( storage.qf2,
+                           faceRight
+                               + static_cast< std::size_t >( equation ) * nFaces,
+                           nFaces, static_cast< std::size_t >( equation ),
+                           static_cast< std::size_t >( nFaces ) );
+    }
+}
+
 Real HipFluxBackend::EvaluateDeviceBarth(
     Real dqdx, Real dqdy, Real dqdz,
     Real dx, Real dy, Real dz,

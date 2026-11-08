@@ -325,6 +325,13 @@ public:
     void EvaluateDeviceRoe(
         const DeviceRoeSample & sample, Real flux[ 5 ] ) const;
 
+    // Diagnostic only: copy the resident per-cell limiter factor and the
+    // reconstructed face values back to the host so a CPU run and a HIP run can
+    // be compared point by point.  Enabled by ONEFLOW_UNS_LIMITER_DUMP.
+    void CopyLimiterStateToHost(
+        const void * cacheKey, int nCells, int nFaces, int nEquations,
+        Real * phi, Real * faceLeft, Real * faceRight );
+
     // Single-cell-side Barth limiter factor, for the limiter contract test.
     // One face side: linear increment dq = grad . (xFace - xCell), face normal,
     // and the cell-local min/max range of the limited variable.
