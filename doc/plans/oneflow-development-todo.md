@@ -480,6 +480,10 @@ zone 数、rank 数变化。已排除通信作为主因（关通信只省 2.2 ms
       `npartproc` 写在 `script/part.txt`（后者后加载，会覆盖 grid.txt 的值）；
       求解算例必须补 `grid/bcRegionMap.txt`，否则导出阶段 SIGSEGV；
       `time_integral` 必须显式为 1，否则派生算例回到 host LU-SGS（曾误判为"多卡扩展性差"）。
+- [x] **合入 upstream `68b1e5f6a` 后门禁复跑**（2026-11-08，昆山）：构建 rc=0；
+      3 步 trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0` PASS、
+      CPU 五算例 normal 5/5 + strict 5/5；1000 步 14.68 / 14.69 / 15.77
+      （该节点三发跨度 1.09，中位 14.69，与已发布的 14.62 一致）
 - [ ] **A2 接口交换（多卡关键路径）**：DCU 弱扩展 67% 低于 CPU 的 88%，差在接口；
       `interface_mpi` 随 rank 上涨（1.47 → 1.94 → 2.45），4 卡时接口占每步约 55%。
       下一步：把每个 rank 的多个 zone-pair 小消息聚合成 1 条，或用 allgather 一次取全 halo。
