@@ -30,7 +30,7 @@
 | 门禁证据 | `$HOME/oneflow/evidence/<gate>/<jobid>/` | `gate` / `paired-ab` / `cpu-regression` | 只增不改；`*.stage` 等大二进制提取指标后可删 |
 | 源码快照 | `$HOME/oneflow/src/OneFLOW` + `src/REVISION` | 每轮覆盖 | 不建 `OneFLOW-<hash>` 目录 |
 | 构建 | `$HOME/oneflow/build/app` | 唯一增量构建 | **不要重新 configure**（节点 DTK 的 hip CMake 校验会失败） |
-| fixture | `$HOME/oneflow/fixtures/m6-8zone-cpu8/` | 唯一合法分区算例 | 只读；派生副本用 `prep-case.sh` |
+| fixture | `$HOME/oneflow/fixtures/m6-8zone-cpu8/` | 唯一**登记**的分区算例（8 zone / 294,912 cell） | 只读；派生副本用 `prep-case.sh`。其它 zone 数用 runbook §1b 的配方现生成 |
 | 快照归档 | `$HOME/oneflow/snapshots/*.tgz` | 保留最近 5 个 | `cleanup.sh` 轮转 |
 | 日志 | `$HOME/oneflow/logs/` | 作业 stdout/stderr | 保留 14 天 |
 | 弃用 | `$HOME/oneflow/_attic/<date>/` | 待删物 | 观察一轮后清（`cleanup.sh`，7 天） |
@@ -60,23 +60,36 @@
 | 环境 | 只 source `scripts/env.sh` | 批处理里的 `module load` 是空操作；MPI/UCX/DTK 必须显式进 PATH |
 | HCA | `UCX_NET_DEVICES=mlx5_0:1`、`UCX_IB_DEVICES=mlx5_0` | 其它 HCA 的 `ibv_create_ah` 返回 EINVAL |
 | MPI coll | `OMPI_MCA_coll=^hcoll,han` | 非均匀分布会崩在 `coll/han` |
-| CMake | `$HOME/tools/cmake-3.30.5-linux-x86_64/bin/cmake` | 模块里的 cmake 是指向死链的旧版本 |
+| CMake | `/public/home/luql/apprepo/cmake/4.4.3/bin/cmake`（`env.sh` 已把它加入 `PATH`） | 旧的 `$HOME/tools/cmake-3.30.5` 已随家目录清理删除；模块里的 cmake 是死链 |
 | DTK | `dtk-26.04`（显式加 `bin/llvm/bin/hip/lib` 等） | 不显式设会落到系统旧 ROCm |
 | 资源口径 | 1 DCU 槽 = 8 核；CPU 基线在 `kshcnormal` | 跨队列比较必须换算到同一口径 |
 | 基准 | 1000 步、50 步 warmup、`nFieldSave/nResSave/nForceSave=100000`、CFL 0.01 | 100 步或 kernel-only 不能作生产结论 |
 
 ## 3. 常用命令
 
+**注意：SSH 不可用（见 §1），下面的 `sbatch` 只是作业脚本名；实际提交走 OpenAPI 技能。**
+
 ```bash
 # 仓库侧
 git -C <repo> status --short          # 提交前必须干净
-# 集群侧（工作区固定）
+# 集群侧脚本（都在固定工作区，由作业内执行）
 source $HOME/oneflow/scripts/env.sh
-$HOME/oneflow/scripts/build-app.sh                    # 增量编译
-sbatch $HOME/oneflow/scripts/gate.slurm               # 3 步 trace + 200 步 XB + 500 步分项 + 3x1000 步
-sbatch $HOME/oneflow/scripts/paired-ab.slurm          # 同二进制 paired A/B
-sbatch $HOME/oneflow/scripts/cpu-regression.slurm     # CPU 五算例 normal/strict
+$HOME/oneflow/scripts/build-app.sh                    # 增量编译（两步 make，见坑 12）
+$HOME/oneflow/scripts/gate.slurm                      # 3 步 trace + 200 步 XB + 500 步分项 + 3x1000 步
+$HOME/oneflow/scripts/paired-ab.slurm                 # 同二进制 paired A/B
+$HOME/oneflow/scripts/cpu-regression.slurm            # CPU 五算例 normal/strict
 $HOME/oneflow/scripts/cleanup.sh                      # 日志/快照/attic 轮转
+
+# 提交（唯一方式，OpenAPI）
+SKILL=$HOME/.agents/skills/scnet-hpc
+python3 $SKILL/scripts/scnet.py --region 11250 submit --name of-gate \
+  --command "bash /public/home/<user>/oneflow/scripts/gate.slurm" \
+  --work-dir /public/home/<user>/oneflow --queue kshdnormal \
+  --nodes 1 --cpus 8 --dcus 1 --memory 27G --walltime 01:30:00 \
+  --stdout <ws>/logs/of-gate-%j.out --stderr <ws>/logs/of-gate-%j.err
+python3 $SKILL/scripts/scnet.py --region 11250 --details job <jobid>
+python3 $SKILL/scripts/scnet.py --region 11250 logs --path <abs path> --lines 200
+python3 $SKILL/scripts/scnet.py --region 11250 --timeout 180 upload <local tgz> <ws>/snapshots
 ```
 
 门禁顺序固定：3 步多区 trace（含 resident contract）→ 200 步跨后端 → CPU 五算例
