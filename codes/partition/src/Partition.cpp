@@ -122,7 +122,8 @@ void G2LMapping::GenerateGC2Z( UnsGrid & ggrid )
         Fatal( "The number of partitions should be greater than 1!\n" );
     }
 
-    if ( partitionType == 2 )
+    if ( partitionType
+         == static_cast< int >( GridConfig::PartitionKind::Structured ) )
     {
         this->PartByStructured( ggrid );
         return;
@@ -651,8 +652,9 @@ void Partition::SetF2CAndBC( UnsGrid & ggrid, int zid, UnsGrid & grid )
 void Partition::SetInterface( UnsGrid & ggrid, int zid, UnsGrid & grid, int partitionType )
 {
     // Both supported partitioners fill gc2lzone; the interface construction is
-    // partitioner-agnostic.  Only the unknown types silently skip it.
-    if ( partitionType != 1 && partitionType != 2 ) return;
+    // partitioner-agnostic.  Keep the "which kinds produce a link" decision in
+    // GridTypes so it cannot drift from CalcGrid::BuildInterfaceLink.
+    if ( ! PartitionProducesInterfaceLink( partitionType ) ) return;
 
     G2LMapping & mapping = this->GetG2LMapping();
 

@@ -156,7 +156,8 @@ python3 "$ONEFLOW_SRC/ci/kunshan/verify-multizone-fixture.py" \
 | 1 | METIS 图划分（默认） | 生产算例；最小化割边，但**不保证每 part 形状/接口数相同** |
 | 2 | 结构化等块（cell-count 分位切 a×b×c） | **扩展性测量专用**：cell 严格等分，块形状由数组维度决定，接口数可解释 |
 
-`partition_type = 2` 的分区日志会打印
+`partition_type = 2` 在固定 32 rank 下实测比 METIS 快约 **4.4%**（每步 61.32 → 58.62 ms，
+平均接口面 1786 → 1500），因为步长由 halo 最大的 rank 决定。分区日志会打印
 `Structured partition: <a> x <b> x <c> blocks ... (effective lengths ...)`；
 块数量按 **cell 数**的有效长度选择（不是物理盒尺寸），所以同一物理立方体在 z 向加密
 4 倍时会自动切成 z 向 4 倍数量的块。扩展性表必须同时记录每 rank 的 `nIFaces`，
