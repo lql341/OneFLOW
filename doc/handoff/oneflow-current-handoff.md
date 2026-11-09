@@ -292,6 +292,18 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
    另：`snapshots/` 已超过保留 5 个的策略，下次 `cleanup.sh` 轮转。
 27. **`cmake` 必须在 `PATH` 上**：`env.sh` 只导出 `$CMAKE` 变量时，`cmake` 会落到系统
    2.8.12.2，`make` 自动 reconfigure 还会去用缓存里已删除的旧 cmake 路径。
+28. **`POST_PROCESS` 的 `UPDATE_UNSTEADY_FLOW` 调度只值约 0.1 ms**（2026-11-09）：同二进制
+   pair（跳过 dead dispatch vs 排队执行），1000 步、8 rank/1 DCU：13.49 vs 13.26 ms/step，
+   `POST_PROCESS` 3.83 vs 3.93 —— 在噪声内。之前那一版开关把 handler 也关掉了，测到的
+   2.0 ms 是 history shift 本身。**`POST_PROCESS` 的 3.8 ms ≈ 2.0 shift（默认已跳）
+   + 1.5 post 轮 pack/unpack（`post_upload` 0.9 + `post_download` 0.7）**；要动的是
+   post 轮的 upload/download，不是命令调度。
+29. **rsync 打补丁时不要多传同名目录层级**：`rsync a/codes/ns/src/NsRhs.cpp host:.../codes/ns/`
+   会把文件放到 `codes/ns/NsRhs.cpp`（与 `codes/ns/src/NsRhs.cpp` 并存），
+   `ConstructSolutionDirTree` 递归收全 `codes/**`，于是同一个符号被编两次、链接报
+   `multiple definition`。传文件要显式落到 `.../codes/ns/src/`。
+   另外：**`bin/OneFLOW` 被链接失败删掉后，后续所有作业都会 `No such file or directory`**，
+   先修链接再测。
 
 ## 6. 本文维护规则
 
