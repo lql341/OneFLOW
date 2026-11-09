@@ -149,6 +149,19 @@ python3 "$ONEFLOW_SRC/ci/kunshan/verify-multizone-fixture.py" \
 2026-11-08 结果：16 zone / 16 rank，`zones=16 interfaces=52946`，
 `MULTIZONE_FIXTURE_PASS`。32 zone 用同一配方（`npartproc=32`）。
 
+**选哪种 `partition_type`（2026-11-09 起）**
+
+| 值 | 分区器 | 用途 |
+|---:|---|---|
+| 1 | METIS 图划分（默认） | 生产算例；最小化割边，但**不保证每 part 形状/接口数相同** |
+| 2 | 结构化等块（cell-count 分位切 a×b×c） | **扩展性测量专用**：cell 严格等分，块形状由数组维度决定，接口数可解释 |
+
+`partition_type = 2` 的分区日志会打印
+`Structured partition: <a> x <b> x <c> blocks ... (effective lengths ...)`；
+块数量按 **cell 数**的有效长度选择（不是物理盒尺寸），所以同一物理立方体在 z 向加密
+4 倍时会自动切成 z 向 4 倍数量的块。扩展性表必须同时记录每 rank 的 `nIFaces`，
+否则无法区分分区差异和代码扩展性。
+
 **必须同时把算例改成显式 RK**：从 `test/cfd/m6wingroe_sa` 派生的算例带
 `int time_integral = 2`（LU-SGS），设备驻留链路只在 `time_integral = 1` 下启用。
 2026-11-08 就因为漏了这一行，16/32 zone 的 HIP 跑成了 host LU-SGS，报出

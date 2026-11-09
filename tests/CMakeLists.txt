@@ -66,6 +66,9 @@ add_subdirectory(io)
 # 11. geometry
 add_subdirectory(geometry)
 
+# 81. Partition module tests
+add_subdirectory(partition)
+
 # 12. basic utilities
 add_subdirectory(basic)
 

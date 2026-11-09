@@ -176,11 +176,14 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
     固定 cell 数（≈8,000），且以多 zone 点为基准。
 22. **分区作业的 case 目录要传绝对路径**：`... OneFLOW 0 .` 会静默什么都不写（rc=0 但没有输出
     文件），看起来像分区失败。
-23. **cell 平衡 ≠ halo 平衡**（2026-11-09）：等块设计（每 rank 20³）下 METIS 仍给出
-    1212–3165 的 per-rank `nIFaces`，1.75× 增长；弱扩展的下降跟着 halo 走（8→16 halo +24%
-    时间只 +1.2%，32→128 halo +30% 时间 +29%）。**扩展性表必须带 `nIFaces/rank` 列**，
-    否则会把分区差异当成代码扩展性；要得到 99–100% 的结论需要结构化等块分区（D1a）。
-    另外：`partition_type` 只有 1 会做接口，其它值静默不做。
+23. **cell 平衡 ≠ halo 平衡；扩展性用 `partition_type = 2`**（2026-11-09）：METIS 在等块
+    设计下仍给出 1212–3165 的 per-rank `nIFaces`。新增结构化分区（D1a，`partition_type = 2`）
+    按 cell-count 分位切 a×b×c，cell 严格等分、接口数由块位置决定（角块 1200、边块 1600、
+    体块 2400）。**扩展性表必须带 `nIFaces/rank`**。另两个坑：
+    - **8 rank 不能当弱扩展基线**：只占节点一半核心，睿频更高；本作业 8→16 时间 +22%，
+      远大于 halo +17%；
+    - 开放边界下每 rank halo 会从角块的 1200 饱和到体块的 2400，弱扩展 99–100% 只能在
+      整节点且同 halo 的配置间主张（D1b）。
 
 1. **设备权威不能从初始化就开始**：bound 状态的第一次 `FullField` 上传依赖 host 的
    ghost 区；跳过条件必须是 `HostMirrorStale(grid)`，否则第一步就偏离 CPU oracle。

@@ -136,7 +136,10 @@ void CalcGrid::BuildInterfaceLink()
     if ( this->config.objective == GridObjective::Partition )
     {
         const int partitionType = this->config.partitionType;
-        if ( partitionType == 1 )
+        // 1 = METIS, 2 = structured blocks.  Both produce the per-part cell
+        // lists that ReconstructLink consumes; GenerateLink stays the fallback
+        // for workflows that build the link from the partition input directly.
+        if ( partitionType == 1 || partitionType == 2 )
         {
             this->ReconstructLink();
         }
