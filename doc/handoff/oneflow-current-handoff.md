@@ -12,8 +12,10 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo **§5 下一轮任务**：当前主线是 **B2.1（Barth 邻域 stencil 对齐）**，
-   之后 A2（接口消息聚合）、A4（RK 循环下沉）。A1 已收口在 14.62 ms/step。
+2. 打开 todo **§5 下一轮任务**：当前主线是 **A3（stage 融合第一段）**，
+   之后 A2′（接口消息聚合）、A4（RK 循环下沉）。A1 已收口在 14.62 ms/step。
+   **主线优先级只以 todo §4/§5 为准**；本文只记“怎么跑”和“已经踩过的坑”，
+   两边不一致时改本文，不要改 todo 的台账。
 3. 要动集群先读 §1（固定路径）与 runbook：**SSH 已不可用，只能走 OpenAPI 技能**，
    因此一切远端操作必须写成作业脚本提交，不能在交互 shell 里敲。
 4. 收尾：勾选 todo、证据落 `evidence/<gate>/<jobid>/`、更新本文 §4 与 §5；
@@ -126,12 +128,15 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
 
 **下一步（按价值）**
 
-1. **B2.1**：按差异单元核对 Barth 邻域 stencil（设备按 `boundaryMask`/`boundaryOperation`
-   跳过边界；主机 `Limiter::CalcLimiterScalar` 需逐项对照），再决定是否补整组正性判据。
-2. **A2 接口聚合**：DCU 弱扩展 67% vs CPU 88%，差在接口；把每 rank 的多个 zone-pair
+1. **A3 stage 融合第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有
+   host 同步。单卡可及收益按“每步往返次数 × 单次开销”估：每 stage 6 次 → 4 次，
+   约 −4 ms/step。验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 可测。
+2. **A2′ 接口聚合**：DCU 弱扩展 67% vs CPU 88%，差在接口；把每 rank 的多个 zone-pair
    小消息合成 1 条（GPU-aware 直发已验证**不可用**：探针 PASS 但求解器在 libgalaxyhip abort）。
 3. **A4**：RK 循环下沉设备（结构性，单卡 14.6 → 目标 9–10）。
-4. **D1**：外部 ≥1M cell 合法分区网格。
+4. **B2.1（手段线，不占 A 线）**：按差异单元核对 Barth 邻域 stencil，解锁 `ilim=1`。
+   stencil 只是手段，目标是把限制器变成可用能力；不要为了对齐 stencil 停住性能线。
+5. **D1**：外部 ≥1M cell 合法分区网格。
 
 **不要做**：单 zone 当弱扩展基线；用 <1000 步的短基准报 ms/step；跨节点比单发数字；
 用 ad-hoc 分区做多卡结论（必须显式 RK + manifest 校验）。
