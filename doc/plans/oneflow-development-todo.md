@@ -334,6 +334,12 @@ DCU 同口径（同一套 cube 与分区，`e06r2n06`，1/2/4 卡 × 8 rank/卡�
 - [x] **A1.7+ 固定基数已归因**（详见 §4.1 A1.7b/A1.7c）。结论：短基准把 1.4–1.6 s 的启动
       摊进 ms/step，旧的 8.93 属于这类读数；按 1000 步斜率，每步成本 ≈ 同步往返次数 × 单次开销，
       与 cell 数无关。据此做的第一版改动见 A1.7c（默认生效，14.62 ms/step）
+- [x] **A1.7d 默认开关复核**（2026-11-09，m6wing 8 zone / 8 rank / 1 DCU，1000 步、3 对交错）：
+      `ONEFLOW_HIP_DEFER_SYNC` on/off = **13.220 / 13.651 ms/step（中位，−3.2%，3/3 对为正）**，
+      默认（on）正确；同节点绝对值 13.2 低于 14.62，但跨节点/跨日不可直接比。
+      分项（同作业，defer off 以得到干净的每段执行）：`gradient` 2.28、`reconstruction` 1.95、
+      `flux_assembly` 1.83（设备 kernel 合计 4.46），接口非嵌套合计 ≈ 4.54（`interface_mpi` 2.19），
+      `macro_calc_lhs` 0.57、`macro_time_step` 0.28、启动约 1.6/步（1000 步口径）
 
 **已收口的前置修正**（稳定结论，数字见 handoff §4）
 
@@ -364,10 +370,17 @@ DCU 同口径（同一套 cube 与分区，`e06r2n06`，1/2/4 卡 × 8 rank/卡�
       排队工作量。所以"安全桶 5–6 ms"的估计过高，实际只兑现约 0.4 ms（分项），
       端到端在噪声内。剩下的差距是结构性的（A4 把循环下到设备），不是缓存能解决的
 - [ ] **A3 stage 融合，第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
-      单卡可及收益按"每步往返次数 × 单次开销"估：每 stage 6 次 → 4 次，约 −4 ms/step
+      **2026-11-09 实测修正（1000 步、8 rank/1 DCU、`ONEFLOW_HIP_DEFER_SYNC=0` 分项）**：
+      `gradient` 2.28（kernel 1.48）、`reconstruction` 1.95（kernel 1.16）、`flux_assembly` 1.83，
+      合计 **4.46 ms/step**；融合能拿回的主要是 qf1/qf2 全场往返（约 0.4 ms/step）和 1–2 次 launch，
+      **不再是原估的 −4 ms**（那个估算基于 A1.7c 之前的“每次往返 0.4 ms”，延迟 drain 已把它拿走）。
       验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 有可测收益
 - [ ] **A2′ 接口交换**：4 轮、每轮每 rank 约 3 条 zone-pair 小消息，32 zone/4 卡时
       `interface_mpi` 3.05 ms/step（占每步 29%），是**延迟主导**而不是带宽主导。
+      **2026-11-09 单卡实测（同上作业）**：`interface_mpi` 2.19、`post_upload` 0.89
+      （含 `swap_upload` 0.88）、`post_download` 0.50、`interface_pack` 0.56、
+      `interface_unpack` 0.42，非嵌套合计 ≈ **4.54 ms/step（33%）**，与设备 kernel
+      4.46（3 stage 合计）持平——**当前最大的两个可改项之一**。
       2026-11-08 已验证两条路：
       - **GPU-aware 设备直发不可用**：`ci/kunshan/gpu-aware-mpi-probe.cpp` 在 2 rank/2 DCU
         单节点 **PASS**（device→device 点对点），但求解器开
