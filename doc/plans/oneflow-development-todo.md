@@ -372,8 +372,10 @@ METIS 平均 `nIFaces` 1786 → 结构化 1500（−16%）；每步 **61.32 → 
 - 8/16 rank 只占半个节点、睿频更高，不能和整节点点混在一起比（这也是早先
   8→16 “+22%” 的来源）。
 
-结论：扩展性的瓶颈是**接口交换**（A2′），不是计算路径。D1a 的 4.4% 是分区形状的
-一次性收益，真正要削的是每步 4 轮的交换成本。
+结论（**2026-11-10 修正**）：上面那张表只说明"关掉接口后计算段不变"，不等于接口是
+主瓶颈。rocprof 实测 GPU kernel 只占单步 12–24%，**接口 16%，其余约 60–70% 在 host**；
+接口随 rank 增长的那几毫秒是邻居到达偏差。所以本轮的下一步是 **H1（host 侧每步账）**，
+接口（A2′）和融合（A3）都降权。
 
 DCU 侧同一套等块分区还未重跑；在它到位前，67% 只能作为“含 halo 增长”的混合读数。
 
@@ -478,9 +480,23 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
 
 #### 5.2 P1 — Phase A 收口（目标 ≤14 ms/step）
 
-> **本轮顺序（2026-11-09 按实测调整）：A2′ 接口 → A3 融合 → A4。** 单卡分项显示接口
-> ≈4.54 ms/step、设备 kernel ≈4.46 ms/step，各占约三分之一；A3 的可及收益按实测评到
-> 0.4–1 ms（不再是 −4），所以先把接口放到第一项。
+> **本轮顺序（2026-11-10 按 rocprof 实测重新排序）：H1 host 侧每步账 → H2 多卡 VMFault
+> → A4 → A2′/A3。**
+> rocprof 实测（见 §4.8b 的 kernel 表）：GPU kernel 只占单步的 **12%（1 rank）～24%（8 rank）**，
+> 接口约 **16%**，其余是 **host 侧**的宏步编排、任务派发、post 轮与同步。之前"kernel 33%/接口 33%"
+> 的读数是 host 侧入队+等待，不是 GPU 执行时间；因此 A2′（接口）和 A3（融合）都降权。
+
+- [ ] **H1 host 侧每步账（当前主项）**：8 rank/1 DCU 的 7.43 ms/step 里，GPU 聚合只有
+      ≈1.77 ms，**约 5.7 ms 在 host**。做法：在 `MG::SolveInnerIter` / `MG::WeakIter` /
+      `MG::PreRelaxationCycle` / `MG::InnerProcess` 加计时域（`macro_*` 只覆盖宏步内部，
+      外面这一段目前没有名字），把 host 部分拆成「宏步外循环」「任务派发/命令表」
+      「post 轮」「集合操作/屏障」。验收：各项之和与墙钟差 <10%，并给出下一刀的位置；
+      之后才谈把哪个循环下沉到设备（A4）。
+- [ ] **H2 多卡 VMFault（blocker，先于一切多卡优化）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡
+      都在 `libgalaxyhip` + `hsa-runtime64` 里 `signal 6`，VMFault 追踪指向
+      `GradientCopyBoundaryKernel`（gradient / leftCell / rightCell 三个指针）。8 rank/1 卡正常。
+      先做最小复现（同一 cube、16 zone、2 卡）并定位是 zone 数还是卡数触发；修好前
+      多卡结论一律挂起（§4.8b 的 67% 不可复现）。
 
 - [x] **A1.9 梯度 unpack 路径的两处重复工作**（2026-11-08）：ghost-face→cell 映射按
       (grid, ghost level) 缓存（`006f9ff39`+`6174b21bd`），unpack 的 ghost id 列表按指针复用
@@ -494,13 +510,16 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
       这个计时器是**延迟队列在下一个阻塞点的等待**，随 rank 数下降正好说明它承接的是
       排队工作量。所以"安全桶 5–6 ms"的估计过高，实际只兑现约 0.4 ms（分项），
       端到端在噪声内。剩下的差距是结构性的（A4 把循环下到设备），不是缓存能解决的
-- [ ] **A3 stage 融合，第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
+- [ ] **A3 stage 融合，第一段**（**已降权**：rocprof 显示三个 kernel 合计 1.77 ms/step、
+      占单步 12%；融合的收益上限只是其中一小半，不要排在本轮前面）：`gradient → reconstruction → flux` 串进设备，stage 内不再有 host 同步。
       **2026-11-09 实测修正（1000 步、8 rank/1 DCU、`ONEFLOW_HIP_DEFER_SYNC=0` 分项）**：
       `gradient` 2.28（kernel 1.48）、`reconstruction` 1.95（kernel 1.16）、`flux_assembly` 1.83，
       合计 **4.46 ms/step**；融合能拿回的主要是 qf1/qf2 全场往返（约 0.4 ms/step）和 1–2 次 launch，
       **不再是原估的 −4 ms**（那个估算基于 A1.7c 之前的“每次往返 0.4 ms”，延迟 drain 已把它拿走）。
       验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 有可测收益
-- [ ] **A2′ 接口交换**：4 轮、每轮每 rank 约 3 条 zone-pair 小消息，32 zone/4 卡时
+- [ ] **A2′ 接口交换**（**已降权**：墙钟 A/B 实测单卡接口 **2.1–2.2 ms/step，16%**；
+      多卡增长部分是邻居到达偏差，换 Isend/Irecv 已实测无效，见 handoff 坑 30）：
+      4 轮、每轮每 rank 约 3 条 zone-pair 小消息，32 zone/4 卡时
       `interface_mpi` 3.05 ms/step（占每步 29%），是**延迟主导**而不是带宽主导。
       **2026-11-09 单卡实测（同上作业）**：`interface_mpi` 2.19、`post_upload` 0.89
       （含 `swap_upload` 0.88）、`post_download` 0.50、`interface_pack` 0.56、

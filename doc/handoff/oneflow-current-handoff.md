@@ -101,45 +101,37 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**基线**：`master` = `origin/master` = `upstream/master` = `68b1e5f6a`（2026-11-08 三端同步，
-PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖。
+**基线**：`master` = `origin/master` = `upstream/master`（2026-11-10 三端同步，见提交记录）；
+`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖，二进制在
+`build/app/bin/OneFLOW`（构建走 `build-app.sh` 的两步 make）。
 
-**这一轮的结论（2026-11-08）**
+**2026-11-10 这一轮的结论**
 
-- **单卡性能**：8 zone / 8 rank / 1 DCU / 1000 步，同节点交错 5 对中位
-  **15.53 → 14.62 ms/step（−5.9%）**。三个开关默认生效：drain 只在回读处
-  （`ONEFLOW_HIP_DEFER_SYNC`）、非物理标志留设备宏步末查一次（`ONEFLOW_HIP_DEFER_STATUS`）、
-  残差缩放并入状态更新入口（`ONEFLOW_HIP_FUSE_SCALE_UPDATE`）；另有队列深度上限
-  （`ONEFLOW_HIP_MAX_LAUNCHES_PER_DRAIN`，默认 32，多 rank 不设上限会在 libgalaxyhip 里 abort）。
-- **门禁**：trace `24/0/0` + `max_abs_diff=0`、200 步 XB `2.331035e-18`/`aero 0.0`、
-  CPU 五算例 normal 5/5 + strict 5/5。
-- **扩展性（本轮最重要的修正）**：强扩展 67% 是**网格过分割**造成的假象——固定
-  294,912 cell 时 32 核每 rank 只剩 9,216 cell。改成每核固定 ≈8,000 cell 后：
-  CPU 8/16/32 核 58.33 / 60.42 / 66.30 ms（弱扩展 88%），
-  DCU 8/16/32 rank（1/2/4 卡）5.06 / 6.14 / 7.54 ms（弱扩展 67%），
-  同 per-rank 负载 DCU 比 CPU 快 **8.8–11.5×**。**不要再引用"2 卡以上无收益"**。
-- **两个测量陷阱**：①单 zone cube `nIFaces = 0`，不能当弱扩展基线（曾误报 94%）；
-  ②DCU 单发噪声可达 3–4 倍（32 rank/4 卡三发 5.87/23.32/7.54），必须取中位、同作业内比较。
-- **修掉的 bug**：`codes/special/src/Transfinite.cpp` 3D 插值两处复制粘贴错误
-  （k 方向用了 j 向边值；`uv` 末项乘 `ck` 应为 `cj`），修复前 65³ 网格 24% 单元负体积。
-- **B2.0 已完成**：新增 `ONEFLOW_UNS_LIMITER_DUMP`，单 zone 1 步 `ilim=1` 逐点比对——
-  φ 0.45% 单元不同（形态 0 vs 1）、面值 0.9% 不同（eq=1 为主），说明是**极值判定差异**，
-  不是公式整体错。下一步核对设备 `BarthLimiterKernel` 的邻域是否排除了边界/界面面。
+- **GPU 只忙 12–24%**：rocprof（配方见 §5 坑 31）实测 1 rank / 294,912 cell / 2 步 =
+  **3.54 ms kernel 时间（每步 1.77 ms）**；对照 1 rank 墙钟 14.36 ms/step 是 12%，
+  8 rank 同卡（聚合 kernel 仍 ≈1.77 ms、墙钟 7.43）是约 24% 忙。
+- **接口 16%**：墙钟 A/B `ONEFLOW_DIAG_NO_COMM` 单卡 2.1–2.2 ms/step；多卡增长部分是
+  邻居到达偏差（MPI trace：每步 24 条消息、字节数不随 rank 变，recv 5.7→15.8 ms）。
+- **端到端并行效率未变**：CPU 1→32 rank = 100/93/86/73/71/**65.7%**（基线 67%，噪声内）；
+  DCU 单卡 1→8 rank 只有 **1.93×**（14.36→7.43），说明同一张卡加 rank 是在摊 host 工作。
+- **已否掉**：非阻塞交换（更慢 5%、第二版段错误）、删 dead `UPDATE_UNSTEADY_FLOW`
+  （0.1 ms，噪声内）、"kernel/接口各 33%"的旧读数（那是 host 侧入队+等待）。
+- **唯一保留的代码资产**：结构化等块分区（`partition_type=2`，固定 32 rank +4.4%，
+  9 个单测）与 MPI 调用计数（`ONEFLOW_MPI_TRACE_FILE`）。
 
-**下一步（按价值）**
+**下一步（按价值，详见 todo §5）**
 
-1. **A3 stage 融合第一段**：`gradient → reconstruction → flux` 串进设备，stage 内不再有
-   host 同步。单卡可及收益按“每步往返次数 × 单次开销”估：每 stage 6 次 → 4 次，
-   约 −4 ms/step。验收：trace `24/0/0`、XB `2.331035e-18`/`0.0`、同节点交错 paired 可测。
-2. **A2′ 接口聚合**：DCU 弱扩展 67% vs CPU 88%，差在接口；把每 rank 的多个 zone-pair
-   小消息合成 1 条（GPU-aware 直发已验证**不可用**：探针 PASS 但求解器在 libgalaxyhip abort）。
-3. **A4**：RK 循环下沉设备（结构性，单卡 14.6 → 目标 9–10）。
-4. **B2.1（手段线，不占 A 线）**：按差异单元核对 Barth 邻域 stencil，解锁 `ilim=1`。
-   stencil 只是手段，目标是把限制器变成可用能力；不要为了对齐 stencil 停住性能线。
-5. **D1**：外部 ≥1M cell 合法分区网格。
+1. **H1 host 侧每步账**：8 rank 的 7.43 ms 里约 5.7 ms 在 host。给
+   `MG::SolveInnerIter` / `WeakIter` / `PreRelaxationCycle` / `InnerProcess` 加计时
+   （`macro_*` 只覆盖宏步内部），把 host 拆成"宏步外循环 / 任务派发 / post 轮 / 屏障"。
+   验收：各项之和与墙钟差 <10%，并指出下一刀。
+2. **H2 多卡 VMFault（blocker）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡都在
+   `libgalaxyhip`+`hsa` 里 abort，VMFault 指向 `GradientCopyBoundaryKernel`；8 rank/1 卡正常。
+   修好前不做任何多卡结论。
+3. **之后**：A4（把宏步循环真正下沉）、A2′（接口 16%）、D1（≥1M 合法 fixture）。
 
-**不要做**：单 zone 当弱扩展基线；用 <1000 步的短基准报 ms/step；跨节点比单发数字；
-用 ad-hoc 分区做多卡结论（必须显式 RK + manifest 校验）。
+**不要做**：再按"kernel 33%/接口 33%"排期；再用 Isend/Irecv 改交换；再拿 stage 分项表
+当 GPU 时间（它量的是 host 侧入队+等待）。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
 
@@ -347,6 +339,12 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
     **结论：不要再用 rocprof 回答"kernel 离 roofline 多远"。** 用 backend 内的
     `hipEvent` 计时（v 环境开关）或 `hipEventElapsedTime` 包住热点 kernel，
     不依赖外部工具。
+
+32. **stage 分项表不是 GPU 时间**（2026-11-10）：`gradient/reconstruction/flux_assembly`
+    这些 host 计时器量的是"入队 + 等待"，`ONEFLOW_HIP_DEFER_SYNC` 一开一关能差 8 倍
+    （`gradient_kernel` 0.18 vs 1.48 ms/step）。rocprof 实测三个 kernel 合计只有
+    **1.77 ms/step（单步的 12%）**。**任何 kernel 相关的排期/优化都必须用 rocprof 的数**
+    （配方坑 31），不要用分项表；分项表只用来分 host 段。
 
 ## 6. 本文维护规则
 
