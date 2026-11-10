@@ -24,6 +24,7 @@ License
 #include "DataBase.h"
 #include "Prj.h"
 #include <exception>
+#include <stdexcept>
 
 BeginNameSpace( ONEFLOW )
 
@@ -50,9 +51,35 @@ std::string GridConfig::GetSourceCaseDir()
     }
 }
 
+std::string GridConfig::GetBcRegionMapFileName()
+{
+    DataBase * database = GetGlobalDataBase();
+    if ( database == nullptr )
+    {
+        return std::string( kDefaultBcRegionMapFile );
+    }
+
+    const DataEntry * entry =
+        database->RequireDataPara().FindDataEntry( "bcRegionMapFile" );
+    if ( entry == nullptr )
+    {
+        return std::string( kDefaultBcRegionMapFile );
+    }
+    if ( entry->GetType() != HX_STRING )
+    {
+        throw std::invalid_argument(
+            "Control parameter \"bcRegionMapFile\" must be a string" );
+    }
+
+    const std::string fileName =
+        GetDataValue< std::string >( &entry->GetDataObject(), 0 );
+    return fileName.empty() ? std::string( kDefaultBcRegionMapFile ) : fileName;
+}
+
 GridConfig GridConfig::FromDataBase()
 {
     GridConfig cfg;
+    cfg.bcRegionMapFile = GridConfig::GetBcRegionMapFileName();
 
     cfg.sourceFile = GetDataValue< std::string >( "sourceGridFileName" );
 
@@ -84,6 +111,20 @@ GridConfig GridConfig::FromDataBase()
     }
     catch ( const std::exception & )
     {
+    }
+
+    try
+    {
+        const std::string executable =
+            GetDataValue< std::string >( "gmshExecutable" );
+        if ( ! executable.empty() )
+        {
+            cfg.gmshExecutable = executable;
+        }
+    }
+    catch ( const std::exception & )
+    {
+        // Keep the PATH-resolved Gmsh executable when no override is configured.
     }
 
     try
@@ -198,6 +239,15 @@ GridConfig GridConfig::FromDataBase()
     catch ( const std::exception & )
     {
         // Keep the default when legacy boundary control is not configured.
+    }
+
+    try
+    {
+        cfg.stlWeldTolerance = GetDataValue< Real >( "stlWeldTolerance" );
+    }
+    catch ( const std::exception & )
+    {
+        // Keep the default tolerance when an STL-specific parameter is absent.
     }
 
     try

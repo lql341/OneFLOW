@@ -109,7 +109,10 @@ Grid conversion case
    boundary parameters; ``SimuDef.cpp`` resolves the task and ``Tolerance.cpp`` reads
    ``ptTol``. Representative declared keys include ``gridObj``, ``sourceGridType``,
    ``targetGridType``, ``gridScale``, ``gridTrans``, ``sourceGridFileName``,
-   ``targetGridFileName``, and ``parallelStrategy``.
+   ``targetGridFileName``, and ``parallelStrategy``. The optional ``gmshExecutable`` setting selects the external Gmsh CLI for
+   native STL-to-Gmsh conversion; when absent, the runtime uses ``gmsh`` from
+   the process ``PATH``. ``stlWeldTolerance`` controls vertex welding and
+   planar-boundary tolerance, defaulting to ``1.0e-10`` when omitted.
 
 RAE2822 Roe-SA CFD case
    ``simu.txt`` holds run control, files, and output cadence. ``cfd.txt`` selects
@@ -709,8 +712,8 @@ tree are related views, but they have different responsibilities:
   particular run. A catalog definition is not itself a runtime assignment.
 
 At the current inventory checkpoint, the Parameter contract directory
-contains 150 entries covering 152 individual parameter keys. The original
-14 source-audited contracts cover 16 keys (the CFL ramp contract groups
+contains 151 entries covering 153 individual parameter keys. The original
+15 source-audited contracts cover 17 keys (the CFL ramp contract groups
 ``cflst``, ``cfled``, and ``ncfl``). A further 136 entries were added
 from a declaration inventory of five representative CFD Cases and one Grid
 Case. These new entries are deliberately marked ``proposed``: they establish
@@ -718,7 +721,7 @@ names and functional groups in Contract Workbench, but do not claim a verified
 runtime consumer, formula, unit, default, admissible range, or numerical
 validation.
 
-The current directory contains 150 JSON contract definitions. The 14
+The current directory contains 151 JSON contract definitions. The 15
 source-audited entries retain their existing source mappings and knowledge;
 the 136 proposed entries are inventory placeholders intended to make the
 full set navigable and auditable. Proposed entries intentionally have no
@@ -763,8 +766,17 @@ classification, and evidence state. A missing consumer audit means
 ``not_yet_audited``, not unused. A key with no known formula remains a
 parameter entry with an explicit explanation, not an invented equation.
 
-Case parameter-file generation is a later consumer of this catalog, not a
-shortcut around it. A generated Case should be assembled from a compatible
+The boundary-region name map path is controlled by the optional string
+parameter ``bcRegionMapFile``. Its default is ``grid/bcRegionMap.txt`` when the
+key is absent or its value is empty. Grid generation writes the map under the
+configured mesh-output root; the solver reads the same case-relative path under
+the configured mesh-input root (or under ``sourceGridCaseDir`` when an external
+source Case is selected). This keeps the producer and consumer aligned while
+allowing cases and mesh workflows to place the map elsewhere. A present value
+must be a string; a type mismatch is a configuration error rather than a silent
+fallback.
+
+Case parameter-file generation is a later consumer of this catalog. A generated Case should be assembled from a compatible
 profile of task, dimension, solver/equation system, physical models, grid,
 boundary conditions, and numerical methods. The generator must:
 

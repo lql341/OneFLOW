@@ -77,6 +77,7 @@ enum class GridFileType
     OneFLOW,
     Gridgen,
     Gmsh,
+    STL,
     Unknown
 };
 
@@ -116,6 +117,9 @@ struct GridOutputConfig
     std::string cgnsFile;
 };
 
+// Canonical fallback for the case-relative boundary-region name map.
+inline constexpr std::string_view kDefaultBcRegionMapFile = "grid/bcRegionMap.txt";
+
 // ---------------------------------------------------------------------------
 // Case-scoped grid workflow configuration. Read legacy DataBase values at the
 // entry boundary, then pass this value through generation and conversion.
@@ -134,6 +138,10 @@ struct GridConfig
     std::string   layoutFile;
     std::string   bcFile;
     std::string   targetFile;
+    // Case-relative boundary-region name map shared by grid generation and solve.
+    std::string   bcRegionMapFile{ kDefaultBcRegionMapFile };
+    // External mesher executable used by generation workflows such as STL -> Gmsh.
+    std::string   gmshExecutable{ "gmsh" };
     GridOutputConfig output;
     // Legacy mirrors retained while existing callers migrate to output.
     std::string   gridInfoFile;
@@ -155,10 +163,12 @@ struct GridConfig
     int           partitionCount{ 1 };
     bool          ignoreNoBoundary{ false };
     Real          scale{ 1.0 };
+    Real          stlWeldTolerance{ 1.0e-10 };
     std::array< Real, 3 > translate{};
 
     // Implemented in GridTypes.cpp (needs DataBase).
     static GridConfig FromDataBase();
+    static std::string GetBcRegionMapFileName();
 
     // Return the optional external source case for the current grid configuration.
     static std::string GetSourceCaseDir();
@@ -235,6 +245,7 @@ inline bool EqualIgnoreCase( std::string_view a, std::string_view b ) noexcept
     if ( grid_types_detail::EqualIgnoreCase( name, "oneflow" ) ) return GridFileType::OneFLOW;
     if ( grid_types_detail::EqualIgnoreCase( name, "gridgen" ) ) return GridFileType::Gridgen;
     if ( grid_types_detail::EqualIgnoreCase( name, "gmsh" ) ) return GridFileType::Gmsh;
+    if ( grid_types_detail::EqualIgnoreCase( name, "stl" ) ) return GridFileType::STL;
     return GridFileType::Unknown;
 }
 
@@ -248,6 +259,7 @@ inline bool EqualIgnoreCase( std::string_view a, std::string_view b ) noexcept
         case GridFileType::OneFLOW: return "oneflow";
         case GridFileType::Gridgen: return "gridgen";
         case GridFileType::Gmsh:    return "gmsh";
+        case GridFileType::STL:      return "stl";
         default:                    return "unknown";
     }
 }

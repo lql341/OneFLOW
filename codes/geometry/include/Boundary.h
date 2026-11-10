@@ -65,6 +65,10 @@ public:
     static bool IsWallBc( int bcType );
 };
 
+// Map common Gmsh Physical Group names to standard CGNS BCType values.
+// Unknown names remain BCTypeUserDefined; names are never rewritten.
+int GmshPhysicalNameToCgnsBcType( const std::string & physicalName );
+
 class BcTypeMap
 {
 public:
@@ -81,6 +85,9 @@ public:
 
     // Convert each entry from CGNS BC type ids to OneFLOW BC ids in place.
     void MapFromCgnsInPlace( IntField & bcTypes ) const;
+
+    // Print unique mapped OneFLOW types and only the CGNS mappings used by this mesh.
+    void PrintSummary( const IntField & cgnsBcTypes ) const;
 };
 
 class CommonNameMap

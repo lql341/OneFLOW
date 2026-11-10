@@ -2,7 +2,7 @@
 
 For the user-manual entry in the main OneFLOW documentation, see [OneFLOW Workbench User Guide](../../doc/source/workbench_user_guide_zh.rst). This README remains the detailed module-level reference for current UI behavior and service tests. The architecture overview is [Workbench Architecture](../../doc/source/workbench_architecture.rst). Case parameter file ownership, runtime database limitations, and the proposed schema-backed editor are documented in [Case Parameter Design](../../doc/source/case_parameter_design.rst).
 
-The desktop application starts with a minimal Workbench home containing a single **Project** button. Open it to access **New Project...**, **Open Project...**, **Open Multi-Case Workspace...**, **Create Multi-Case Workspace...**, **Run History...**, and **Saved Workflows...** in a vertical list. The home page places **Tests...**, **Repository Test Inventory...**, **Contract Workbench...**, **Mesh Layout Editor...**, **Background Tasks...**, and **Configuration...** as separate vertical buttons directly below **Project**. **New Project...** creates a project from a template in a user-selected workspace directory; the initial templates are Blank project, Mesh conversion (`grid/mesh_workflow`), Mesh generation (`grid/minimal_rectangle`), and RAE2822 grid and CFD workflow. The RAE2822 template copies the mesh-conversion case and Roe-SA solver case into one workspace and includes `workflow.json`, which declares the generated-grid artifact and the solver dependency. Existing templates are copied and never edited in the source tree. The Blank project includes `.oneflow-project.json` metadata and a README. **Open Project** accepts any existing directory, including projects outside the repository and projects not registered in the built-in case catalog. The project window identifies Grid or CFD/flow projects where possible; unknown projects can still be opened. The project overview lists the discovered parameter files in a selectable list. Select a file and choose **Modify selected...**, or double-click it, to open it with the configured source editor (VS Code by default). The runtime parameter file is already part of this list and is not displayed as a separate row. Opening a project indexes supported scalar declarations into `%USERPROFILE%\\.oneflow\\parameter-catalog.sqlite3` (or `ONEFLOW_HOME`). SQLite stores project/file identity, detected encoding, typed values, source hashes, schema metadata, and immutable content snapshots. Legacy parameter files remain authoritative; indexing never rewrites them. Projects inside the OneFLOW source repository must be copied to a workspace before running, and copy destinations must remain outside the source repository. User projects outside the repository can still be run in place or copied to a workspace. **Development Tests**, **Unit Tests**, and **CFD/Grid Regression** are task types with different execution strategies. The **Tests** entry groups unit tests, CFD/grid regression, and Development Tests. Development Tests is opt-in and unchecked by default. Its **Select cases...** dialog starts with all catalog cases selected, so checking Development Tests and pressing **Run** is enough; open the selector only to change the selection. The selector groups cases using the optional `group` field in `grid/case_catalog.json`; Gmsh conversion examples share the **Gmsh** group, while unclassified entries appear under **General**. Group checkboxes select or clear all cases in that group, and individual cases can still be toggled independently. Cases are copied to the fixed protected test workspace before each batch, and per-case results remain visible in the Tests dialog. The **Configuration...** dialog stores a **Run mode** preference with **Run single case**, **Multi-case run**, and **Dependency workflow** values. When **Saved Workflows...** opens, **Multi-case run** and **Dependency workflow** create a matching new draft; **Run single case** leaves the saved-workflow list unchanged. Use **Open Project...** for a single project. A versioned `.ofw` workspace file records case directories, execution mode, and dependency edges; use **Project > Open Multi-Case Workspace...** or **Project > Create Multi-Case Workspace...** to edit it. The `.ofw` editor can open the existing Saved Workflows runner through **Save and Run...**; artifact handoff still requires a full graph definition in Saved Workflows. Project discovery, catalog definitions, workflow definitions, run workspaces, and run history have distinct responsibilities.
+**Run Development Cases** runs selected native C++ OneFLOW cases through `OneFLOW.exe r <case-directory>`; **Python reference cases** runs selected catalogued Python reference cases through their declared scripts. When both are checked, the two execution kinds run in one batch. When only one is checked, only that kind runs. Each kind retains its own selection.
 
 ## Contract Workbench
 
@@ -14,8 +14,10 @@ the suite manifest, residual baseline, and retained analytical reference files.
 These actions resolve repository-relative paths and do not run the case.
 
 The home page's **Contract Workbench...** button opens the cross-domain contract
-navigator. Current domain entry points are:
+navigator. **Boundary Conditions...** is also a direct first-class home-screen
+entry, separate from Mesh Validation. Current Contract Workbench domain entries are:
 
+- **Boundary Conditions** browses physical boundary semantics and Gmsh/CGNS/OneFLOW mapping contracts. See `doc/source/boundary_condition_architecture.rst` for the detailed model and limitations.
 - **Parameter** browses source-backed parameter definition contracts,
   including runtime consumers, implementation paths, related Formula &
   Knowledge IDs, and declared verification evidence. The first contracts cover
@@ -64,7 +66,7 @@ The first detected path is selected automatically; use the dropdown to switch
 between detected copies, type a path directly, or use **Browse...** for an
 unlisted location. No full-disk search is performed.
 
-From **Open Project**, choose any existing project directory and then choose the executable and execution location. This path does not require catalog registration. To run built-in development cases, open **Tests**; Development Tests is unchecked by default. When enabled, all catalog cases are already selected; use **Select cases...** only to run a subset. The **Run mode** preference shown in **Configuration...** selects the initial draft when **Saved Workflows...** opens: multi-case creates a multi-directory draft, and dependency workflow creates a case-graph draft. It does not run the workflow automatically. Catalog cases are always copied to a run workspace before execution. The queue displays process output and per-case status. **Stop queue** terminates the active process and prevents pending cases from launching.
+From **Open Project**, choose any existing project directory and then choose the executable and execution location. This path does not require catalog registration. To run built-in development cases, open **Tests**. **Select cases...** shows C++ cases when only **Run Development Cases** is enabled, Python cases when only **Python reference cases** is enabled, and both kinds when both are enabled. Each kind retains its own selection. When neither is enabled, the selector defaults to native C++ cases for browsing, but no Development Cases are executed.
 
 Catalog case execution always uses a workspace copy:
 - **Copy to OneFLOW default run workspace** stages each case under
@@ -325,3 +327,24 @@ expression. The Formula & Symbols view lists term meanings, alternate textbook
 notations, OneFLOW variable mappings, references, assumptions, and caveats.
 It exposes copyable LaTeX source and an optional rendered preview using the
 existing Formula & Knowledge renderer.
+
+
+## Mesh-to-CFD Validation Workbench
+
+The Tests page opens Mesh-to-CFD Validation as a separate workbench. Select
+multiple STL-to-Gmsh Cases, choose a CFD consumer template, and set the short
+solver smoke-test iteration count. Each selected mesh Case is validated
+independently through its conversion chain and CFD consumer.
+
+Validation workspaces are stable and Case-scoped below
+`$ONEFLOW_HOME/mesh-validation/` (or `~/.oneflow/mesh-validation/` when
+`ONEFLOW_HOME` is not set). For example, the square C++ STL Case uses
+`stl_to_gmsh/square/cpp/`. Each workflow stage has its own named directory
+under that Case root: `stl_to_gmsh/`, `gmsh_to_cgns/`,
+`gmsh_to_oneflow/` and `oneflow_cfd_solve/`. The Case root itself contains
+only the workflow report; stage inputs, scripts, results and logs stay inside
+their respective stage directories. Re-running a Case clears and recreates
+only that Case's directory; sibling Case results are preserved.
+
+
+The home-screen Boundary Conditions entry opens a dedicated Boundary Conditions Workbench, separate from Mesh Validation and the Contract Workbench browser. Contract Workbench retains its Boundary Conditions contract domain for cross-domain governance. The dedicated GUI reads the versioned semantic catalog under tools/verification/boundary_conditions/registry.json and presents formulations, parameters, mappings, implementation status, verification and references. The initial catalog covers CFL3D Version 5.0 boundary types 1002, 1003, 2002, 2003 and 2004. This is a read-only research catalog, not a claim that all referenced solver treatments exist in OneFLOW.

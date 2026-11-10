@@ -95,6 +95,29 @@ named Physical Groups: inflow, outflow, symmetry, and farfield. The bottom
 and top groups each contain two curve entities. Both surface entities belong
 to fluid_domain.
 
+
+3D conversion reference fixture: cube_single_hex
+-------------------------------------------------
+
+The automated Gmsh-to-CGNS conversion suite also includes
+``grid/gmsh_to_cgns/grid/cube_single_hex.msh``, a deterministic MSH 4.1
+fixture with eight nodes, one HEXA_8 volume cell, and six QUAD_4 boundary
+elements. Its five Physical Groups are inflow (XMin), outflow (XMax),
+symmetry (YMin), farfield (YMax), and wall (ZMin and ZMax). The fixture is
+used to verify the 3D conversion boundary; it is not yet an STL geometry
+reconstruction Case.
+
+For unstructured CGNS zones, boundary elements have codimension one relative
+to the cell dimension. The writer therefore uses ``EdgeCenter`` for 2D
+boundary LINE_2 elements and ``FaceCenter`` for 3D boundary TRI_3 or QUAD_4
+elements. BC_t PointList values reference the corresponding boundary-element
+section, not volume-cell IDs. The 2D and 3D conversion tests independently
+read the written CGNS files and verify the GridLocation and element references.
+The 3D test additionally sends the CGNS file through CgnsFactory and checks
+that OneFLOW reconstructs the expected 8-node, 1-cell, 6-boundary-face
+unstructured grid.
+
+
 Conversion route and execution
 ------------------------------
 
@@ -130,6 +153,76 @@ Structured Zones. An optional Plot3D-to-Unstructured route could expand
 structured block connectivity into QUAD_4 / HEXA_8 cells and use the shared
 writer, but it must explicitly handle IBLANK, block interfaces and boundary
 semantics; that route is not yet implemented.
+
+
+STL-to-Gmsh generation workflow
+-------------------------------
+
+The geometry-generation stage has native OneFLOW Cases under
+`grid/stl_to_gmsh/square/cpp` and `grid/stl_to_gmsh/two_square_cells/cpp`.
+They run through the standard C++ Grid task, recover the planar STL boundary,
+write Gmsh geometry, invoke the configured Gmsh CLI, and validate the MSH 4.1
+output. Independent Python reference Cases live beside the native Cases under each
+problem directory in `python/`. The existing external-flow Python preprocessing Case remains available at
+`grid/stl_to_gmsh/script/run.py` with `config/external_flow.json`.
+
+External process execution
+--------------------------
+
+Native grid conversion invokes external tools through the shared
+``ONEFLOW::RunProcess`` service in ``codes/io``. It passes the executable
+and each argument separately; it does not construct a shell command or rely on
+``std::system``. Windows uses the wide-character process API and applies
+Windows command-line argument escaping. POSIX uses ``posix_spawnp``, preserving
+argument boundaries and searching the process PATH.
+
+The process result records whether startup succeeded, the exit code, captured
+standard output/error (merged into one diagnostic stream), and a startup or
+wait error when applicable. The STL-to-Gmsh adapter includes this information,
+the executable and working directory in its failure message. This is important
+because a nonzero Gmsh exit code alone does not explain whether the failure
+came from process startup, geometry parsing, meshing, or output writing.
+
+The C++ ``ProcessRunnerTest`` covers argument boundaries, captured output,
+nonzero exit codes, and missing executables. The native STL-to-Gmsh integration
+tests use the same service for Gmsh discovery and invocation. When conversion
+fails, the integration fixture preserves its temporary Case directory and
+prints its location so that the generated ``.geo`` file and related artifacts
+can be inspected rather than disappearing during test cleanup.
+
+Optional external-tool test policy
+-----------------------------------
+
+Gmsh is an optional executable dependency. The ordinary OneFLOW test suite
+must remain useful on machines where Gmsh is not installed. Configure the
+test policy with ``ONEFLOW_EXTERNAL_TOOL_TESTS``:
+
+.. code-block:: console
+
+   cmake -S . -B build -DONEFLOW_EXTERNAL_TOOL_TESTS=AUTO
+   cmake -S . -B build -DONEFLOW_EXTERNAL_TOOL_TESTS=ON
+   cmake -S . -B build -DONEFLOW_EXTERNAL_TOOL_TESTS=OFF
+
+The modes are:
+
+* ``AUTO`` (default): register the Gmsh integration tests only when the
+  ``gmsh`` executable is discoverable on PATH. No skipped tests are reported
+  when Gmsh is absent.
+* ``ON``: require Gmsh at configure time and fail configuration if it is
+  unavailable. Use this in a dedicated external-integration environment.
+* ``OFF``: do not register Gmsh integration tests, even if Gmsh is installed.
+
+STL parsing, planar-boundary extraction, geometry-script construction,
+MSH parsing, and ProcessRunner behavior remain core tests and do not require
+Gmsh. Only tests that launch the actual Gmsh executable are conditional.
+This setting currently controls Gmsh; additional external tools should be
+added to the same policy only when their integration tests are introduced.
+
+The regular Windows and Linux CI jobs explicitly use ``OFF`` so their core
+test results do not depend on the runner image's optional software inventory.
+A separate Windows Gmsh integration workflow installs a pinned Gmsh release
+and configures the test suite with ``ON``, ensuring that real CLI invocation
+is still exercised rather than silently skipped.
 
 Coverage plan
 -------------
@@ -177,3 +270,99 @@ The Case catalog and conversion matrix have different jobs. Do not duplicate
 runtime parameter values in either registry. The Case's existing OneFLOW
 parameter files remain the source of runtime configuration, while the matrix
 describes route and coverage metadata.
+
+
+STL-to-CFD dependency workflow
+-------------------------------
+
+The STL-to-Gmsh development Cases now include a square_2x2 variant. It uses
+the same square STL input as the one-cell square Case; only the transfinite
+cell counts change to 2 x 2. The expected MSH 4.1 topology is nine nodes,
+eight exterior LINE_2 elements, and four QUAD_4 cells. Its four external
+Physical Groups remain inflow, outflow, symmetry, and farfield, with
+fluid_domain on the surface.
+
+The optional development pipeline composes four standard OneFLOW Cases:
+
+.. code-block:: text
+
+   STL square_2x2
+       |
+       v
+   native STL -> Gmsh MSH 4.1
+       |
+       v
+   Gmsh -> CGNS
+       |
+       v
+   CGNS -> OneFLOW native grid + bcRegionMap.txt + grid-info JSON
+       |
+       v
+   cfd_uns2dslau2: SLAU2 CFD Solve (50 steps)
+       |
+       v
+   residual + restart flow + visualization
+
+The workflow definition is
+grid/stl_to_gmsh/develop_test/stl_square_to_cfd.json. Its solver stage uses
+the dedicated pipeline Case at grid/stl_to_gmsh/pipeline/cfd_uns2dslau2,
+with the 50-step SLAU2 parameter set. It reuses the
+Qt-independent dependency planner and graph runner in tools/oneflow_gui.
+Each stage declares its required input artifact and output artifact. The
+runner copies source Cases to a unique run directory outside the repository,
+binds producer outputs through sourceGridCaseDir and relative filenames,
+and prevents a consumer from starting when a dependency or declared
+artifact has failed. The checked-in Case parameter files remain unchanged.
+
+Run the workflow from the repository root after building OneFLOW and making
+Gmsh available on PATH:
+
+.. code-block:: console
+
+   python grid/stl_to_gmsh/develop_test/run_cases.py --pipeline-only
+
+The default staging root is
+%USERPROFILE%/.oneflow/mesh-layout-test/grid/stl_to_gmsh on Windows and
+$HOME/.oneflow/mesh-layout-test/grid/stl_to_gmsh on Linux. A unique
+pipelines/<run-id>/ directory contains each staged Case, process logs,
+pipeline-report.json, environment.json, run-manifest.json and a snapshot of
+the workflow definition. Each executed Case also receives
+results/runtime-environment.json and development_case.log; each validated
+Case writes validation.json.
+The source repository is not used as a runtime workspace. The manually
+dispatched OneFLOW External Tool Integration GitHub Actions workflow also
+runs this complete pipeline on Windows and uploads its run evidence.
+
+Before CGNS conversion, the pipeline independently reopens the MSH 4.1 file
+and checks the expected node, boundary-line and quadrilateral counts as well
+as all five Physical Names. After CFD, it requires non-empty residual,
+restart-flow and visualization files. The conversion stages additionally
+exercise OneFLOW's own Gmsh, CGNS and native-grid readers/writers.
+
+This is an end-to-end runtime smoke test, not a numerical-accuracy proof.
+A successful 50-step run does not establish convergence, conservation,
+boundary-condition correctness, or grid independence. Those require
+subsequent residual-history, finite/positive flow-state, flux-balance, and
+analytical or manufactured-solution verification.
+
+
+STL cube single-hexahedron validation
+-------------------------------------
+
+The `grid/stl_to_gmsh/cube_single_hex` Case pair adds a constrained 3-D
+producer to the STL-to-Gmsh collection. The native C++ and independent Python
+reference implementations accept an axis-aligned cube STL with twelve
+triangles and reconstruct six planar faces plus one volume. Gmsh must generate
+exactly eight nodes, six QUAD_4 boundary elements and one HEXA_8 volume cell.
+The boundary Physical Groups are XMin/inflow, XMax/outflow, YMin/symmetry,
+YMax/farfield, and ZMin+ZMax/wall; fluid_domain is the volume group.
+
+The Case appears in both Run Development Cases and Python Reference Cases,
+and is discoverable by Mesh-to-CFD Validation through the Case catalog. Its
+validation graph ends after STL -> Gmsh -> CGNS -> OneFLOW, where the
+FaceCenter boundary locations and boundary-region map are checked. It does
+not run the unrelated flat-plate CFD template. This prototype is limited to
+axis-aligned cubes with equal edge lengths; it is not a general STL-to-hex
+mesher. The unit-test suite is stored under tests/python/grid rather than in
+the grid/stl_to_gmsh Case tree, and all executable Cases are staged outside
+the source repository before running.

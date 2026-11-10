@@ -65,11 +65,14 @@ https://github.com/eric2003/OneFLOW/blob/hexin/tools/oneflow_gui/README.md
 
 * **Unit Tests** 在源码构建目录运行 CTest 和 Python 单元测试。
 * **CFD/Grid Regression** 使用仓库已有的回归清单和脚本，并在用户工作目录准备输入。
-* **Development Tests** 是可选项，默认不运行；选择后默认勾选目录清单中的所有 case，也可以打开 **Select cases...** 调整。
+* **Development Cases** 是可选项，默认不运行。**Run Development Cases** 控制 C++ 原生算例，**Python reference cases** 控制 Python 参考算例；两项可独立选择，也可同时选择。选择窗口在两项同时勾选时显示两类算例，只勾选一项时只显示对应类型；两类选择分别保存。两项都未勾选时，选择窗口默认显示 C++ 算例供浏览和配置，但不会执行开发算例。
 
-**Select cases...** 按算例目录中的 `group` 元数据分组显示；例如 `gmsh_to_cgns`、`gmsh_to_oneflow` 和 `two_quads` 都归入 **Gmsh**。组名前的复选框可以整体选择或取消该组，展开后也可以单独选择某个算例。未声明分组的算例显示在 **General** 下。分组只影响选择界面，不改变算例执行方式；Gmsh→CGNS 仍遵循手动 GUI 工作流程约束。
+**Python reference cases** 是独立的 Development Cases 执行开关，不是 Python Unit Tests：
+**Run Development Cases** 勾选时运行所选的原生 C++ OneFLOW 算例，通过 OneFLOW 可执行程序的标准
+`r <case-directory>` 入口执行；**Python reference cases** 勾选时运行所选 Python 参考算例，通过算例声明的 Python 脚本执行。两项同时勾选时，两类算例在同一批次中运行；只勾选其中一项时，只运行对应类型。两项都未勾选时不执行 Development Cases。这样可以避免 Python 参考程序通过后被误认为 C++ 原生网格读写能力已经验证。STL 组同时维护两类 Development Cases：C++ 算例验证 OneFLOW 的生产运行通道，Python 算例用于
+独立参考检查和几何诊断。
 
-Development Tests 使用固定的用户数据测试工作目录，并在每批开始时重新准备该目录中的测试 case；源仓库内的内置 case 保持不动。测试进程的退出状态会记录为运行结果；这不等同于所有网格几何或数值结果都已由 GUI 独立验证。
+Development Cases 使用固定的用户数据测试工作目录，并在每批开始时重新准备该目录中的测试 case；源仓库内的内置 case 保持不动。测试进程的退出状态会记录为运行结果；这不等同于所有网格几何或数值结果都已由 GUI 独立验证。
 
 Contract Workbench
 ------------------
@@ -95,10 +98,11 @@ Case 领域还提供两个文件入口：**Open case directory...** 打开算例
 这些操作只定位已有文件，不会启动求解器，也不会修改基线。
 
 
-首页 **Contract Workbench...** 是 OneFLOW 数值知识和工程契约的统一入口。当前提供四个领域入口：
+首页 **Contract Workbench...** 是 OneFLOW 数值知识和工程契约的统一入口。当前提供以下领域入口：
 
 * **Formula & Knowledge**：打开现有 Verification Curves 浏览器，查看公式、原理、参考文献、文档摘录、代码草图和理论曲线。
 * **Geometry**：打开 Geometry Contract Explorer，查看拓扑场景、输入/期望表和 fixture 结果。Fixture 运行不等同于执行生产 C++。
+* **Boundary Conditions**：独立浏览边界物理语义、数学约束、Gmsh Physical Group 到 CGNS BCType_t、CGNS 到 OneFLOW 边界类别的映射及其证据状态。它不是 Mesh Validation 的测试选项。
 * **Case**：浏览类型化 CFD Case 契约，查看算例所属 Suite、求解器、物理模型、数值格式、输入网格、输出比较清单、残差基线和分析参考数据。
 * **Runtime**：浏览进程生命周期、资源所有权、状态转换、实现代码和测试证据。
 
@@ -115,7 +119,7 @@ Case 领域还提供两个文件入口：**Open case directory...** 打开算例
 
 领域自身的数据结构和专用视图仍然不同：Formula Knowledge 可展示公式、符号和曲线；Case 展示物理设置、网格和比较基线；Runtime 展示状态机、资源所有权和故障处理；Workflow 展示依赖图、产物输入输出和运行历史；Mesh / Geometry 展示实体、拓扑、边界、区域和质量；Algorithm 展示离散方法、数据依赖、稳定性、守恒性和收敛证据。Formula、Curve、Case Setup、Workflow Graph、Mesh View 都是领域专用视图，不是所有领域必须具备的通用标签页。
 
-当前统一标签页只是导航结构，不代表每个领域的数据都已完整。没有登记的内容应明确显示未声明；关联测试不代表测试已经执行；通过单元测试也不能直接证明物理精度。完整的信息架构、领域矩阵和证据规则见 :doc:`contract_workbench_information_architecture`。
+当前统一标签页只是导航结构，不代表每个领域的数据都已完整。没有登记的内容应明确显示未声明；关联测试不代表测试已经执行；通过单元测试也不能直接证明物理精度。完整的信息架构、领域矩阵和证据规则见 :doc:`contract_workbench_information_architecture`；边界条件的分层模型和格式映射见 :doc:`boundary_condition_architecture`。
 
 Contract Workbench 展示证据声明和验证范围，不负责执行求解器或测试，也不会因为关联了一个测试名称就显示 PASS。Case 中保留的 Blasius 参考数据如果尚未被回归程序自动比较，会明确标记为“已声明、未自动比较”。Workflow 和 Performance 入口将在对应契约和证据模型有实际内容后再加入。
 
@@ -155,3 +159,11 @@ Workbench 是 OneFLOW 的可选 Python/Qt 客户端，通过参数数组启动�
 读取时机区分为 required、optional 和 lazy。参数不在当前目录中，只表示尚未完成追踪，不能据此判定参数无用。代码中存在读取语句，也不代表该参数对所有任务都生效，更不代表其物理意义、推荐范围和数值效果已经验证。
 
 新增独立单元测试，覆盖大小写无关查询、多处消费者、延迟读取和未知参数边界。后续逐步扩充时，必须先核对 hexin 中的真实代码路径，再补充适用模型、公式依据和验证证据；不能仅凭参数名称推断公式。
+
+
+边界条件工作台
+--------------
+
+首页 Boundary Conditions... 打开独立的 Boundary Conditions Workbench。它与 Contract Workbench 中的 Boundary Conditions 契约浏览入口职责不同：前者浏览物理定义、公式、参数、格式映射、OneFLOW 实现状态和验证计划；后者用于跨领域契约治理。
+
+当前工作台读取 tools/verification/boundary_conditions/registry.json，首批整理 CFL3D Version 5.0 的 1002、1003、2002、2003 和 2004 五类边界条件。当前为只读研究目录，不会直接修改 Case 参数或启动求解器。格式映射或 OneFLOW 大类对应不代表数值实现已经完成。
