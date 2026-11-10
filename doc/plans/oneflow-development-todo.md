@@ -407,6 +407,28 @@ DCU 单卡内扩展（m6wing，1/2/4/8 rank 同一张卡，同样的扣启动方
 直接证据（和 A4 的判断一致），也说明**端到端并行效率的下一刀在 host 侧，不在 MPI**：
 MPI 每步只有 24 条消息、字节数不随 rank 变（见坑 30）。
 
+**kernel 真实耗时（2026-11-10，rocprof，DTK 26.04，1 rank / 294,912 cell / 2 步）**
+
+| kernel | calls | 总 ms | 平均 µs | 占比 |
+|---|---:|---:|---:|---:|
+| GradientCell | 6 | 0.672 | 112 | 19.0% |
+| ReconstructFaceEuler | 6 | 0.654 | 109 | 18.5% |
+| GatherFaceFluxEuler | 6 | 0.460 | 77 | 13.0% |
+| UnpackBoundary | 68 | 0.371 | 5.5 | 10.5% |
+| PackBoundary | 70 | 0.305 | 4.4 | 8.6% |
+| CalcAndScatterPrimitiveEuler | 6 | 0.271 | 45 | 7.7% |
+| UpdateBoundaryPrimitive | 14 | 0.176 | 12.6 | 5.0% |
+| 其余（gradient unpack、谱半径、LHS、state update…） | | 0.62 | | 17% |
+
+**2 步合计 3.54 ms → 1.77 ms/step 的 GPU kernel 时间**。对照 1 rank 墙钟 14.36 ms/step：
+**kernel 只占 12%**，87% 在 host 侧。8 rank 时每 rank 只有 1/8 cell（≈0.22 ms），
+聚合 kernel ≈1.77 ms、墙钟 7.43 → **GPU 忙碌率约 24%**。
+
+这推翻了此前"device kernel 4.46 ms（33%）"的读数：那个数是 host 侧入队+等待，不是
+GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 host 侧的每步编排**。
+另外 `PackBoundary`/`UnpackBoundary` 每步约 35+34 次小 kernel、合计占 kernel 时间 19%，
+它们同时也是 host 调用点，随 host 侧一起处理。
+
 #### 4.9 整体进度
 
 | 阶段 | 勾选/总数 | 状态 |

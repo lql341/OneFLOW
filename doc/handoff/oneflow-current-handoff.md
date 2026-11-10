@@ -317,7 +317,24 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
     - 第二版（持久 databook + 先 post 全部 recv）直接段错误（rc=139），不要再基于
       "持久 DataBook 复用"改这一层。
 
-31. **`rocprof` 在本集群不可用（2026-11-10 实测，DTK 26.04）**：三条路都断：
+31. **`rocprof` 需要"module + 复制工具树 + 改一行"才能用（2026-11-10，DTK 26.04）**。
+    **module 是必要但不充分的**：`module load compiler/dtk/26.04` 让 `rocminfo` 正常
+    （它设 `HYHAL_PATH=/opt/hyhal`，env.sh 没有），但 `tblextr.py` 仍硬编码
+    `/opt/dtk-26.04/bin/rocminfo`，而节点 `/opt` 只有 `dtk-22.04.1`，所以照样
+    `Profiling data corrupted`。可用配方（已在集群验证，1 rank 拿到 253 条 dispatch）：
+    ```bash
+    module load compiler/dtk/26.04
+    cp -a $DTK/rocprofiler $HOME/oneflow/tools/rocprofiler-26.04   # 8.8 MB
+    sed -i "s#/opt/dtk-26.04/bin/rocminfo#$DTK/bin/rocminfo#" \
+      $HOME/oneflow/tools/rocprofiler-26.04/libexec/rocprofiler/tblextr.py
+    HIP_VISIBLE_DEVICES=0 $HOME/oneflow/tools/rocprofiler-26.04/bin/rocprof \
+      -o out.csv --stats env ONEFLOW_ACCEL_BACKEND=HIP OneFLOW 0 <case>
+    ```
+    产出 `out.csv`（每次 dispatch）+ `out.stats.csv`（按 kernel 汇总）。8 进程一起 profile
+    仍会 OOM，先 profile 单 rank。
+    历史失败记录（不要再试）：`$DTK/rocprofiler/bin/rocprof` 直接跑（路径坏）；
+    `rocprofv2 --kernel-trace`（1 rank 3.5 GB OOM、`-d` 不落盘）；`-t`/`-d` 都不保留原始
+    数据；`24.04.3` 不带分析器；`25.04.4` 硬编码 `/opt/dtk-25.04.2`。
     - 工具在 `$DTK/rocprofiler/bin/{rocprof,rocprofv2}`，**不在 PATH 上**；
     - v1 的 `libexec/rocprofiler/tblextr.py:839` 硬编码 `/opt/dtk-26.04/bin/rocminfo`，
       本集群 DTK 在 `/public/software/...`；即使改路径，节点上 `rocminfo` 也报
