@@ -317,6 +317,20 @@ PR #253）；`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/R
     - 第二版（持久 databook + 先 post 全部 recv）直接段错误（rc=139），不要再基于
       "持久 DataBook 复用"改这一层。
 
+31. **`rocprof` 在本集群不可用（2026-11-10 实测，DTK 26.04）**：三条路都断：
+    - 工具在 `$DTK/rocprofiler/bin/{rocprof,rocprofv2}`，**不在 PATH 上**；
+    - v1 的 `libexec/rocprofiler/tblextr.py:839` 硬编码 `/opt/dtk-26.04/bin/rocminfo`，
+      本集群 DTK 在 `/public/software/...`；即使改路径，节点上 `rocminfo` 也报
+      `C-3000 module is NOT loaded, possibly no HCU devices`；
+    - v2 `--kernel-trace` 在 1 rank / 3.5 GB cgroup 下直接 OOM（8 rank 也 OOM）；
+      1 rank / 28 GB 能跑完但 `-d` 目录不落 CSV。
+    - 绕路（`-t` 保留原始数据 + 打补丁的 tblextr + 跳过 metadata）能跑通解析，
+      但原始 `results.txt` 里只有 memcpy、没有 kernel dispatch（profiler 在失败前
+      没 flush）。
+    **结论：不要再用 rocprof 回答"kernel 离 roofline 多远"。** 用 backend 内的
+    `hipEvent` 计时（v 环境开关）或 `hipEventElapsedTime` 包住热点 kernel，
+    不依赖外部工具。
+
 ## 6. 本文维护规则
 
 - **不新建 dated handoff**：每次会话结束就地更新 §4（任务指针）和 §5（新坑）。
