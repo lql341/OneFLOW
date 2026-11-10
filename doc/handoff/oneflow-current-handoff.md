@@ -346,6 +346,13 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     **1.77 ms/step（单步的 12%）**。**任何 kernel 相关的排期/优化都必须用 rocprof 的数**
     （配方坑 31），不要用分项表；分项表只用来分 host 段。
 
+33. **上游 `ProcessRunner.cpp` 假定 glibc ≥ 2.29**（2026-11-10 合入 upstream 后暴露）：
+    `posix_spawn_file_actions_addchdir_np` 是 glibc 2.29 才有的扩展，而昆山节点是
+    CentOS 7.6 / glibc 2.17；原来的 `#if defined(__GLIBC__)` 判据不够，直接用会编译失败
+    （`‘posix_spawn_file_actions_addchdir_np’ was not declared`）。已改成按
+    `__GLIBC__/__GLIBC_MINOR__` 版本判断，低于 2.29 走 `ENOTSUP` 分支。以后合并 upstream
+    先在本集群跑一次 `OneFLOW_RuntimeObjects`，不要假设上游在 CentOS 7 上编译过。
+
 ## 6. 本文维护规则
 
 - **不新建 dated handoff**：每次会话结束就地更新 §4（任务指针）和 §5（新坑）。
