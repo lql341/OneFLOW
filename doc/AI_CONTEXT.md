@@ -1,9 +1,14 @@
 <!-- Entry point. Added 2026-11-08 so a fresh session finds the right mainline,
      the fixed cluster paths and the trap list before reading 600 lines of history. -->
 
-## Start here (2026-11-08)
+## Start here (checked 2026-11-11)
 
 This repository carries **two independent mainlines**. Decide which one a request targets first.
+
+**Accelerator objective: accelerate while preserving correctness.** Establish the numerical,
+physical and state/communication contracts, pass the applicable correctness gates, then
+demonstrate reproducible end-to-end speedup on a comparable basis. Task ordering and timing
+targets are subordinate to this objective; see the development plan §0.
 
 | Mainline | Entry | Branch |
 |---|---|---|
@@ -26,13 +31,23 @@ Reading order for the accelerator mainline:
 | What is done, what is next | `plans/oneflow-development-todo.md` §4 (ledger) and §5 (this round) |
 | How to run it, what already burned us | `handoff/oneflow-current-handoff.md` §1–§3 (paths/constants/commands), §4 (task pointer), §5 (traps) |
 
-When closing a session, update those two files only: §5 of the todo and §4/§5 of the handoff.
+For routine session closure, update §5 of the todo and §4/§5 of the handoff in place.
+If a change also invalidates this entry point or the long-term plan/runbook, update those
+specific statements in the same slice; do not create another handoff.
+
+Accelerator documentation audit at base `1d283c31a`: todo §0.1 now provides the checkbox
+overview. Current order is **H1 host accounting → H2 multi-card VMFault → A4 → A2′/A3**.
+Roe remains Partial pending multi-zone evidence; multi-card performance conclusions are
+suspended pending H2. Phase parent completion is 2/28 (A1, F1); existing Roe subtest evidence
+is retained. This slice changes documentation only: no solver tests or cluster jobs were run,
+and no Actions run/check-run was found in the fork for the inspected base. Next action: H1
+same-configuration, non-overlapping steady-step accounting, with <10% unexplained wall time.
 
 Do not improvise these:
 
 | Item | Value |
 |---|---|
-| Cluster access | skill `$HOME/.agents/skills/scnet-hpc`, **OpenAPI only** (SSH returns Permission denied as of 2026-11-08) |
+| Cluster access | `scnet-hpc` skill at its current installed location, **OpenAPI only** per the 2026-11-08 access record |
 | Cluster workspace | `$HOME/oneflow/` with `src/ build/app/ fixtures/ evidence/<category>/<jobid>/ snapshots/ scripts/ logs/` (six fixed categories, runbook §1c) |
 | Source transfer | `git archive` → `upload` to `snapshots/` → job unpacks into `src/OneFLOW` (no rsync: OpenAPI has no `exec`) |
 | Build | `scripts/build-app.sh` — rebuilds `OneFLOW_RuntimeObjects` **then** `OneFLOW/fast` |

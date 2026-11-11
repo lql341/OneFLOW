@@ -3,12 +3,14 @@
 > 适用范围：昆山 SCNet 集群上所有 OneFLOW 相关工作（CPU 分区 `kshcnormal`、
 > DCU 分区 `kshdnormal`）。目标：**一个固定工作区、固定路径、固定作业脚本**，
 > 不再出现"每次一个目录、按 job 号建 build、日志散落在 home 根目录"。
+> 最后核对：2026-11-11；本轮修正文档冲突，未重新探测远端环境。
 
 ## 1. 固定路径
 
 工作区根固定为集群上的 `$HOME/oneflow/`（仓库里写成 `<workspace>/`，绝对路径只出现
-在集群侧工作区 README，不进仓库）。远端操作走 `$HOME/.agents/skills/scnet-hpc`
-（OpenAPI 优先、SSH 次之），不要手搓 ssh/scp 循环。除既有的共享工具链前缀外，不得在
+在集群侧工作区 README，不进仓库）。远端操作走当前安装的 scnet-hpc 技能；
+按 2026-11-08 的接入记录，SSH 不可用，**只走 OpenAPI**，远端动作均提交为作业。
+不要手搓 ssh/scp 循环。除既有的共享工具链前缀外，不得在
 别处新建 OneFLOW 工作区：
 
 - 旧的按日期命名的实验目录（`softwares/projects/OneFLOW_*`，2026-08/09）已在
@@ -18,13 +20,14 @@
 
 ```text
 <workspace>/
-├── src/OneFLOW/                当前源码快照（每轮覆盖，不建 OneFLOW-<hash>）
+├── src/                       当前源码与版本标记
+│   ├── OneFLOW/                每轮覆盖，不建 OneFLOW-<hash>
 │   └── REVISION                repo / branch / commit
 ├── deps/metis-install/         自编译 METIS 5.0.1
 ├── build/app/                  root 生产构建（HIP+MPI+METIS），增量
 ├── build/port/                 预留：standalone 1D 端口 contract 构建
 ├── build/platform/             预留：CPU-only root 构建
-├── fixtures/m6-8zone-cpu8/     唯一合法可分区 fixture（只读）
+├── fixtures/m6-8zone-cpu8/     固定登记的 fixture（只读；派生配方见 §1b）
 ├── evidence/<category>/<jobid>/  证据：6 个固定 category，见 §1 第 4 条
 ├── snapshots/*.tgz             源码快照，保留最近 5 个
 ├── scripts/                    env.sh + 标准作业脚本 + cleanup.sh
@@ -34,8 +37,9 @@
 
 规则：
 
-1. **源码**：把仓库快照覆盖到 `src/OneFLOW/`（`rsync -a --delete` 或解压覆盖），
-   同步更新 `src/REVISION`。不要在 `src/` 下保留多个修订目录。
+1. **源码**：`git archive` → OpenAPI upload 到 `snapshots/` → 作业内覆盖解包到
+   `src/OneFLOW/`，同步更新 `src/REVISION`；清除旧快照已删除的源码，不能只叠加解包。
+   OpenAPI 不提供交互 exec，不使用 rsync；不在 `src/` 下保留多个修订目录。
 2. **构建**：`build/app` 是唯一生产（HIP）构建目录，按目标固定、增量编译。
    - 日常增量：`scripts/build-app.sh`（即 `make -C build/app -j<N> OneFLOW_RuntimeObjects`
      再 `make -C build/app -j<N> OneFLOW/fast`）。**两个目标都要跑**：`<dir>/fast` 是
@@ -58,9 +62,9 @@
      ```bash
      source $ONEFLOW_ROOT/scripts/env.sh          # 提供 ROCM_PATH 与 ONEFLOW_DTK_HIP_FLAGS
 
-     # 全新配置（例如预留目录）
+     # 仅在确需全新配置或修复配置时，在 DCU 分配内执行；日常用 build-app.sh
      bash $ONEFLOW_SRC/scripts/build-accel.sh --sdk auto --sdk-root "$ROCM_PATH" \
-       --arch gfx906 --build-dir $ONEFLOW_ROOT/build/platform_hip \
+       --arch gfx906 --build-dir $ONEFLOW_ROOT/build/app \
        --flags "$ONEFLOW_DTK_HIP_FLAGS" --jobs 8
 
      # 增量更新生产构建
@@ -146,6 +150,10 @@ python3 "$ONEFLOW_SRC/ci/kunshan/verify-multizone-fixture.py" \
     --metadata fixture-metadata.json --expected-ranks 16
 ```
 
+上述参数必须以实际加载顺序为准：若 `control.txt` 在 `grid.txt` 后加载 `part.txt`，
+`npartproc` / `partition_type` / `part_uns_file` 应在 `part.txt` 中同步设置，
+避免后加载的旧值覆盖本次分区参数（见交接坑 19）。
+
 2026-11-08 结果：16 zone / 16 rank，`zones=16 interfaces=52946`，
 `MULTIZONE_FIXTURE_PASS`。32 zone 用同一配方（`npartproc=32`）。
 
@@ -182,7 +190,7 @@ sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' <case>/script/solver.txt
 
 | 对象 | 语法 | 例 |
 |---|---|---|
-| 作业名 | `of-<category>[-<purpose>]` | `of-gate`、`of-paired`、`of-cpu-regression`、`of-probe-scaling`、`of-fixture-partition`、`of-build` |
+| 作业名 | `of-<category>[-<purpose>]` | `of-gate`、`of-paired-ab`、`of-cpu-regression`、`of-probe-scaling`、`of-fixture-partition`、`of-build` |
 | 证据目录 | `evidence/<category>/<jobid>/` | `evidence/probe/127303578/` |
 | 作业日志 | `logs/of-<category>[-<purpose>]-<jobid>.out` | `logs/of-probe-scaling-127303578.out` |
 | 一次性脚本 | `_attic/<YYYYMMDD>/`，可复用才提升为 `scripts/` | `scripts/build-app.sh` |
@@ -195,10 +203,10 @@ sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' <case>/script/solver.txt
 
 | 约定 | 值 |
 |---|---|
-| 作业名 | `of-gate` / `of-paired` / `of-cpureg`（与证据目录同名） |
+| 作业名 | `of-<category>[-<purpose>]`，固定 category 见 §1c |
 | 启动方式 | **只能 `mpirun`**；`srun` 下 MPI size=1，每个 rank 会解全部 zone |
 | 布局 | `--bind-to core --map-by slot`；8 ranks/卡用 `scripts/rank.sh` 映射 `HIP_VISIBLE_DEVICES` |
-| 环境 | 只 source `scripts/env.sh`（MPI 5.0.11 / UCX 1.22.0 / gcc16 / DTK 26.04 / cmake 4.4.3；`env.sh` 会把 `$CMAKE` 的目录前置到 `PATH`）；批处理里的 `module load` 是空操作 |
+| 环境 | 常规作业 source `scripts/env.sh`（MPI 5.0.11 / UCX 1.22.0 / gcc16 / DTK 26.04 / cmake 4.4.3；CMake 必须在 PATH）；rocprof 另需交接坑 31 的 module 初始化 |
 | 网络 | `UCX_NET_DEVICES=mlx5_0:1`、`UCX_IB_DEVICES=mlx5_0`（其他 HCA 会 `ibv_create_ah` EINVAL） |
 | MPI coll | `OMPI_MCA_coll=^hcoll,han`（非均匀分布会崩在 `coll/han`） |
 | 资源口径 | 1 DCU 槽 = 8 核；CPU 基线跑在 `kshcnormal` |
@@ -210,11 +218,14 @@ sed -i -E '/^[[:space:]]*TurbSolver[[:space:]]*$/d' <case>/script/solver.txt
 ```bash
 source $WORKSPACE/scripts/env.sh
 $WORKSPACE/scripts/build-app.sh                       # 增量构建
-sbatch $WORKSPACE/scripts/gate.slurm                  # trace + XB + 500 步分项 + 3x1000 步
-sbatch $WORKSPACE/scripts/paired-ab.slurm             # 同二进制 paired A/B
-sbatch $WORKSPACE/scripts/cpu-regression.slurm        # CPU 五算例 normal/strict
+bash $WORKSPACE/scripts/gate.slurm                    # trace + XB + 500 步分项 + 3x1000 步
+bash $WORKSPACE/scripts/paired-ab.slurm               # 同二进制 paired A/B
+bash $WORKSPACE/scripts/cpu-regression.slurm          # CPU 五算例 normal/strict
 $WORKSPACE/scripts/cleanup.sh                         # 日志/快照轮转 + 占用
 ```
+
+以上是作业内调用，不是本地提交命令；提交走 OpenAPI `submit --command`，资源按
+`ci/kunshan/README.md` 的标准 suite 及当前作业目的选择。
 
 ## 3. 每轮开发流程（与仓库文档一致）
 

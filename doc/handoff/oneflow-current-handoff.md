@@ -1,5 +1,7 @@
 # OneFLOW 交接（living）
 
+> 最后核对：2026-11-11，基于 `1d283c31a`；仅统一文档状态，未复跑集群门禁。
+
 > **这是唯一的交接文档，就地更新，不再按日期新建。**
 > 当前状态与路线图勾选在 [`../plans/oneflow-development-todo.md`](../plans/oneflow-development-todo.md)；
 > 长期阶段的取舍与里程碑在 [`../plans/oneflow-development-plan.md`](../plans/oneflow-development-plan.md)；
@@ -12,8 +14,8 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo **§5 下一轮任务**：当前主线是 **A3（stage 融合第一段）**，
-   之后 A2′（接口消息聚合）、A4（RK 循环下沉）。A1 已收口在 14.62 ms/step。
+2. 打开 todo **§0.1 checkbox 总览与 §5 下一轮任务**：当前主线是 **H1 host 每步归账**，
+   之后 H2 多卡 VMFault → A4（RK 循环下沉）→ A2′/A3。多卡结论在 H2 修复前暂停。
    **主线优先级只以 todo §4/§5 为准**；本文只记“怎么跑”和“已经踩过的坑”，
    两边不一致时改本文，不要改 todo 的台账。
 3. 要动集群先读 §1（固定路径）与 runbook：**SSH 已不可用，只能走 OpenAPI 技能**，
@@ -27,11 +29,11 @@
 |---|---|---|---|
 | 本地仓库 | 本 checkout 根（`git rev-parse --show-toplevel`） | 源码、文档、提交 | 只在 `dev` 上提交；`master` 只读、与 upstream 同步 |
 | 本地临时 | `/tmp` | 一次性脚本、打包、比较 | 不入库；需要保留的结论写进文档 |
-| 集群接入 | `$HOME/.agents/skills/scnet-hpc`（OpenAPI 优先，SSH 次之） | 查询、提交、上传、探测 | 走技能提供的入口；不要手搓 ssh/scp 循环，也不要静默切换后端 |
+| 集群接入 | scnet-hpc 技能（按当前安装位置解析入口） | 查询、提交、上传、探测 | 按当前记录只用 OpenAPI；不要手搓 ssh/scp 循环，也不要静默切换后端 |
 | 昆山工作区 | **`$HOME/oneflow/`（唯一）** | `src/ build/ fixtures/ evidence/ snapshots/ scripts/ logs/ _attic/` | 固定布局，见下表与 runbook |
 | 门禁证据 | `$HOME/oneflow/evidence/<category>/<jobid>/` | **6 个固定 category**：`gate` / `paired-ab` / `cpu-regression` / `probe` / `fixture` / `build` | 只增不改；不要按实验临时起目录名（规则见 runbook §1c）；`*.stage` 等大二进制提取指标后可删 |
 | 源码快照 | `$HOME/oneflow/src/OneFLOW` + `src/REVISION` | 每轮覆盖 | 不建 `OneFLOW-<hash>` 目录 |
-| 构建 | `$HOME/oneflow/build/app` | 唯一增量构建 | **不要重新 configure**（节点 DTK 的 hip CMake 校验会失败） |
+| 构建 | `$HOME/oneflow/build/app` | 唯一增量构建 | 日常不重新 configure；必要时按 runbook 的 SDK 接口在 DCU 分配内处理 |
 | fixture | `$HOME/oneflow/fixtures/m6-8zone-cpu8/` | 唯一**登记**的分区算例（8 zone / 294,912 cell） | 只读；派生副本用 `prep-case.sh`。其它 zone 数用 runbook §1b 的配方现生成 |
 | 快照归档 | `$HOME/oneflow/snapshots/*.tgz` | 保留最近 5 个 | `cleanup.sh` 轮转 |
 | 日志 | `$HOME/oneflow/logs/` | 作业 stdout/stderr | 保留 14 天 |
@@ -61,7 +63,7 @@
 | 项 | 值 | 原因 |
 |---|---|---|
 | 启动 | **只能 `mpirun --bind-to core --map-by slot`** | `srun` 下 MPI size=1，每个 rank 会解全部 zone |
-| 环境 | 只 source `scripts/env.sh` | 批处理里的 `module load` 是空操作；MPI/UCX/DTK 必须显式进 PATH |
+| 环境 | 常规作业 source `scripts/env.sh` | MPI/UCX/DTK 必须显式进 PATH；rocprof 另需坑 31 的已验证 module 初始化 |
 | HCA | `UCX_NET_DEVICES=mlx5_0:1`、`UCX_IB_DEVICES=mlx5_0` | 其它 HCA 的 `ibv_create_ah` 返回 EINVAL |
 | MPI coll | `OMPI_MCA_coll=^hcoll,han` | 非均匀分布会崩在 `coll/han` |
 | CMake | `/public/home/luql/apprepo/cmake/4.4.3/bin/cmake`（`env.sh` 已把它加入 `PATH`） | 旧的 `$HOME/tools/cmake-3.30.5` 已随家目录清理删除；模块里的 cmake 是死链 |
@@ -88,7 +90,7 @@ $HOME/oneflow/scripts/cleanup.sh                      # 日志/快照/attic 轮�
 SKILL=$HOME/.agents/skills/scnet-hpc
 python3 $SKILL/scripts/scnet.py --region 11250 submit --name of-gate \
   --command "bash /public/home/<user>/oneflow/scripts/gate.slurm" \
-  --work-dir /public/home/<user>/oneflow --queue kshdnormal \
+  --work-dir <ws>/logs --queue kshdnormal \
   --nodes 1 --cpus 8 --dcus 1 --memory 27G --walltime 01:30:00 \
   --stdout <ws>/logs/of-gate-%j.out --stderr <ws>/logs/of-gate-%j.err
 python3 $SKILL/scripts/scnet.py --region 11250 --details job <jobid>
@@ -102,18 +104,21 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 ## 4. 当前任务指针（每次会话就地更新）
 
 **基线**：`master` = `origin/master` = `upstream/master`（2026-11-10 三端同步，见提交记录）；
-`dev` 已合并该 HEAD。昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖，二进制在
+2026-11-11 核对为 `f36f0c6b3`，`dev` = `origin/dev` = `1d283c31a`，已合并该 HEAD。
+本轮仅整理文档；该 HEAD 未复跑求解器，未查到 fork 对应的 Actions run/check-run。
+昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖，二进制在
 `build/app/bin/OneFLOW`（构建走 `build-app.sh` 的两步 make）。
 
 **2026-11-10 这一轮的结论**
 
-- **GPU 只忙 12–24%**：rocprof（配方见 §5 坑 31）实测 1 rank / 294,912 cell / 2 步 =
-  **3.54 ms kernel 时间（每步 1.77 ms）**；对照 1 rank 墙钟 14.36 ms/step 是 12%，
-  8 rank 同卡（聚合 kernel 仍 ≈1.77 ms、墙钟 7.43）是约 24% 忙。
-- **接口 16%**：墙钟 A/B `ONEFLOW_DIAG_NO_COMM` 单卡 2.1–2.2 ms/step；多卡增长部分是
-  邻居到达偏差（MPI trace：每步 24 条消息、字节数不随 rank 变，recv 5.7→15.8 ms）。
+- **GPU 时间与墙钟尚未完整对账**：rocprof（配方见 §5 坑 31）实测
+  1 rank / 294,912 cell / 2 步的 kernel dispatch 时间和为 3.54 ms。
+  与独立墙钟相除的 12%、以及假定 8 rank 聚合成本不变推算的 24%，均不是直接测得的
+  GPU 忙碌率；不可把剩余墙钟全部算成 host 计算。H1 要补齐同配置的归账。
+- **接口开关差值**：墙钟 A/B `ONEFLOW_DIAG_NO_COMM` 单卡 2.1–2.2 ms/step，
+  约占当次墙钟 16%；MPI trace 的 recv 增长与邻居到达偏差相容，尚未完整归因。
 - **端到端并行效率未变**：CPU 1→32 rank = 100/93/86/73/71/**65.7%**（基线 67%，噪声内）；
-  DCU 单卡 1→8 rank 只有 **1.93×**（14.36→7.43），说明同一张卡加 rank 是在摊 host 工作。
+  DCU 单卡 1→8 rank 为 **1.93×**（14.36→7.43），支持优先调查 host 工作与等待。
 - **已否掉**：非阻塞交换（更慢 5%、第二版段错误）、删 dead `UPDATE_UNSTEADY_FLOW`
   （0.1 ms，噪声内）、"kernel/接口各 33%"的旧读数（那是 host 侧入队+等待）。
 - **唯一保留的代码资产**：结构化等块分区（`partition_type=2`，固定 32 rank +4.4%，
@@ -121,10 +126,11 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 **下一步（按价值，详见 todo §5）**
 
-1. **H1 host 侧每步账**：8 rank 的 7.43 ms 里约 5.7 ms 在 host。给
+1. **H1 host 侧每步账**：约 5.7 ms 只是跨测量相减后的待解释差额。给
    `MG::SolveInnerIter` / `WeakIter` / `PreRelaxationCycle` / `InnerProcess` 加计时
    （`macro_*` 只覆盖宏步内部），把 host 拆成"宏步外循环 / 任务派发 / post 轮 / 屏障"。
-   验收：各项之和与墙钟差 <10%，并指出下一刀。
+   验收：同配置、扣启动的稳态测量中，不重叠分项之和与墙钟差 <10%，并指出下一刀；
+   不将嵌套项相加，不为计时插入改变执行顺序的同步。
 2. **H2 多卡 VMFault（blocker）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡都在
    `libgalaxyhip`+`hsa` 里 abort，VMFault 指向 `GradientCopyBoundaryKernel`；8 rank/1 卡正常。
    修好前不做任何多卡结论。
@@ -180,7 +186,7 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     - **瓶颈已定位（2026-11-09）**：同一套等块分区、整节点 32/64/128 rank，
       `ONEFLOW_DIAG_NO_COMM=1` 后计算段完全持平（139–141，相对量），接口项
       13.5 → 22.9 → 27.9 ms（+106%），而面数只 +27% → 剩下的是跨节点延迟。
-      下一步是 A2′（减少轮次/消息），不是继续调分区。
+      本轮顺序已由 2026-11-10 的记录修正为 H1 → H2 → A4；A2′ 降权，见 todo §5。
 
 1. **设备权威不能从初始化就开始**：bound 状态的第一次 `FullField` 上传依赖 host 的
    ghost 区；跳过条件必须是 `HostMirrorStale(grid)`，否则第一步就偏离 CPU oracle。
@@ -198,8 +204,8 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    其它残缺配置回退 host。旗舰算例 `m6wingroe_sa` 是 `LU-SGS + Roe + SA`，仍在 host。
 7. **短基准的假象**：`bnd_resize` 的首个 `hipMalloc` 会被平均进 ≤100 步的基准
    （10–15 ms/step 量级），任何基准先 warmup 至少一步。
-8. **fixture**：唯一合法的 ≥8 zone 分区网格是 m6wing（294,912 cell）；多卡结论缺
-   ≥1M 带 `.skl` 的网格，`partition_type=0`(GenerateLink) 仍失败。
+8. **fixture**：固定登记的是 m6wing 8 zone（294,912 cell）；16/32 zone 按 runbook §1b
+   生成并做 manifest 校验。≥1M 带 `.skl` 的合法 fixture 仍缺，多卡还须先解决 H2。
 9. **加速器构建用统一 SDK 接口，别再手拼**：运行时 `ONEFLOW_ACCEL_BACKEND`
    （AUTO/CPU/HIP/CUDA/KOKKOS）与构建期 `ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`）
    是两条独立的轴；**SDK 种类不单独设参数**，由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断。
@@ -208,7 +214,7 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    `CUDAToolkit_ROOT` 等）；不请求就完全不生效。一键入口：
    `scripts/build-accel.sh --arch gfx906 --flags "$ONEFLOW_DTK_HIP_FLAGS"`。
    原理与故障对照见 runbook §1.2 / §4。
-10. **strict（1e-15）当前仍 4/5，且不止一处贡献者**：`plateuns2dslau2_34950_35000`
+10. **strict（1e-15）历史越界已解决，最近记录为 5/5**：`plateuns2dslau2_34950_35000`
    已解决：声速**改用一次除法**（精度更高：与参考逐位一致率 100% vs 乘倒数 86.8%；
    护栅对物理密度无影响），并按“精度优先、可更新历史精度数据、strict 判据不变”重生成
    了**该算例**的参考曲线与基线条目（`validated_commit=7bd358c0d`）。现在
@@ -217,8 +223,8 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
    （中间提交会回到 `0.0`），说明多处末位扰动互相抵消。**已排除 fast-math**：
    当前代码在 `-Ofast` 与 `-Ofast -fno-fast-math` 下给出完全相同的 `1.778709301357682e-15`，
    旧代码两种设置都是 `0.0` → 差异是源码里运算结合顺序的确定性 ≤1 ulp 改变，不是编译器
-   重排、也不含不确定性。要靠补公式还原不成立（与上游方向相反且易反复）；恢复 1e-15
-   需按流程重生成基线或改判据形态，属数值口径决定，等 owner 拍板。
+   重排。最终按上述精度优先流程只更新该算例参考数据，未放宽 1e-15 判据；
+   2026-11-08 复跑 normal/strict 均 5/5。本 HEAD 没有新增复跑证据。
 11. **gradient host 镜像默认只在最后 RK stage（A1.1）**：`ONEFLOW_HIP_GRADIENT_MIRROR_ON_DEMAND=0`
     才恢复每 stage 镜像。不要用上一会话的 31.64 ms/step 当本轮 A 侧；本轮同节点
     对照是 29.86 → 26.72。分项文件如果路径里没有 `%r`，8 个 rank 会写同一个文件，
@@ -241,10 +247,9 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 15. **GPU-aware MPI 探针通过不代表该用**：同节点两 rank 设备指针直达 `pass=1`，但接到
     真实界面交换后是 48–50 ms/step，host staging 是 15.7。这条 MPI 配置下设备指针路径
     实际更贵。开关是 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI` + `..._CONFIRMED`，保持关闭。
-16. **每步固定基数与通信无关**：`ONEFLOW_DIAG_NO_COMM=1` 关掉全部界面通信，8 rank/1 DCU
-    仍从 16.5 只降到 14.3（省 2.2 ms）；`rk_stage=1` 时仍要 8.93 ms。所以 A2（合并交换轮次）
-    的理论上限就是 ~2.2 ms，不要按“通信 5 ms”的老估计算。这个基数不随 cell/zone/rank 变，
-    是本阶段唯一未定位的大项。
+16. **固定基数必须先扣启动再归账**：旧通信开关对照约省 2.2 ms；
+    `rk_stage=1` 的 8.93 ms 含短基准启动摊销，已由 todo A1.7b 修正，不能继续当稳态基数。
+    单配置通信开关差值不是 A2 收益保证；当前剩余成本由 H1 按同配置分段确认。
 17. **别用 2 个样本下结论**：8-zone 同配置两次样本 17.59 / 14.28（跨度 23%），
     16-zone 与 32-zone 的 7% 差异完全在噪声内。要比较配置，至少 5 个样本或做配对交替。
 18. **`zones % ranks == 0` 只是配置层放行**：`Zone::CheckZoneRankCount` 只查整除，
@@ -336,14 +341,15 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     - 绕路（`-t` 保留原始数据 + 打补丁的 tblextr + 跳过 metadata）能跑通解析，
       但原始 `results.txt` 里只有 memcpy、没有 kernel dispatch（profiler 在失败前
       没 flush）。
-    **结论：不要再用 rocprof 回答"kernel 离 roofline 多远"。** 用 backend 内的
-    `hipEvent` 计时（v 环境开关）或 `hipEventElapsedTime` 包住热点 kernel，
-    不依赖外部工具。
+    **当前结论**：补丁后的 rocprof v1 可提供 dispatch 计时；以上失败路径保留作避坑记录。
+    仅有 kernel 耗时不能回答离 roofline 多远，还需 FLOP/访存量及硬件上限证据。
+    `hipEvent` 可作为独立计时方案，但本轮未新增实现或测量。
 
 32. **stage 分项表不是 GPU 时间**（2026-11-10）：`gradient/reconstruction/flux_assembly`
     这些 host 计时器量的是"入队 + 等待"，`ONEFLOW_HIP_DEFER_SYNC` 一开一关能差 8 倍
-    （`gradient_kernel` 0.18 vs 1.48 ms/step）。rocprof 实测三个 kernel 合计只有
-    **1.77 ms/step（单步的 12%）**。**任何 kernel 相关的排期/优化都必须用 rocprof 的数**
+    （`gradient_kernel` 0.18 vs 1.48 ms/step）。短程 rocprof 的全部 kernel dispatch
+    时间和为 **1.77 ms/step**，不是三个 kernel 的合计，也不是同配置直接测得的忙碌率。
+    **kernel 相关排期应使用设备侧计时证据**
     （配方坑 31），不要用分项表；分项表只用来分 host 段。
 
 33. **上游 `ProcessRunner.cpp` 假定 glibc ≥ 2.29**（2026-11-10 合入 upstream 后暴露）：

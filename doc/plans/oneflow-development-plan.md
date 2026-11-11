@@ -1,13 +1,19 @@
 # OneFLOW 长期分阶段开发计划（accelerator 主线）
 
-> 最后更新：2026-11-01。本文是长期路线图（living），按季度/阶段维护；
+> 最后核对：2026-11-11，基于 `1d283c31a`；本轮仅整理文档，未新增求解器验证。
+> 本文是长期路线图（living），按季度/阶段维护；
 > **执行进度、勾选与证据以
 > [`oneflow-development-todo.md`](oneflow-development-todo.md) 文首
 > §4 的 Phase A–F 勾选树为准**（编号与本文 §2 一致），本文只说明取舍与阶段边界；
-> 每一轮的 A/B 数据与细节记在 `doc/handoff/`。
+> 证据摘要记在 todo，交接文档只保留任务指针与操作约束，原始数据留在集群证据目录。
 > 规则以根目录 `AGENTS.md` 为准；集群流程见 `ci/kunshan/README.md`。
 
 ## 0. 结论先行
+
+**根本目标：保证正确性前提下做加速。** 数值、物理与状态/通信语义的正确性是优化的
+前置条件；每个优化先明确契约、通过相应正确性门禁，再以同口径、可复现的端到端
+测量确认收益。阶段优先级与性能目标均服从这一原则。方程、模型、容差或参考基线的
+变化须按 `AGENTS.md` 的数值审查流程独立说明与验证，不能作为性能优化的隐含代价。
 
 OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们决定：
 
@@ -18,11 +24,10 @@ OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们
    应用级 lifecycle（含网格、初始化、IO、MPI）相对 32 rank CPU 为
    `3.85–9.70x`，4 卡/4M 为 `25.55x`。
    三者差两个数量级，差别全在"谁拥有状态、每步回几次 host"。
-2. **3D 主求解器还在第二阶段。** M0 的历史 paired 点是 31.6 ms/step
-   （2026-10-25，不能当作后续对照的 A 侧）。A1 之后的同节点对照是每 stage 镜像
-   29.86 ms/step、只在最后 stage 镜像 26.72 ms/step。device kernel 仍只占约
-   `1–1.5 ms`，其余是 host task 调度、stage 间 fence、halo 往返和仍留在 host
-   的整场拷贝。3D 目前处在 1D 的"trace 路径"位置，而不是"驻留执行"位置。
+2. **3D 主求解器仍在 Phase A，完整 HIP `Advance` 尚缺。** A1 已收口，
+   历史同节点 paired 为 14.62 ms/step（8 zone / 8 rank / 1 DCU / 1000 步）；
+   不能直接与不同节点、步数或启动口径下的较低墙钟比。短程 rocprof 显示 host stage
+   计时不能当 GPU 时间，下一步先做 H1 同配置归账，再做 H2 多卡 VMFault 与 A4。
 
 因此长期计划的主轴不是继续抠 kernel，而是：
 
@@ -32,6 +37,8 @@ OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们
 > Phase E 架构通用化 → Phase F 产品化与发布。**
 
 每个阶段都有"准入门"（oracle/门禁）和"退出门"（可发布证据），见 §3。
+完成/待办 checkbox 统一维护在 [`oneflow-development-todo.md`](oneflow-development-todo.md)
+§0.1；本计划不复制勾选树。当前顺序 **H1 → H2 → A4 → A2′/A3**，具体验收以 todo §5 为准。
 
 ## 1. 代码架构现状（长期计划的事实基础）
 
@@ -106,12 +113,13 @@ task 通过全局 `ug / unsf / nscom / ctrl / ZoneState::zid` 隐式定位到"�
    测得 kernel 只占约 1.5 ms；A1 收口后总时间降到 15.6，这个结构性问题仍在）。
 3. **capability 判断分散**：`HipProductionPolicy` 的开关 + 各文件里的 `UseHip*`
    守卫 + 两个 capability 枚举；能力扩展时会组合爆炸。
-4. **双实现 + 只有 trace 级等价**：host 路径是唯一 oracle，device 路径没有单元级
-   数值契约（每加一种 scheme/limiter 都要靠整链路 trace 判定）。
-5. **fixture 稀缺**：唯一合法可分区网格是 8 zone m6wing（294,912 cell）；
-   `partition_type=0`(GenerateLink) 仍失败；≥1M cell 的多卡结论无法产出。
-6. **口径/文档债**：3D 性能从未发布为正式报告（现有 `performance/` 都是 1D 端口）；
-   3D 数字已在 todo 文首 §0–§2 更新，但正式报告仍缺。
+4. **双实现与证据覆盖不完整**：已有 Roe 与 Barth 单点数值契约，但 Roe 缺多区证据，
+   Barth 整链数值未过门禁；host oracle、单点契约与整链 trace 都需保留。
+5. **fixture 与多卡证据缺口**：固定登记的 fixture 是 8 zone m6wing（294,912 cell）；
+   16/32 zone 派生配方与 manifest 校验已跑通，但尚缺 ≥1M 的合法 fixture。
+   `partition_type=0`(GenerateLink) 仍有缺口，多卡另受 H2 VMFault 阻塞。
+6. **口径/文档债**：F1 3D 正式报告已于 2026-11-02 发布；新优化不能沿用旧 CPU
+   或跨节点数字拼接加速比。当前源码的门禁与性能仍需绑定同一修订的可复验证据。
 
 ## 2. 阶段划分
 
@@ -132,10 +140,10 @@ Phase A（执行模型）
 
 | 子项 | 内容 | 预期 | 证据/入口 |
 |---|---|---|---|
-| A1 | 固定开销：F7.1（gradient 镜像只在最后 stage）与 F7.2（设备残差基底归零，不再填 host RK 槽位）均已完成；A1.3（跳 host 历史层）与 A1.5（跳 host 残差账本）再各去掉一次全场 host 写，同节点累计到 **15.6 ms/step**（F1 报告，18.5× @8:1 槽）。`bnd_resize` 的首次 `hipMalloc` 不是代码任务，基准必须先 warmup | 相对每 stage 镜像累计 −22%（29.9 → 26.7 → 21.0），A1 收口 **15.6** | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
-| A2 | 每步一次界面交换：每个 stage 把 `q` 与梯度合成一趟过界，滞后保持不变。先例已否：直接删掉 post 轮会让 200 步跨后端拓到 `5.54e-7`。3D DeviceDirect / GPU-aware 重测属 D2，等 D1 的合法 fixture | 上限约 **1.1 ms**（实测关闭全部界面通信只省 2.2），**不是当前优先级** | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
-| A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，stage 内不再有 host 同步点 | −6 ms | `HipFluxBackend` 各 kernel + `TimeIntegral` |
-| A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend（复用已有 seam 与 `stageCallback`），host 只负责 INIT/输出/门控；每宏步结束按需 Download | 达到 12–14 ms | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
+| A1 | 固定开销优化已完成：按需镜像、设备残差基底、跳 host 历史层与账本、延迟同步。基准须 warmup | 历史同节点 paired **14.62 ms/step**；当前 HEAD 未复跑 | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
+| A2 | 原每步一次交换方案暂缓；保留 legacy 滞后，不能直接删 post 轮（200 步 XB `5.54e-7`）。A2′ 聚合/减轮次待 H1/H2/A4 后重估 | 单卡通信开关差值约 2.2 ms，不是可兑现收益保证 | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
+| A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，减少 host 同步 | 已降权；旧 −4/−6 ms 估算失效，待配对测量 | `HipFluxBackend` 各 kernel + `TimeIntegral` |
+| A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend，host 负责 INIT/输出/门控；宏步末按需 Download | H1 归账后确定切口；todo 的 9–10 ms 是待验证估算 | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
 
 退出门：
 - 8 zone/8 rank/1 DCU 1000 步 paired **≤14 ms/step**（相对 10-25 的 31.6 再快 2.2x，
@@ -266,7 +274,7 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 
 | 文档 | 已有结论 | 本文新增 |
 |---|---|---|
-| `doc/plans/oneflow-development-todo.md` | 前置层 6/6 已闭环；阶段合计 1/28（A1 完成） | 阶段取舍以本文为准，勾选与证据以 todo 为准，编号与本文一致 |
+| `doc/plans/oneflow-development-todo.md` | 前置层 6/6；阶段父项 2/28（A1、F1），Roe 为 Partial | 阶段取舍以本文为准，勾选与证据以 todo 为准，编号与本文一致 |
 | `doc/architecture/oneflow-1d-euler-dcu-architecture-audit-20260904.md` | backend-neutral 接入方案、state key、调用边界 | 把该方案升格为长期阶段主轴（Phase A4） |
 | `doc/plans/oneflow-euler-optimization-plan.md` | "stateful NoTrace 才是性能路径"（trace 2x vs 驻留 100x+） | 在 3D 复现同一结论：执行模型优先于 kernel |
 | `doc/runbooks/oneflow-dcu-porting-playbook-20260903.md` | 移植方法论（契约→或修→门禁→benchmark） | 作为每个 Phase 子项的验收流程模板 |
@@ -277,7 +285,7 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 1. **目标规模**：这条后端的"完成"定义是 1M cell 单卡、还是 100M cell 多卡？
    （决定 Phase C/D 的投入比例）
 2. **旗舰算例优先还是性能优先**：2026-11-01 定为先把 Phase A 做到 ≤14 ms/step，
-   再扩 Phase B。B1/B2 可以并行评估契约，但不插到 A2 前面。
+   再扩 Phase B。B1/B2 可独立评估契约，但不挤占当前 H1 → H2 → A4 主线。
 3. **隐式与多重网格是否在设备上做**：若只加速显式 finest grid，可省掉 Phase B5/B6
    的大半工作，但要接受"定常收敛用 LUSGS 就没加速"的现实。
 4. **zone 映射**：长期是否维持 1 rank = 1 zone？若需要 zone 切分，Phase D 的工作量
@@ -285,12 +293,13 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 5. **CUDA/Kokkos 是否真要做**：当前不做。F7 继续走 HIP 生产路径，但不要把 HIP
    类型写进 `EulerDomain` seam。真的要做 CUDA 时再补 H5，不回头阻塞 F7。
 
-## 7. 立刻可执行的三件事（两周内）
+## 7. 下一步顺序（具体 checkbox 与验收见 todo §5）
 
-1. **定位每步 8.9 ms 固定基数**：关通信、`rk_stage=1`、8 rank/1 DCU 仍有的基数，
-   与 cell 数 / zone 数 / rank 数无关（todo §4.1 A1.7、§5 第 0 条）。A2 的上限只有约 1.1 ms，已不在当前优先级。
-2. **A3 stage 融合**：每 stage 3.29 / 1.88 / 1.20 ms（1/2/4 卡，关通信），先合
-   `gradient→reconstruction→flux` 一段。
-3. **D1 fixture 决策**：向 owner 申请 ≥1M cell 带 `.skl` 的网格，或评估 `GenerateLink`。
+1. **H1 host 每步归账**：补 MG 外层计时，复用任务计时，以不重叠分项解释同配置稳态墙钟，
+   差额 <10%。旧 8.93 ms 含启动摊销，12%/24% 为估算比值，均不能充当当前完整归因。
+2. **H2 多卡 VMFault**：最小复现并修复 `GradientCopyBoundaryKernel` 相关故障；
+   修复与复验完成前暂停多卡结论。D1 ≥1M 合法 fixture 仍是独立的证据缺口。
+3. **A4 循环下沉**：依据 H1 结果选择最小完整切片，通过 trace、跨后端、CPU normal/strict、
+   稳定性及 paired；之后再评估 A2′/A3。
 
 （F1 3D 正式报告已于 2026-11-02 发布，不再列为待办。）
