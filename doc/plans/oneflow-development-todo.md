@@ -1,7 +1,8 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后核对：2026-11-11；本轮起点 `1d283c31a`，求解器门禁/归账修订 `6f7a49e3d`。
-> 后续 `fb246bb3a` 仅修复几何测试链接；该修订的 Linux Build 已通过（构建证据，不是全量测试）。
+> 最后核对：2026-11-11（H2 修复轮）；本轮起点 `1d283c31a`，求解器门禁/归账修订 `6f7a49e3d`。
+> 后续 `fb246bb3a` 仅修复几何测试链接；`d41650729` 修复延迟状态标志的惰性分配（H2 根因）。
+> 该提交已有集群构建 + 多卡数值对照证据，**尚未跑完整门禁**（见 §5.2）。
 
 ## 交接摘要与整体路线图
 
@@ -21,8 +22,9 @@
 完整原则见长期计划 §0，数值口径变更按 `AGENTS.md` 审查。
 
 受限无粘 3D 显式 RK 路径的 **q 已设备权威，A1 固定开销优化已收口**；
-完整 HIP `Advance` 尚未实现。**H1 已完成，下一主线 H2 多卡 VMFault → A4 → A2′/A3**。Roe 只有单点/单 zone 证据，
-Barth 未过数值门禁，多卡结论因 H2 暂停。本轮证据与归因见 §5.2。
+完整 HIP `Advance` 尚未实现。**H1、H2 均已完成，下一主线 A4 → A2′/A3**。Roe 只有单点/单 zone 证据，
+Barth 未过数值门禁。H2 的根因是延迟状态标志的惰性分配（空指针进 `atomicExch`），与卡数无关；
+多卡数值路径已复验通过，但**性能/扩展性结论仍须用合法 fixture 重测**（§5.2、§4.8b）。
 
 ### 0.1 完成与待办总览（checkbox）
 
@@ -37,7 +39,8 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 - [x] D1a：结构化等块分区，9/9 单测及固定 rank 配对收益记录。
 - [x] F1：3D 正式性能报告已发布（2026-11-02，Markdown + HTML）。
 - [x] **H1（已完成）**：五对归账差额 0.34%–2.14%；下一刀见 §5.2。
-- [ ] **H2（阻塞多卡）**：最小复现并修复多卡 VMFault，复验后才恢复多卡结论。
+- [x] **H2（已完成，范围见 §5.2）**：根因是延迟状态标志的惰性分配，与卡数无关；
+      多卡数值路径已复验（HIP vs CPU 残差逐位一致）。**完整门禁尚未跑**，扩展性数字仍待重测。
 - [ ] **A4**：HIP `Advance` 接管 RK 循环；通过数值门禁并测量端到端收益。
 - [ ] A2′ / A3（降权）；原 A2 每步一次交换方案暂缓，不直接删除 post 轮。
 - [ ] B1：补 Roe 多区 trace 与对应 CPU 五算例证据；HLLC/AUSM 后续单列能力。
@@ -52,15 +55,15 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 
 | 项 | 值 |
 |---|---|
-| refs | 本轮求解器证据对应 `6f7a49e3d`，后续 `fb246bb3a` 只改测试 CMake；工作分支 dev。上游基线 `f36f0c6b3` 已合入；接手仍须核对实际 HEAD，不以文档修订号代替运行证据 |
+| refs | 本轮求解器门禁证据仍对应 `6f7a49e3d`；`fb246bb3a` 只改测试 CMake；`d41650729` 修复 H2 根因（已有集群构建 + 多卡数值对照，未跑完整门禁）。工作分支 dev。上游基线 `f36f0c6b3` 已合入；接手仍须核对实际 HEAD |
 | upstream PR | #159 / #160 / #203 / #227 / #238 / #253 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook；#253 = upstream 同步与收口） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
 | 性能基线 | 历史 8 zone / 8 rank / 1 DCU、1000 步 paired：**14.62 ms/step**（2026-11-07 同节点交错 5 对中位）。CPU 288.20 来自 2026-11-02 的 F1 报告，不与此点拼接新加速比。F1 当次配对为 CPU 288.20 / HIP 15.59 = 18.5×；新 HEAD 需重测 |
 | 门禁基线 | `6f7a49e3d`：HIP/计时契约 22/22；3 步多区 trace PASS、resident `24/0/0`；200 步 XB residual `2.331035e-18` / aero `0.0`；CPU normal/strict 各 5/5（判据 1e-8 / 1e-15 未变）；50 步 HIP 稳定性及五对 1000 步归账 PASS。全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
-| 已知红灯 | **H2 Blocked**：2026-11-10 多卡 VMFault，指向 `GradientCopyBoundaryKernel`；此前 1/2/4 卡弱扩展记录不可作为当前可用性证明。B2 的 `1.113e-06` 未过门禁。单卡 boundary smoke 已修；`ActionMapReadFileTest` 曾在全量并发下偶发。本轮单卡与回归证据见上一行，H2 与 B2 未复验 |
-| 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 可通过配置检查**；多卡要求每 rank 固定 cell 数（§4.8b），1 rank 多 zone 更慢（§4.1 A1.8） |
-| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡先解决 H2，再补 ≥1M 合法分区 fixture（D1）及控制 halo 的弱扩展证据 |
+| 已知红灯 | **H2 已解（`d41650729`）**：根因不是多卡，而是 `ONEFLOW_HIP_DEFER_STATUS=1` 下 `stateUpdateStatus` 惰性分配被 defer 分支完全跳过，`Data()` 返回空指针进 `atomicExch`；表现为 `libgalaxyhip`/`hsa-runtime64` 里 signal 6，回溯指向 `GradientCopyBoundaryKernel`（该内核只是恰好在队列里）。**单卡也会触发**。B2 的 `1.113e-06` 未过门禁。`ActionMapReadFileTest` 曾在全量并发下偶发 |
+| 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 可通过配置检查，多卡数值路径已复验**；多卡扩展性要求每 rank 固定 cell 数（§4.8b），1 rank 多 zone 更慢（§4.1 A1.8） |
+| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡数值路径已通，仍缺 ≥1M 合法分区 fixture（D1）及控制 halo 的弱扩展证据 |
 
 ### 1.1 工作环境与固定路径（不要另建目录）
 
@@ -505,9 +508,10 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
 
 #### 5.2 P1 — Phase A 收口（目标 ≤14 ms/step）
 
-本轮只推进 H1。下一开发顺序为 **H2 → A4 → A2′/A3**。H1 的数据推翻了
+H1 与 H2 均已完成，下一开发顺序为 **A4 → A2′/A3**。H1 的数据推翻了
 “MG 外层循环/任务派发占掉数毫秒”的假设；A4 应围绕设备所有权与同步往返设计，
-不再沿用仅删除派发可到 9–10 ms/step 的估算。
+不再沿用仅删除派发可到 9–10 ms/step 的估算。H2 的根因是延迟状态标志的惰性分配，
+与多卡/zone 数无关；历史扩展性数字仍须用合法 fixture 重测。
 
 - [x] **H1 host 侧每步账（Verified）**：新增仅在
       `ONEFLOW_HOST_ACCOUNTING=1` + `ONEFLOW_STAGE_BREAKDOWN_FILE` 下启用的
@@ -559,11 +563,24 @@ MPI trace 的已覆盖调用中，稳态等待主要在 `recv_char`；该工具�
 原始日志、各 rank TSV、五个 `summary*.json`、`timing.tsv`、分析脚本与结果留在本轮
 `evidence/gate/`、`evidence/cpu-regression/`、`evidence/probe/` 的对应目录。
 
-- [ ] **H2 多卡 VMFault（blocker，先于一切多卡优化）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡
-      都在 `libgalaxyhip` + `hsa-runtime64` 里 `signal 6`，VMFault 追踪指向
-      `GradientCopyBoundaryKernel`（gradient / leftCell / rightCell 三个指针）。8 rank/1 卡正常。
-      先做最小复现（同一 cube、16 zone、2 卡）并定位是 zone 数还是卡数触发；修好前
-      多卡结论一律挂起（§4.8b 的 67% 不可复现）。
+- [x] **H2 多卡 VMFault（已完成，`d41650729`）**：**根因不是多卡，而是 `ONEFLOW_HIP_DEFER_STATUS=1`（默认）**
+      下 `stateUpdateStatus` 缓冲区惰性分配；deferStatus 分支完全跳过 `CopyFromHost`，
+      `Size()==0`、`Data()` 返回 **nullptr** 传给内核里的 `atomicExch` → 设备内存故障。
+      **单卡也会触发**；表现为 `libgalaxyhip`/`hsa-runtime64` 里 signal 6，
+      回溯指向恰好在队列里的 `GradientCopyBoundaryKernel`。
+      次因：最小复现算例（2 zone m6）CFL 过高（`cflst=0.1 → cfled=10 over 100 steps`），
+      step 2/13 就产生非物理状态；但因为主因把错误路径变成了 VMFault abort，掩盖了真实问题。
+      **修复**：首次调用（`Size()<1`）仍然分配并上传零标志；后续调用保留设备侧标志直到
+      `CheckResidentStatus()` 读取并清零。
+      **验证**（固定 CFL=0.01，2 zone m6，50 步）：
+      - 单卡 HIP：PASS
+      - 多卡 HIP（2 节点/2 DCU）：**PASS**，无 VMFault
+      - CPU 2 rank：PASS
+      - HIP vs CPU 残差：**逐位一致**（`evidence/probe/127626632`）
+      **未跑完整门禁**：此修订已有集群构建 + HIP smoke 全 PASS + 多卡数值对照，
+      但还未跑完整 HIP 契约测试 + CPU 五算例 + trace + XB；须在集群重编并跑一轮门禁。
+      **扩展性数据仍需重测**：原历史 16/32 zone 的 1/2/4 卡数据可能落在同一缺陷路径上，
+      不能直接引用；须用合法 fixture（D1）在该修订上重跑弱扩展。
 
 - [x] **A1.9 梯度 unpack 路径的两处重复工作**（2026-11-08）：ghost-face→cell 映射按
       (grid, ghost level) 缓存（`006f9ff39`+`6174b21bd`），unpack 的 ghost id 列表按指针复用
@@ -597,9 +614,11 @@ MPI trace 的已覆盖调用中，稳态等待主要在 `recv_char`；该工具�
         200 步 XB `5.540033e-07`、aero `4.0e-05`（fail），但 1000 步从 14.62 降到
         **13.73**（−0.9 ms）。即第 4 轮买 0.9 ms，却承载着 legacy 的一步滞后，
         要削它必须找到"同一滞后、少一次往返"的等价写法，不能直接删
-- [ ] **A4 HIP `EulerDomainBackend::Advance`**：RK 阶段循环进 backend，只在宏步边界回主机。
-      先完成 H2，再按 H1 证据确定下沉边界；保持状态检查与 halo lag，
-      以减少实际同步/传输验证收益。验收须包含完整数值门禁与同节点 paired
+- [ ] **A4 HIP `EulerDomainBackend::Advance`（下一主线）**：RK 阶段循环进 backend，只在宏步边界回主机。
+      H2 已解除多卡阻塞，H1 已给出下沉边界证据；保持状态检查与 halo lag，
+      以减少实际同步/传输验证收益。验收须包含完整数值门禁与同节点 paired。
+      **前置（必做）**：先在 `d41650729` 上跑完 H2 遗留的完整门禁（HIP 契约 + CPU 五算例 + trace + XB），
+      否则 A4 的数值回归没有干净基线可对照。
 - **A2 已降级，不排期**：单卡关全部通信的差值约 2.2 ms；可兑现收益待归账重估
 
 #### 5.3 P1′ — Phase B 并行（与 A 不抢同一段代码）

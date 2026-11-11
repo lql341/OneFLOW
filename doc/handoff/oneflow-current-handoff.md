@@ -1,6 +1,7 @@
 # OneFLOW 交接（living）
 
 > 最后核对：2026-11-11；本轮起点 `1d283c31a`，已验证求解器修订 `6f7a49e3d`。
+> H2 根因与修复：`d41650729`（已有集群构建与多卡数值对照，**未跑完整门禁**）。
 
 > **这是唯一的交接文档，就地更新，不再按日期新建。**
 > 当前状态与路线图勾选在 [`../plans/oneflow-development-todo.md`](../plans/oneflow-development-todo.md)；
@@ -114,14 +115,24 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 trace、200 步 XB、CPU normal/strict、50 步稳定性和五对 1000 步归账通过；
 验收数字与口径只维护在 todo §5.2。CI 状态与修订分开记录，不把构建当数值验证。
 
+**H2 终结（`d41650729`）**：多卡 VMFault 的根因**不是多卡**。`ONEFLOW_HIP_DEFER_STATUS=1`
+（默认）下 `stateUpdateStatus` 惰性分配，而 deferStatus 分支完全跳过 `CopyFromHost`，
+`Data()` 返回 nullptr 进 `atomicExch`。单卡也会触发；回溯指向 `GradientCopyBoundaryKernel`
+只是因为它在队列里。同时发现原来的最小复现算例 CFL 过高（`cfled=10`），
+CPU 侧 step 2/13 就非物理，因此它**不具备 oracle 资格**。固定 `CFL=0.01` 后，
+多卡 HIP（2 节点/2 DCU）与 CPU 残差逐位一致。
+
 **下一步（只开一条主线）**
 
-1. **H2 多卡 VMFault**：最小复现并核对 `GradientCopyBoundaryKernel` 的指针归属、
-   zone/state 生命周期与设备映射；修复并复验前暂停多卡性能结论。
-2. **H2 后再评估 A4**：H1 已排除 MG 外循环与任务规划/派发是数毫秒大项。
-   候选是 `NsResidentMacroStep` 尾部 `CheckResidentStatus()` 的阻塞读取/清零，
-   以及 RHS `swap_download` 的队列等待。先区分设备工作与 host 等待，保持每步状态检查
+1. **先在 `d41650729` 上补完 H2 遗留门禁**：集群 `src/` 仍是 `113f00a41`，需重新打包上传、
+   重编 `build/app`，再跑 HIP 契约 + CPU 五算例（normal/strict）+ 3 步 trace + 200 步 XB。
+   没有这轮门禁，A4 的数值回归就没有干净基线。
+2. **然后 A4**：H1 已排除 MG 外循环与任务规划/派发是数毫秒大项。候选是
+   `NsResidentMacroStep` 尾部 `CheckResidentStatus()` 的阻塞读取/清零，以及 RHS
+   `swap_download` 的队列等待。先区分设备工作与 host 等待，保持每步状态检查
    和 post 轮 lag，再确定减少同步/传输的最小切片；不以删派发直接推算收益。
+3. **扩展性数字需重测**：历史 1/2/4 卡弱扩展可能都落在同一个空指针路径上，
+   不能直接引用；须用合法 fixture（D1）在修复后的修订上重跑。
 
 原始证据与分析脚本留在本轮固定 category 目录。清理可再生成的 trace/case 大文件后，
 保留每 rank breakdown、汇总、日志与复现脚本；继续使用唯一 `build/app`。
