@@ -352,9 +352,9 @@ public:
     // The time-step and state-update kernels report a non-physical or
     // non-finite result through a device flag that used to be copied back to
     // the host after every call, i.e. three blocking 4-byte round trips per
-    // macro step on top of the launches.  ONEFLOW_HIP_DEFER_STATUS=1 keeps the
-    // flag on the device and checks it once per macro step through
-    // CheckResidentStatus(); the default keeps the per-call check.
+    // macro step on top of the launches. The default keeps the flag on the
+    // device and checks once per macro step through CheckResidentStatus(); set
+    // ONEFLOW_HIP_DEFER_STATUS=0 to check per call.
     void CheckResidentStatus();
 
     // Update supported local inviscid boundary models on the resident state.

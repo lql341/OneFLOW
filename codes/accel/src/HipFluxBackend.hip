@@ -3310,7 +3310,10 @@ void HipFluxBackend::ScaleAndUpdatePrimitiveState(
 
     int status = 0;
     const bool deferStatus = HipDeferStatusEnabled();
-    if ( ! deferStatus )
+    // Deferred status checking still needs a live flag on the first call.
+    // Leave an existing flag untouched between checks so a later bad stage
+    // cannot be erased before CheckResidentStatus() observes it.
+    if ( ! deferStatus || storage.stateUpdateStatus.Size() < 1 )
     {
         storage.stateUpdateStatus.CopyFromHost( & status, 1 );
     }
@@ -3406,7 +3409,10 @@ void HipFluxBackend::UpdatePrimitiveState(
     }
     int status = 0;
     const bool deferStatus = HipDeferStatusEnabled();
-    if ( ! deferStatus )
+    // Deferred status checking still needs a live flag on the first call.
+    // Leave an existing flag untouched between checks so a later bad stage
+    // cannot be erased before CheckResidentStatus() observes it.
+    if ( ! deferStatus || storage.stateUpdateStatus.Size() < 1 )
     {
         storage.stateUpdateStatus.CopyFromHost( & status, 1 );
     }

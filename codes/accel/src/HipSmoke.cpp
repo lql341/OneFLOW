@@ -17,6 +17,7 @@ License
 #include <cstdio>
 #include <exception>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace
@@ -1341,7 +1342,6 @@ bool TestMainSolverStateUpdate()
             primitive.data() + equation * nTotalCells;
     }
     backend.CalcLocalInviscidTimeStep( timeStepView );
-    backend.UnbindState( cacheKey );
 
     double residentTimeStepError = 0.0;
     for ( int cell = 0; cell < nCells; ++ cell )
@@ -1363,6 +1363,37 @@ bool TestMainSolverStateUpdate()
             residentTimeStepError );
         return false;
     }
+
+    // The deferred status buffer is allocated lazily. Force a bad update on
+    // its first-use path and require a solver error instead of a device fault
+    // from atomicExch through a null status pointer.
+    std::fill( residual.begin(), residual.end(), 0.0 );
+    residual[ 0 ] = -std::numeric_limits< ONEFLOW::Real >::max();
+    backend.CalcAndAddReconstructedFaceFlux(
+        connectivity, residualView, 1, gamma, nullptr, cacheKey, false,
+        ONEFLOW::ResidualBase::HostUpload );
+    backend.ScaleCurrentResidual( updateView );
+    backend.UpdatePrimitiveState( updateView, true );
+    bool nonPhysicalStateReported = false;
+    try
+    {
+        backend.CheckResidentStatus();
+    }
+    catch ( const std::runtime_error & error )
+    {
+        nonPhysicalStateReported =
+            std::string( error.what() ).find( "non-physical state" )
+            != std::string::npos;
+    }
+    if ( ! nonPhysicalStateReported )
+    {
+        std::fprintf(
+            stderr,
+            "Main solver HIP deferred status contract FAIL: "
+            "non-physical state was not reported\n" );
+        return false;
+    }
+    backend.UnbindState( cacheKey );
     std::printf(
         "OneFLOW HIP main solver state update: PASS "
         "(max error %.3e, %d cells, %d equations)\n",
