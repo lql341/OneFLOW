@@ -140,4 +140,25 @@ TEST_F( StageProfiler, SwitchControlsSidecar )
         std::string( std::getenv( "ONEFLOW_HOST_ACCOUNTING" ) ) == "1" );
     EXPECT_TRUE( std::filesystem::exists( directory / "rank-3.tsv" ) );
 }
+
+TEST_F( StageProfiler, RegistersResidentProfilingCategories )
+{
+    ONEFLOW::StageProfiler::Record( "residual_zero", 1.25 );
+    ONEFLOW::StageProfiler::Record( "host_mirror_refresh", 2.5 );
+    ONEFLOW::StageProfiler::Flush();
+    std::ifstream input( directory / "rank-3.tsv" );
+    std::string line;
+    std::getline( input, line );
+    std::map< std::string, double > totals;
+    while ( std::getline( input, line ) )
+    {
+        const auto tab = line.find( '\t' );
+        ASSERT_NE( tab, std::string::npos );
+        totals[ line.substr( 0, tab ) ] = std::stod( line.substr( tab + 1 ) );
+    }
+    EXPECT_EQ( totals.count( "residual_zero" ), 1u );
+    EXPECT_EQ( totals.count( "host_mirror_refresh" ), 1u );
+    EXPECT_DOUBLE_EQ( totals[ "residual_zero" ], 1.25 );
+    EXPECT_DOUBLE_EQ( totals[ "host_mirror_refresh" ], 2.5 );
+}
 }

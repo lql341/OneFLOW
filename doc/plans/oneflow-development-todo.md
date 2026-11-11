@@ -524,6 +524,10 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
       不新增同步或变更数值调用顺序。新增 `.host.tsv` 与 rank/步数/闭合/启动扣除校验工具；
       本地 CTest `StageProfiler.*` 5/5、Python 归账与 rank 校验各 4/4。
       本地主求解器与 task_test 已构建；集群正确性门禁、1000 步同节点归账尚待完成，H1 保持未勾选。
+      初版 `f22d0de2c` 已过集群 HIP/计时契约 21/21、多区 trace `24/0/0`、
+      200 步 XB residual `2.331035e-18` / aero `0.0`、CPU normal/strict 各 5/5。
+      随后归账预检因旧 stage 表漏登记 `residual_zero` 停止；同时发现 `host_mirror_refresh`
+      未登记。现补齐两项并由初始化列表推导类别表长度，本地计时契约 6/6；修复版目标节点复验待完成。
 - [ ] **H2 多卡 VMFault（blocker，先于一切多卡优化）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡
       都在 `libgalaxyhip` + `hsa-runtime64` 里 `signal 6`，VMFault 追踪指向
       `GradientCopyBoundaryKernel`（gradient / leftCell / rightCell 三个指针）。8 rank/1 卡正常。

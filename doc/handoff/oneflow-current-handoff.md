@@ -150,6 +150,8 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 13. **`StageProfiler` 会静默丢弃未登记的类别**：名字必须先出现在 `StageProfiler.cpp` 的
     `Totals()` 表里，否则计时被丢掉、TSV 里看起来"该段零成本"。现在 `Flush()` 会打印
     `dropped N timer records for unregistered category ...`，看到就补表。
+    H1 复验发现 `residual_zero` / `host_mirror_refresh` 两个旧类别漏登记，已补齐；
+    表长改为从初始化列表推导。性能归账必须确认日志无 dropped 记录，再解释耗时。
 14. **启动固定开销 1.4–1.6 s**：100 步口径把它摊成 +14 ms/step、200 步 +7。所有 ms/step
     必须写步数并扣启动（同一算例跑 1 步与 N 步取斜率）。旧的"8.93 ms 固定基数"就是这类读数。
 15. **跨节点/单发噪声很大**：同一配置跨节点差 32%（13.12 vs 9.93），DCU 单发可达 3–4 倍

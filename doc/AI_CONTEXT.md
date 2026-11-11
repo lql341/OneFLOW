@@ -49,6 +49,11 @@ The `.host.tsv` verifier checks ranks, iteration counts, closure and startup-cor
 wall time. Local profiler CTest 5/5 and Python accounting/rank checks 4/4 each passed.
 The local solver and task_test builds passed. Target-node gates and measurements remain
 pending; no speedup is claimed.
+The initial H1 revision `f22d0de2c` passed target-node HIP/profiler tests 21/21,
+multi-zone trace (24 resident records, zero failures/difference), 200-step residual/aero
+comparison and CPU normal/strict 5/5 each. Profiling then correctly stopped on old missing
+`residual_zero`/`host_mirror_refresh` stage registrations. Both are now registered and the
+table size is inferred; local profiler tests pass 6/6. Target-node revalidation is pending.
 
 Do not improvise these:
 

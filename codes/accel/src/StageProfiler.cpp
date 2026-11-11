@@ -7,7 +7,6 @@
 #include "StageProfiler.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -80,9 +79,10 @@ bool HostAccountingEnabled()
     return requested && StageProfiler::Enabled();
 }
 
-std::array< CategoryTotal, 85 > & Totals()
+auto & Totals()
 {
-    static std::array< CategoryTotal, 85 > totals = {{
+    // Infer the size so adding a category cannot leave null trailing slots.
+    static CategoryTotal totals[] = {
         { "initialization", 0.0 },
         { "gradient", 0.0 },
         { "limiter", 0.0 },
@@ -129,6 +129,8 @@ std::array< CategoryTotal, 85 > & Totals()
         { "rhs_source", 0.0 },
         { "flux_assembly", 0.0 },
         { "residual_metrics", 0.0 },
+        { "residual_zero", 0.0 },
+        { "host_mirror_refresh", 0.0 },
         { "boundary_device", 0.0 },
         { "swap_upload", 0.0 },
         { "swap_download", 0.0 },
@@ -171,7 +173,7 @@ std::array< CategoryTotal, 85 > & Totals()
         { "g_geom", 0.0 },
         { "r_prep", 0.0 },
         { "fused_scale", 0.0 },
-    }};
+    };
     return totals;
 }
 
