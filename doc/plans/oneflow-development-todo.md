@@ -1,6 +1,7 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后核对：2026-11-11，基于 `1d283c31a`；本轮仅整理文档，未复跑求解器或集群门禁。
+> 最后核对：2026-11-11；本轮起点 `1d283c31a`，求解器门禁/归账修订 `6f7a49e3d`。
+> 后续 `fb246bb3a` 仅修复几何测试链接；该修订的 Linux Build 已通过（构建证据，不是全量测试）。
 
 ## 交接摘要与整体路线图
 
@@ -20,9 +21,8 @@
 完整原则见长期计划 §0，数值口径变更按 `AGENTS.md` 审查。
 
 受限无粘 3D 显式 RK 路径的 **q 已设备权威，A1 固定开销优化已收口**；
-完整 HIP `Advance` 尚未实现。当前顺序是 **H1 host 每步归账 → H2 多卡 VMFault
-→ A4 循环下沉 → A2′/A3**。Roe 只有单点/单 zone 证据，Barth 未过数值门禁；
-多卡结论因 H2 暂停。历史性能与门禁的口径、日期见 §1、§4，本轮没有新增验证。
+完整 HIP `Advance` 尚未实现。**H1 已完成，下一主线 H2 多卡 VMFault → A4 → A2′/A3**。Roe 只有单点/单 zone 证据，
+Barth 未过数值门禁，多卡结论因 H2 暂停。本轮证据与归因见 §5.2。
 
 ### 0.1 完成与待办总览（checkbox）
 
@@ -36,7 +36,7 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 - [x] Barth 单点契约与逐点差异定位（B2 部分完成；未通过整链数值门禁）。
 - [x] D1a：结构化等块分区，9/9 单测及固定 rank 配对收益记录。
 - [x] F1：3D 正式性能报告已发布（2026-11-02，Markdown + HTML）。
-- [ ] **H1（当前）**：补齐 host 每步耗时账，不重叠分项与稳态墙钟差 <10%，指出下一刀。
+- [x] **H1（已完成）**：五对归账差额 0.34%–2.14%；下一刀见 §5.2。
 - [ ] **H2（阻塞多卡）**：最小复现并修复多卡 VMFault，复验后才恢复多卡结论。
 - [ ] **A4**：HIP `Advance` 接管 RK 循环；通过数值门禁并测量端到端收益。
 - [ ] A2′ / A3（降权）；原 A2 每步一次交换方案暂缓，不直接删除 post 轮。
@@ -52,13 +52,13 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 
 | 项 | 值 |
 |---|---|
-| refs | 2026-11-11 核对：`dev` = `origin/dev` = `1d283c31a`；`master` = `origin/master` = `upstream/master` = `f36f0c6b3`，已由 `638276d6b` 合入 dev；不据旧快照推断后续远端状态 |
+| refs | 本轮求解器证据对应 `6f7a49e3d`，后续 `fb246bb3a` 只改测试 CMake；工作分支 dev。上游基线 `f36f0c6b3` 已合入；接手仍须核对实际 HEAD，不以文档修订号代替运行证据 |
 | upstream PR | #159 / #160 / #203 / #227 / #238 / #253 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook；#253 = upstream 同步与收口） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
 | 性能基线 | 历史 8 zone / 8 rank / 1 DCU、1000 步 paired：**14.62 ms/step**（2026-11-07 同节点交错 5 对中位）。CPU 288.20 来自 2026-11-02 的 F1 报告，不与此点拼接新加速比。F1 当次配对为 CPU 288.20 / HIP 15.59 = 18.5×；新 HEAD 需重测 |
-| 门禁基线 | 3 步多区 trace `MULTIZONE_TRACE_PASS` + resident contract `24/0/0`；200 步跨后端 residual `2.331035e-18` / aero `0.0`；**CPU 五算例 normal 5/5、strict 5/5**（2026-11-08 复跑，strict 判据仍绝对 1e-15、基线 `validated_commit=7bd358c0d`）；`HIP.MainSolverFluxOneCall` 在 1 DCU 上 PASS；全量 GoogleTest 未重跑 |
+| 门禁基线 | `6f7a49e3d`：HIP/计时契约 22/22；3 步多区 trace PASS、resident `24/0/0`；200 步 XB residual `2.331035e-18` / aero `0.0`；CPU normal/strict 各 5/5（判据 1e-8 / 1e-15 未变）；50 步 HIP 稳定性及五对 1000 步归账 PASS。全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
-| 已知红灯 | **H2 Blocked**：2026-11-10 多卡 VMFault，指向 `GradientCopyBoundaryKernel`；此前 1/2/4 卡弱扩展记录不可作为当前可用性证明。B2 的 `1.113e-06` 未过门禁。单卡 boundary smoke 已修；`ActionMapReadFileTest` 曾在全量并发下偶发。本 HEAD 未复跑这些检查 |
+| 已知红灯 | **H2 Blocked**：2026-11-10 多卡 VMFault，指向 `GradientCopyBoundaryKernel`；此前 1/2/4 卡弱扩展记录不可作为当前可用性证明。B2 的 `1.113e-06` 未过门禁。单卡 boundary smoke 已修；`ActionMapReadFileTest` 曾在全量并发下偶发。本轮单卡与回归证据见上一行，H2 与 B2 未复验 |
 | 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 可通过配置检查**；多卡要求每 rank 固定 cell 数（§4.8b），1 rank 多 zone 更慢（§4.1 A1.8） |
 | 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡先解决 H2，再补 ≥1M 合法分区 fixture（D1）及控制 halo 的弱扩展证据 |
 
@@ -157,7 +157,7 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
   - [x] A1.4 基准 warmup 规则。首个 `hipMalloc` 与冷 case 目录会污染短基准：同一配置冷跑 `27.0`、热跑 `18.5–21.1 ms/step`。规则落在交接 §5，不是代码改动
 - [ ] **A2 每步一次界面交换**（原 `F7.3`，Deferred；候选方案见 §5.2 A2′）：跳过 post 轮使 200 步跨后端从 `2.33e-18` 偏到 `5.54e-7`（aero `4.0e-5`），不能直接删轮次。单卡关掉全部通信的历史墙钟差值约 **2.2 ms/step**；旧 1.1 ms 收益上限缺乏完整归账，不再作为验收预期。多卡数据须等 H2 修复后复验
 - [ ] **A3 stage kernel 融合**（原 `F7.4`，Deferred）：gradient → reconstruction → flux → lhs → update → boundary 在设备内串联。旧的 −4/−6 ms 收益估算已失效；host stage 计时不是 GPU 执行时间。待 H1/H2/A4 后再按配对实验评估
-- [ ] **A4 HIP `EulerDomainBackend::Advance`**（原 `F7.5`）：RK 三阶段循环进 backend，只在宏步边界回主机（输出、门控）。设备基态留在设备上，不要把 A1.2 跳过的 host 槽位拷回来。**目标 9–10 ms/step**（按 14.62 起点与 A1.9 的“剩余差距是结构性”结论重估；旧的 12–14 是 A1 收口前估算）
+- [ ] **A4 HIP `EulerDomainBackend::Advance`**（原 `F7.5`）：RK 三阶段循环进 backend，只在宏步边界回主机（输出、门控）。设备基态留在设备上，不要把 A1.2 跳过的 host 槽位拷回来。**收益待验证**：H1 已测得 MG/任务规划与派发仅约 0.042 ms/step；A4 的价值应来自减少同步与状态往返，旧 9–10 ms 估算不再作为预期
 
 #### 4.2 Phase B — 数值能力（0/6，退出门见 B-exit）
 
@@ -264,7 +264,7 @@ C1–C5 / D1–D4 / E1–E5 / F1–F4**。本文只记勾选与证据，阶段�
 
 #### 4.8 顺序与插空规则
 
-1. 已定：先收口 Phase A，再扩 Phase B。**当前顺序为 H1 → H2 → A4 → A2′/A3**；原 A2 已降级、不排期。H1/H2 的验收见 §5.2，低于 14 ms 的单个样本不等于 Phase A 完成。
+1. 已定：先收口 Phase A，再扩 Phase B。**当前顺序为 H2 → A4 → A2′/A3**；原 A2 已降级、不排期。H1/H2 的验收见 §5.2，低于 14 ms 的单个样本不等于 Phase A 完成。
 2. B1（Roe）与 B2（limiter）是 B-exit 的前置；B3/B4 依赖它们；B5/B6 依赖 A4。
 3. E1（去 globals）应在 B3 之前，最好也在 A4 之前。CUDA/Kokkos 当前不做，但不要把 HIP 类型写进 `EulerDomain` seam。
 4. D1（fixture）是外部依赖，不阻塞 A/B。
@@ -398,8 +398,8 @@ METIS 平均 `nIFaces` 1786 → 结构化 1500（−16%）；每步 **61.32 → 
 结论（**2026-11-10 修正**）：上面那张表只说明"关掉接口后计算段不变"，不等于接口是
 主瓶颈。短程 rocprof 与独立墙钟数据提示 host 编排/等待值得优先排查，
 但不能据此把 GPU、接口和 host 百分比拼成不重叠的时间账。
-接口 recv 等待的增长与邻居到达偏差相容，尚不能排除其它因素。本轮先做 **H1（host 侧每步账）**，
-接口（A2′）和融合（A3）都降权。
+接口 recv 等待的增长与邻居到达偏差相容，尚不能排除其它因素。这是 H1 的排期依据；
+本轮 H1 归账结果见 §5.2，接口（A2′）和融合（A3）仍待结合等待归因评估。
 
 DCU 侧同一套等块分区还未重跑；H2 修复并复验前，历史 67% 的结论暂停。
 
@@ -505,29 +505,60 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
 
 #### 5.2 P1 — Phase A 收口（目标 ≤14 ms/step）
 
-> **本轮顺序（2026-11-10 按 rocprof 实测重新排序）：H1 host 侧每步账 → H2 多卡 VMFault
-> → A4 → A2′/A3。**
-> 短程 rocprof 与墙钟对照支持先调查 host 编排与等待，但没有形成同配置、不重叠的时间账。
-> 12%/24% 只是比值估算（§4.8b），不作为实测忙碌率。之前的 stage 分项包含入队与等待，
-> 不能解释成 GPU 时间；A2′（接口）和 A3（融合）降权，待 H1 结果重估。
+本轮只推进 H1。下一开发顺序为 **H2 → A4 → A2′/A3**。H1 的数据推翻了
+“MG 外层循环/任务派发占掉数毫秒”的假设；A4 应围绕设备所有权与同步往返设计，
+不再沿用仅删除派发可到 9–10 ms/step 的估算。
 
-- [ ] **H1 host 侧每步账（当前主项，Partial）**：7.43−1.77≈5.7 ms 仅是跨测量相减的
-      待解释差额，不能直接算作 host 计算。做法：在 `MG::SolveInnerIter` / `MG::WeakIter` /
-      `MG::PreRelaxationCycle` / `MG::InnerProcess` 加计时域（`macro_*` 只覆盖宏步内部，
-      外面这一段目前没有名字），把 host 部分拆成「宏步外循环」「任务派发/命令表」
-      「post 轮」「集合操作/屏障」。复用现有任务计时，区分 inclusive/exclusive 与等待；
-      不新增改变执行顺序的同步。验收：同配置、扣启动的稳态测量中，不重叠分项之和与
-      墙钟差 <10%，各 rank 文件完整、无漏登记类别，并给出下一刀的位置；
-      之后才谈把哪个循环下沉到设备（A4）。
-      **2026-11-11 Partial**：基于 `c40fb3f7c` 增加显式开启的 `ScopedHostTimer`，
-      仅记录 MG 根域内的 inclusive/exclusive 耗时，覆盖 MG、任务规划/执行、宏步与接口。
-      不新增同步或变更数值调用顺序。新增 `.host.tsv` 与 rank/步数/闭合/启动扣除校验工具；
-      本地 CTest `StageProfiler.*` 5/5、Python 归账与 rank 校验各 4/4。
-      本地主求解器与 task_test 已构建；集群正确性门禁、1000 步同节点归账尚待完成，H1 保持未勾选。
-      初版 `f22d0de2c` 已过集群 HIP/计时契约 21/21、多区 trace `24/0/0`、
-      200 步 XB residual `2.331035e-18` / aero `0.0`、CPU normal/strict 各 5/5。
-      随后归账预检因旧 stage 表漏登记 `residual_zero` 停止；同时发现 `host_mirror_refresh`
-      未登记。现补齐两项并由初始化列表推导类别表长度，本地计时契约 6/6；修复版目标节点复验待完成。
+- [x] **H1 host 侧每步账（Verified）**：新增仅在
+      `ONEFLOW_HOST_ACCOUNTING=1` + `ONEFLOW_STAGE_BREAKDOWN_FILE` 下启用的
+      `ScopedHostTimer`；MG 根域内输出 inclusive/exclusive `.host.tsv`，不新增同步，
+      不改数值调用顺序。校验 rank 完整性、实际迭代次数、exclusive 耗时闭合与启动扣除。
+      修复旧 `residual_zero` / `host_mirror_refresh` 漏登记，类别表长度由初始化列表推导。
+      验证入口：两步 `scripts/build-app.sh`；CTest `-R '^StageProfiler\.|^HIP\.'`；
+      标准 `f2-main-solver-multizone-trace.sh`、`f2-main-solver-cross-backend-residual.sh`
+      与 `scripts/cpu-regression.slurm`；`summarize-host-accounting.py` 逐对核验。
+      **求解器修订 `6f7a49e3d` 的证据**：HIP/计时 CTest 22/22；trace `24/0/0`；
+      200 步 residual `2.331035e-18` / aero `0.0`；CPU normal/strict 各 5/5；
+      50 步 HIP 稳定性通过，日志无 dropped 记录。本地计时 6/6、task 58/58、
+      Python 归账与 rank 校验各 4/4；macOS CLI 因既有可执行目录定位为空，未进入 CFD。
+      Linux Build 在该修订暴露几何测试库漏链 `StructuredPartition.cpp`；
+      `fb246bb3a` 仅补测试库依赖，未改求解器源码。本地相关测试 21/21、4/4、9/9；该修订的 Linux Build 已通过。
+      数值门禁/归账对应 `6f7a49e3d`，未将测试 CMake 修复后的构建冒充新一轮 CFD 验证。
+
+**归账口径与结果（探索性数据，不替换 F1 正式报告）**
+
+m6wing 294,912 cell / 8 zone / 8 rank / 1 DCU，同一分配；独立 50 步预热，
+每对 1 步与 1000 步以 `(T1000−T1)/999` 扣启动，5 对 accounting on/off 交错，
+CFL 0.01、LF、ilim=0、vismodel=0、显式三阶段 RK、关闭中间输出。
+每对都校验 8 个 rank 的自身耗时之和，并与最长 MG 耗时对照墙钟；各 rank 时间不相加。
+
+| 对次 | 扣启动墙钟 ms/step | 最长 rank 的 MG ms/step | 差额 |
+|---:|---:|---:|---:|
+| 1 | 11.5459 | 11.5847 | 0.34% |
+| 2 | 11.5340 | 11.6239 | 0.78% |
+| 3 | 12.0296 | 11.7915 | 1.98% |
+| 4 | 11.3561 | 11.5987 | 2.14% |
+| 5 | 11.6173 | 11.6969 | 0.69% |
+
+墙钟中位 **11.55 ms/step**；差额均低于 10%。accounting on/off 的配对墙钟差中位
+−0.94%，范围 −9.53%～+0.84%，不据此宣称计时加速或零开销。
+每对临界 rank 的 exclusive 分项中位（**各分项中位不能相加重建总时间**）：
+`macro_update_residuals` 5.10、`resident_macrostep` 自身 2.03、`interface_mpi` 1.96、
+`task_execute` 自身 1.58、`interface_pack` 0.50 ms/step。
+MG 控制域 + `task_plan` + `task_dispatch` 在每对内先求和再取中位仅 **0.042 ms/step**
+（约 0.36%）。`task_execute` 包含处理函数和等待，不是纯命令派发成本。
+MPI trace 的已覆盖调用中，稳态等待主要在 `recv_char`；该工具未覆盖 `MPI_Bcast`，
+不能将缺少某个 kind 解读为所有集合操作均不存在。
+
+**下一刀的候选位置**：H2 修复后，先对
+`NsResidentMacroStep` 尾部 `HipFluxBackend::CheckResidentStatus()` 的阻塞状态读取/清零，
+以及 RHS 中 `UNsGrad` 的 `swap_download` 等待做设备时间与 host 等待对账。
+宏步自身的 2.03 ms 包含尾部检查，不能直接认定全部可省；
+`swap_download` 也会承接延迟队列工作。保持每步非物理状态检查与 post 轮 lag 语义，
+再评估合并状态传输/减少同步，不先重写 MG/task 骨架或删检查。
+原始日志、各 rank TSV、五个 `summary*.json`、`timing.tsv`、分析脚本与结果留在本轮
+`evidence/gate/`、`evidence/cpu-regression/`、`evidence/probe/` 的对应目录。
+
 - [ ] **H2 多卡 VMFault（blocker，先于一切多卡优化）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡
       都在 `libgalaxyhip` + `hsa-runtime64` 里 `signal 6`，VMFault 追踪指向
       `GradientCopyBoundaryKernel`（gradient / leftCell / rightCell 三个指针）。8 rank/1 卡正常。
@@ -567,8 +598,8 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
         **13.73**（−0.9 ms）。即第 4 轮买 0.9 ms，却承载着 legacy 的一步滞后，
         要削它必须找到"同一滞后、少一次往返"的等价写法，不能直接删
 - [ ] **A4 HIP `EulerDomainBackend::Advance`**：RK 阶段循环进 backend，只在宏步边界回主机。
-      先完成 H1 归账与 H2 排查，再确定下沉边界；9–10 ms/step 仍是待验证估算，
-      不作为已取得收益。验收须包含完整数值门禁与同节点 paired
+      先完成 H2，再按 H1 证据确定下沉边界；保持状态检查与 halo lag，
+      以减少实际同步/传输验证收益。验收须包含完整数值门禁与同节点 paired
 - **A2 已降级，不排期**：单卡关全部通信的差值约 2.2 ms；可兑现收益待归账重估
 
 #### 5.3 P1′ — Phase B 并行（与 A 不抢同一段代码）

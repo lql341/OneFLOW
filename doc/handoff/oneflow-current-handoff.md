@@ -1,6 +1,6 @@
 # OneFLOW 交接（living）
 
-> 最后核对：2026-11-11，基于 `1d283c31a`；仅统一文档状态，未复跑集群门禁。
+> 最后核对：2026-11-11；本轮起点 `1d283c31a`，已验证求解器修订 `6f7a49e3d`。
 
 > **这是唯一的交接文档，就地更新，不再按日期新建。**
 > 当前状态与路线图勾选在 [`../plans/oneflow-development-todo.md`](../plans/oneflow-development-todo.md)；
@@ -14,8 +14,8 @@
 ## 0. 60 秒上手
 
 1. 读 `AGENTS.md`（分支模型、门禁顺序、口径纪律、工作区规则）。
-2. 打开 todo **§0.1 checkbox 总览与 §5 下一轮任务**：当前主线是 **H1 host 每步归账**，
-   之后 H2 多卡 VMFault → A4（RK 循环下沉）→ A2′/A3。多卡结论在 H2 修复前暂停。
+2. 打开 todo **§0.1 checkbox 总览与 §5 下一轮任务**：H1 已完成；
+   下一开发项为 **H2 多卡 VMFault** → A4 → A2′/A3。多卡结论在 H2 修复前暂停。
    **主线优先级只以 todo §4/§5 为准**；本文只记“怎么跑”和“已经踩过的坑”，
    两边不一致时改本文，不要改 todo 的台账。
 3. 要动集群先读 §1（固定路径）与 runbook：**SSH 已不可用，只能走 OpenAPI 技能**，
@@ -103,41 +103,30 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**基线**：`master` = `origin/master` = `upstream/master`（2026-11-10 三端同步，见提交记录）；
-2026-11-11 核对为 `f36f0c6b3`，`dev` = `origin/dev` = `1d283c31a`，已合并该 HEAD。
-本轮仅整理文档；该 HEAD 未复跑求解器，未查到 fork 对应的 Actions run/check-run。
-昆山工作区的 `src/OneFLOW` + `src/REVISION` 每轮覆盖，二进制在
-`build/app/bin/OneFLOW`（构建走 `build-app.sh` 的两步 make）。
+**修订与证据边界**：上游基线 `f36f0c6b3` 已合入 dev；本轮求解器构建、
+数值门禁和归账对应 **`6f7a49e3d`**，集群 `src/REVISION` 也指向该修订。
+后续 `fb246bb3a` 只补几何测试库的结构化分区链接依赖，与该修订的
+`codes/`、`cmake/`、`system/`、`test/` 及根 CMake 无差异；其 Linux Build 已通过。
+后续文档提交不等于重新构建求解器，接手时核对真实 HEAD 与远端版本标记。
 
-**2026-11-10 这一轮的结论**
+**H1 当前交付**：新增显式开启的 MG 根域 inclusive/exclusive wall accounting，
+保留原 stage/task TSV，另写 `.host.tsv`；修复两个旧漏登记类别。集群 HIP/计时契约、
+trace、200 步 XB、CPU normal/strict、50 步稳定性和五对 1000 步归账通过；
+验收数字与口径只维护在 todo §5.2。CI 状态与修订分开记录，不把构建当数值验证。
 
-- **GPU 时间与墙钟尚未完整对账**：rocprof（配方见 §5 坑 31）实测
-  1 rank / 294,912 cell / 2 步的 kernel dispatch 时间和为 3.54 ms。
-  与独立墙钟相除的 12%、以及假定 8 rank 聚合成本不变推算的 24%，均不是直接测得的
-  GPU 忙碌率；不可把剩余墙钟全部算成 host 计算。H1 要补齐同配置的归账。
-- **接口开关差值**：墙钟 A/B `ONEFLOW_DIAG_NO_COMM` 单卡 2.1–2.2 ms/step，
-  约占当次墙钟 16%；MPI trace 的 recv 增长与邻居到达偏差相容，尚未完整归因。
-- **端到端并行效率未变**：CPU 1→32 rank = 100/93/86/73/71/**65.7%**（基线 67%，噪声内）；
-  DCU 单卡 1→8 rank 为 **1.93×**（14.36→7.43），支持优先调查 host 工作与等待。
-- **已否掉**：非阻塞交换（更慢 5%、第二版段错误）、删 dead `UPDATE_UNSTEADY_FLOW`
-  （0.1 ms，噪声内）、"kernel/接口各 33%"的旧读数（那是 host 侧入队+等待）。
-- **唯一保留的代码资产**：结构化等块分区（`partition_type=2`，固定 32 rank +4.4%，
-  9 个单测）与 MPI 调用计数（`ONEFLOW_MPI_TRACE_FILE`）。
+**下一步（只开一条主线）**
 
-**下一步（按价值，详见 todo §5）**
+1. **H2 多卡 VMFault**：最小复现并核对 `GradientCopyBoundaryKernel` 的指针归属、
+   zone/state 生命周期与设备映射；修复并复验前暂停多卡性能结论。
+2. **H2 后再评估 A4**：H1 已排除 MG 外循环与任务规划/派发是数毫秒大项。
+   候选是 `NsResidentMacroStep` 尾部 `CheckResidentStatus()` 的阻塞读取/清零，
+   以及 RHS `swap_download` 的队列等待。先区分设备工作与 host 等待，保持每步状态检查
+   和 post 轮 lag，再确定减少同步/传输的最小切片；不以删派发直接推算收益。
 
-1. **H1 host 侧每步账**：约 5.7 ms 只是跨测量相减后的待解释差额。给
-   `MG::SolveInnerIter` / `WeakIter` / `PreRelaxationCycle` / `InnerProcess` 加计时
-   （`macro_*` 只覆盖宏步内部），把 host 拆成"宏步外循环 / 任务派发 / post 轮 / 屏障"。
-   验收：同配置、扣启动的稳态测量中，不重叠分项之和与墙钟差 <10%，并指出下一刀；
-   不将嵌套项相加，不为计时插入改变执行顺序的同步。
-2. **H2 多卡 VMFault（blocker）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡都在
-   `libgalaxyhip`+`hsa` 里 abort，VMFault 指向 `GradientCopyBoundaryKernel`；8 rank/1 卡正常。
-   修好前不做任何多卡结论。
-3. **之后**：A4（把宏步循环真正下沉）、A2′（接口 16%）、D1（≥1M 合法 fixture）。
-
-**不要做**：再按"kernel 33%/接口 33%"排期；再用 Isend/Irecv 改交换；再拿 stage 分项表
-当 GPU 时间（它量的是 host 侧入队+等待）。
+原始证据与分析脚本留在本轮固定 category 目录。清理可再生成的 trace/case 大文件后，
+保留每 rank breakdown、汇总、日志与复现脚本；继续使用唯一 `build/app`。
+本轮临时 trace/case 已清，快照/日志已轮转；旧 `_attic` 清理仍在独立的
+`of-probe-cleanup` CPU 作业中，接手先查该作业与 evidence/probe 下的结果。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
 
@@ -251,7 +240,7 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
     实际更贵。开关是 `ONEFLOW_ENABLE_UNS_GPU_AWARE_MPI` + `..._CONFIRMED`，保持关闭。
 16. **固定基数必须先扣启动再归账**：旧通信开关对照约省 2.2 ms；
     `rk_stage=1` 的 8.93 ms 含短基准启动摊销，已由 todo A1.7b 修正，不能继续当稳态基数。
-    单配置通信开关差值不是 A2 收益保证；当前剩余成本由 H1 按同配置分段确认。
+    单配置通信开关差值不是 A2 收益保证；H1 同配置归账已完成，结果见 todo §5.2。
 17. **别用 2 个样本下结论**：8-zone 同配置两次样本 17.59 / 14.28（跨度 23%），
     16-zone 与 32-zone 的 7% 差异完全在噪声内。要比较配置，至少 5 个样本或做配对交替。
 18. **`zones % ranks == 0` 只是配置层放行**：`Zone::CheckZoneRankCount` 只查整除，

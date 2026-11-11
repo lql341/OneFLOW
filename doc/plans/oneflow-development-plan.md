@@ -1,6 +1,6 @@
 # OneFLOW 长期分阶段开发计划（accelerator 主线）
 
-> 最后核对：2026-11-11，基于 `1d283c31a`；本轮仅整理文档，未新增求解器验证。
+> 最后核对：2026-11-11；本轮起点 `1d283c31a`，求解器证据修订 `6f7a49e3d`。
 > 本文是长期路线图（living），按季度/阶段维护；
 > **执行进度、勾选与证据以
 > [`oneflow-development-todo.md`](oneflow-development-todo.md) 文首
@@ -27,7 +27,8 @@ OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们
 2. **3D 主求解器仍在 Phase A，完整 HIP `Advance` 尚缺。** A1 已收口，
    历史同节点 paired 为 14.62 ms/step（8 zone / 8 rank / 1 DCU / 1000 步）；
    不能直接与不同节点、步数或启动口径下的较低墙钟比。短程 rocprof 显示 host stage
-   计时不能当 GPU 时间，下一步先做 H1 同配置归账，再做 H2 多卡 VMFault 与 A4。
+   计时不能当 GPU 时间。H1 已完成归账与 CI 收尾；下一开发项为 H2 多卡 VMFault，
+   之后按同步/传输成本评估 A4，不能把 task 派发当作数毫秒瓶颈。
 
 因此长期计划的主轴不是继续抠 kernel，而是：
 
@@ -38,7 +39,7 @@ OneFLOW 的加速主线已经证明了两件事，长期计划的形状由它们
 
 每个阶段都有"准入门"（oracle/门禁）和"退出门"（可发布证据），见 §3。
 完成/待办 checkbox 统一维护在 [`oneflow-development-todo.md`](oneflow-development-todo.md)
-§0.1；本计划不复制勾选树。当前顺序 **H1 → H2 → A4 → A2′/A3**，具体验收以 todo §5 为准。
+§0.1；本计划不复制勾选树。当前顺序为 **H2 → A4 → A2′/A3**，具体验收以 todo §5 为准。
 
 ## 1. 代码架构现状（长期计划的事实基础）
 
@@ -140,10 +141,10 @@ Phase A（执行模型）
 
 | 子项 | 内容 | 预期 | 证据/入口 |
 |---|---|---|---|
-| A1 | 固定开销优化已完成：按需镜像、设备残差基底、跳 host 历史层与账本、延迟同步。基准须 warmup | 历史同节点 paired **14.62 ms/step**；当前 HEAD 未复跑 | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
+| A1 | 固定开销优化已完成：按需镜像、设备残差基底、跳 host 历史层与账本、延迟同步。基准须 warmup | 历史同节点 paired **14.62 ms/step**；本轮归账的新口径见 todo §5.2 | `UNsInvFlux::CalcInvFace`、`FieldTaskReg::LoadQ/LoadResiduals`、`ResidualBasePolicy` |
 | A2 | 原每步一次交换方案暂缓；保留 legacy 滞后，不能直接删 post 轮（200 步 XB `5.54e-7`）。A2′ 聚合/减轮次待 H1/H2/A4 后重估 | 单卡通信开关差值约 2.2 ms，不是可兑现收益保证 | `InterfaceTask`、`UNsGrad::CalcGradHip`、`ExchangeHipInterfaceQ` |
 | A3 | stage kernel 融合：gradient→recon→flux→lhs→update→boundary 在设备内串联，减少 host 同步 | 已降权；旧 −4/−6 ms 估算失效，待配对测量 | `HipFluxBackend` 各 kernel + `TimeIntegral` |
-| A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend，host 负责 INIT/输出/门控；宏步末按需 Download | H1 归账后确定切口；todo 的 9–10 ms 是待验证估算 | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
+| A4 | **HIP `EulerDomainBackend::Advance`**：把 RK stage 循环搬进 backend，host 负责 INIT/输出/门控；宏步末按需 Download | H1 已排除 MG/派发大项；先定位同步/传输成本再量化收益，旧 9–10 ms 估算撤回 | `TimeIntegral::RungeKutta(context)`、`EulerDomain.h`、`HipSmoke` 既有 `Advance` 样板 |
 
 退出门：
 - 8 zone/8 rank/1 DCU 1000 步 paired **≤14 ms/step**（相对 10-25 的 31.6 再快 2.2x，
@@ -285,7 +286,7 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 1. **目标规模**：这条后端的"完成"定义是 1M cell 单卡、还是 100M cell 多卡？
    （决定 Phase C/D 的投入比例）
 2. **旗舰算例优先还是性能优先**：2026-11-01 定为先把 Phase A 做到 ≤14 ms/step，
-   再扩 Phase B。B1/B2 可独立评估契约，但不挤占当前 H1 → H2 → A4 主线。
+   再扩 Phase B。B1/B2 可独立评估契约，但不挤占当前 H2 → A4 主线。
 3. **隐式与多重网格是否在设备上做**：若只加速显式 finest grid，可省掉 Phase B5/B6
    的大半工作，但要接受"定常收敛用 LUSGS 就没加速"的现实。
 4. **zone 映射**：长期是否维持 1 rank = 1 zone？若需要 zone 切分，Phase D 的工作量
@@ -295,11 +296,12 @@ todo §4 直接使用本节编号，不再有第二套字母表。历史编号�
 
 ## 7. 下一步顺序（具体 checkbox 与验收见 todo §5）
 
-1. **H1 host 每步归账**：补 MG 外层计时，复用任务计时，以不重叠分项解释同配置稳态墙钟，
-   差额 <10%。旧 8.93 ms 含启动摊销，12%/24% 为估算比值，均不能充当当前完整归因。
+1. **H1 已收口**：集群归账、正确性门禁与 CI 测试链接修复的构建验证已过；详见 todo §5.2。
+   MG 控制域与任务规划/派发仅约 0.042 ms/step，不支持靠重写外循环获得数毫秒收益。
 2. **H2 多卡 VMFault**：最小复现并修复 `GradientCopyBoundaryKernel` 相关故障；
    修复与复验完成前暂停多卡结论。D1 ≥1M 合法 fixture 仍是独立的证据缺口。
-3. **A4 循环下沉**：依据 H1 结果选择最小完整切片，通过 trace、跨后端、CPU normal/strict、
+3. **A4 循环下沉**：先量清宏步尾状态读取/清零与 RHS 队列等待，再选择减少同步/传输的
+   最小切片，保持每步物理状态检查与 halo lag；通过 trace、跨后端、CPU normal/strict、
    稳定性及 paired；之后再评估 A2′/A3。
 
 （F1 3D 正式报告已于 2026-11-02 发布，不再列为待办。）

@@ -35,25 +35,33 @@ For routine session closure, update §5 of the todo and §4/§5 of the handoff i
 If a change also invalidates this entry point or the long-term plan/runbook, update those
 specific statements in the same slice; do not create another handoff.
 
-Accelerator documentation audit at base `1d283c31a`: todo §0.1 now provides the checkbox
-overview. Current order is **H1 host accounting → H2 multi-card VMFault → A4 → A2′/A3**.
-Roe remains Partial pending multi-zone evidence; multi-card performance conclusions are
-suspended pending H2. Phase parent completion is 2/28 (A1, F1); existing Roe subtest evidence
-is retained. This slice changes documentation only: no solver tests or cluster jobs were run,
-and no Actions run/check-run was found in the fork for the inspected base. Next action: H1
-same-configuration, non-overlapping steady-step accounting, with <10% unexplained wall time.
+Accelerator H1 milestone (2026-11-11, starting base `1d283c31a`): solver revision
+`6f7a49e3d` passed target-node HIP/profiler CTest 22/22, multi-zone trace (resident
+24/0/0), 200-step residual/aero comparison, CPU normal/strict 5/5 each and 50-step
+HIP stability. Five paired 1/1000-step runs close MG accounting to corrected wall
+within 0.34–2.14%; median wall is 11.55 ms/step on that allocation. This is diagnostic
+evidence, not a new speedup claim. Exact basis and scope medians live in todo §5.2.
 
-H1 implementation at base `c40fb3f7c` is Partial: opt-in `ScopedHostTimer` records
-inclusive/exclusive MG-root wall scopes without adding HIP/MPI synchronization.
-The `.host.tsv` verifier checks ranks, iteration counts, closure and startup-corrected
-wall time. Local profiler CTest 5/5 and Python accounting/rank checks 4/4 each passed.
-The local solver and task_test builds passed. Target-node gates and measurements remain
-pending; no speedup is claimed.
-The initial H1 revision `f22d0de2c` passed target-node HIP/profiler tests 21/21,
-multi-zone trace (24 resident records, zero failures/difference), 200-step residual/aero
-comparison and CPU normal/strict 5/5 each. Profiling then correctly stopped on old missing
-`residual_zero`/`host_mirror_refresh` stage registrations. Both are now registered and the
-table size is inferred; local profiler tests pass 6/6. Target-node revalidation is pending.
+Opt-in `ScopedHostTimer` adds inclusive/exclusive MG-root accounting without new
+synchronization. Stage/task schemas stay unchanged; `.host.tsv` gets rank/count/closure
+validation. Missing `residual_zero` / `host_mirror_refresh` registrations were fixed.
+Local profiler tests 6/6, task tests 58/58 and Python accounting/rank tests 4/4 each passed.
+The macOS CLI stopped before CFD on an empty executable-directory result; no local CFD
+pass is claimed. A full GoogleTest run was not performed.
+
+Manual Linux Build for the solver revision exposed a pre-existing GeometryCore test-link
+omission. `fb246bb3a` adds `StructuredPartition.cpp` only to that test library; production
+sources/configuration/cases are identical to the tested solver revision. Local grid,
+CGNS lifecycle and structured partition tests pass 21/21, 4/4 and 9/9. Linux Build passed
+for `fb246bb3a` (build only); numerical gates/profile data remain tied to `6f7a49e3d`.
+H1 is complete. Old attic cleanup continues in a separate CPU job; current evidence is retained.
+
+Next single mainline: **H2 multi-card VMFault**; multi-card claims stay suspended.
+After H2, use H1 to investigate status-copy/drain waits at the macro-step tail and RHS
+`swap_download`. MG control plus task planning/dispatch measures only ~0.042 ms/step;
+A4 must justify removing synchronization/transfer costs while preserving physical-state
+checks and halo lag, rather than assuming dispatch removal produces milliseconds.
+Roe remains Partial, and phase-parent completion stays 2/28 (A1, F1); H1 is a round task.
 
 Do not improvise these:
 
