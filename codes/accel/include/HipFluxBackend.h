@@ -357,6 +357,14 @@ public:
     // ONEFLOW_HIP_DEFER_STATUS=0 to check per call.
     void CheckResidentStatus();
 
+    // Deferred variant: the macro step only *requests* the check.  The read is
+    // performed at the next point that already drains the queue (the
+    // host-staged interface pack), so a four-byte status read no longer costs
+    // an extra full device drain per step.  Callers outside the interface path
+    // fall back to CheckResidentStatus() through FlushRequestedResidentStatus().
+    void RequestResidentStatusCheck();
+    void FlushRequestedResidentStatus();
+
     // Update supported local inviscid boundary models on the resident state.
     void UpdateBoundaryState( const BoundaryStateView & view );
 
@@ -588,6 +596,9 @@ public:
     void MarkResidentHostMirrorStale( const void * cacheKey );
 
 private:
+    // Set by RequestResidentStatusCheck(); consumed by
+    // FlushRequestedResidentStatus() at the next point that already drains.
+    bool statusCheckPending_ = false;
     DeviceBuffer< Real > qLeft_;
     DeviceBuffer< Real > qRight_;
     DeviceBuffer< Real > xNormal_;

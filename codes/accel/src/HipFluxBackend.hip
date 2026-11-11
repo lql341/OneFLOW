@@ -3196,6 +3196,24 @@ void HipFluxBackend::ScaleCurrentResidual(
     storage.residualMetricsValid = true;
 }
 
+void HipFluxBackend::RequestResidentStatusCheck()
+{
+    // The read itself is a blocking device->host transfer, i.e. a full queue
+    // drain.  Doing it at the end of the macro step means the driver has to
+    // empty a queue that nothing else needs to wait for.  Record the request
+    // and let the host-staged interface pack (which already drains for its own
+    // copy) consume it, so the check keeps its per-step cadence without paying
+    // a second drain.
+    statusCheckPending_ = true;
+}
+
+void HipFluxBackend::FlushRequestedResidentStatus()
+{
+    if ( ! statusCheckPending_ ) return;
+    statusCheckPending_ = false;
+    CheckResidentStatus();
+}
+
 void HipFluxBackend::CheckResidentStatus()
 {
     // Only bound states carry the flags; the fallback storage is used by the
@@ -3578,6 +3596,10 @@ BoundaryBufferView HipFluxBackend::PackBoundary(
     if ( mode == BoundaryTransferMode::DeviceDirect )
     {
         HipDrain( "boundary pack kernel synchronize" );
+        // Same one-shot consume as the host-staged path below: the pending
+        // status read is guarded by its own flag, so only the first endpoint
+        // after a macro step pays for it.
+        FlushRequestedResidentStatus();
         return {
             boundary.values.Data(),
             valueCount,
@@ -3590,6 +3612,9 @@ BoundaryBufferView HipFluxBackend::PackBoundary(
     {
         boundary.values.CopyToHost( boundary.hostValues.data(), valueCount );
     }
+    // The pack copy above drained the queue, so a status read here costs a
+    // four-byte transfer on an idle device instead of a full drain.
+    FlushRequestedResidentStatus();
     return {
         boundary.hostValues.data(),
         valueCount,

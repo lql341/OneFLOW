@@ -121,11 +121,20 @@ void NsResidentMacroStep()
 
 #ifdef ONEFLOW_ENABLE_HIP
     // With ONEFLOW_HIP_DEFER_STATUS=1 the non-physical/non-finite flags stay on
-    // the device while the stages run; check them once here instead of paying a
-    // blocking 4-byte round trip after every stage.
+    // the device while the stages run.  The check is requested here and
+    // consumed by the first host-staged interface pack, which drains the queue
+    // for its own copy; a configuration without interfaces falls back to the
+    // blocking read so the per-step cadence is preserved either way.
     if ( HipStatusCheckDeferred() )
     {
-        HipFluxBackend::Shared().CheckResidentStatus();
+        if ( ZoneState::nZones > 1 && ! DiagNoCommunication() )
+        {
+            HipFluxBackend::Shared().RequestResidentStatusCheck();
+        }
+        else
+        {
+            HipFluxBackend::Shared().CheckResidentStatus();
+        }
     }
 #endif
 }

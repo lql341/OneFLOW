@@ -312,6 +312,14 @@ void ExchangeHipInterfaceQ(
         && GpuAwareMpiRequested()
         && GpuAwareMpiConfirmed();
 
+    // Both sides of a same-rank exchange live in this process and share one
+    // device context, so the halo can travel device-to-device.  Routing it
+    // through host staging cost a synchronous D2H, a std::copy and a H2D per
+    // endpoint, plus an MPI self-send for the length exchange; none of that
+    // moves data that leaves the process.
+    const bool localPair = isSource && isTarget && sourceRank == targetRank;
+    const bool useDeviceStaged = useDeviceDirect || localPair;
+
     if ( sourceRank != targetRank
          && GpuAwareMpiRequested()
          && ! GpuAwareMpiConfirmed() )
@@ -442,7 +450,7 @@ void ExchangeHipInterfaceQ(
         ScopedHostTimer host_packTimer( "interface_pack" );
         send = backend.PackBoundary(
             sourceKey, sourceEndpoint, nEquations,
-            useDeviceDirect
+            useDeviceStaged
                 ? BoundaryTransferMode::DeviceDirect
                 : BoundaryTransferMode::HostStaged,
             sourceEndpointKey );
@@ -461,13 +469,13 @@ void ExchangeHipInterfaceQ(
         ScopedHostTimer host_packTimer( "interface_pack" );
         receive = backend.PrepareBoundaryReceive(
             targetKey, targetEndpoint, nEquations,
-            useDeviceDirect
+            useDeviceStaged
                 ? BoundaryTransferMode::DeviceDirect
                 : BoundaryTransferMode::HostStaged,
             targetEndpointKey );
     }
 
-    const BoundaryTransferMode transferMode = useDeviceDirect
+    const BoundaryTransferMode transferMode = useDeviceStaged
         ? BoundaryTransferMode::DeviceDirect
         : BoundaryTransferMode::HostStaged;
     if ( isSource )
@@ -500,7 +508,18 @@ void ExchangeHipInterfaceQ(
         int sendCount = isSource
             ? static_cast< int >( send.valueCount ) : 0;
         int payloadCount = 0;
-        if ( ! validated )
+        if ( localPair )
+        {
+            // Both endpoints are in this process: the length check is a plain
+            // comparison, so skip the MPI self-send that only re-derived it.
+            if ( sendCount != static_cast< int >( receive.valueCount ) )
+            {
+                throw std::runtime_error(
+                    "local HIP interface exchange value count mismatch" );
+            }
+            payloadCount = sendCount;
+        }
+        else if ( ! validated )
         {
             HXSwapData( &sendCount, 1, sourceRank, targetRank, tagBase );
             if ( isTarget )
@@ -538,18 +557,34 @@ void ExchangeHipInterfaceQ(
 
         if ( isSource && isTarget )
         {
-            // Same-rank exchanges remain host-staged.  Device pointers are not
-            // valid inputs to std::copy, and the host path is deterministic for
-            // the local multi-zone case.
             if ( send.valueCount != receive.valueCount )
             {
                 throw std::runtime_error(
                     "local HIP interface exchange value count mismatch" );
             }
-            std::copy(
-                send.values,
-                send.values + send.valueCount,
-                receive.values );
+            if ( useDeviceStaged )
+            {
+                // Same context, same layout: one device-to-device copy.
+                if ( payloadCount > 0 )
+                {
+                    AccelRuntime::Instance().Backend().Copy(
+                        receive.values,
+                        send.values,
+                        static_cast< std::size_t >( payloadCount )
+                            * sizeof( Real ),
+                        AccelCopyKind::DeviceToDevice );
+                }
+            }
+            else
+            {
+                // Same-rank exchanges remain host-staged.  Device pointers are
+                // not valid inputs to std::copy, and the host path is
+                // deterministic for the local multi-zone case.
+                std::copy(
+                    send.values,
+                    send.values + send.valueCount,
+                    receive.values );
+            }
         }
         else
         {
@@ -580,7 +615,7 @@ void ExchangeHipInterfaceQ(
         ScopedHostTimer host_unpackTimer( "interface_unpack" );
         backend.UnpackBoundary(
             targetKey, targetEndpoint, nEquations,
-            useDeviceDirect
+            useDeviceStaged
                 ? BoundaryTransferMode::DeviceDirect
                 : BoundaryTransferMode::HostStaged,
             targetEndpointKey );
