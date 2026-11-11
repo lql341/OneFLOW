@@ -43,6 +43,13 @@ is retained. This slice changes documentation only: no solver tests or cluster j
 and no Actions run/check-run was found in the fork for the inspected base. Next action: H1
 same-configuration, non-overlapping steady-step accounting, with <10% unexplained wall time.
 
+H1 implementation at base `c40fb3f7c` is Partial: opt-in `ScopedHostTimer` records
+inclusive/exclusive MG-root wall scopes without adding HIP/MPI synchronization.
+The `.host.tsv` verifier checks ranks, iteration counts, closure and startup-corrected
+wall time. Local profiler CTest 5/5 and Python accounting/rank checks 4/4 each passed.
+The local solver and task_test builds passed. Target-node gates and measurements remain
+pending; no speedup is claimed.
+
 Do not improvise these:
 
 | Item | Value |

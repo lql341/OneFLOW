@@ -511,7 +511,7 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
 > 12%/24% 只是比值估算（§4.8b），不作为实测忙碌率。之前的 stage 分项包含入队与等待，
 > 不能解释成 GPU 时间；A2′（接口）和 A3（融合）降权，待 H1 结果重估。
 
-- [ ] **H1 host 侧每步账（当前主项，Planned）**：7.43−1.77≈5.7 ms 仅是跨测量相减的
+- [ ] **H1 host 侧每步账（当前主项，Partial）**：7.43−1.77≈5.7 ms 仅是跨测量相减的
       待解释差额，不能直接算作 host 计算。做法：在 `MG::SolveInnerIter` / `MG::WeakIter` /
       `MG::PreRelaxationCycle` / `MG::InnerProcess` 加计时域（`macro_*` 只覆盖宏步内部，
       外面这一段目前没有名字），把 host 部分拆成「宏步外循环」「任务派发/命令表」
@@ -519,6 +519,11 @@ GPU 执行时间。**因此 kernel 融合（A3）不是主杠杆；要动的是 
       不新增改变执行顺序的同步。验收：同配置、扣启动的稳态测量中，不重叠分项之和与
       墙钟差 <10%，各 rank 文件完整、无漏登记类别，并给出下一刀的位置；
       之后才谈把哪个循环下沉到设备（A4）。
+      **2026-11-11 Partial**：基于 `c40fb3f7c` 增加显式开启的 `ScopedHostTimer`，
+      仅记录 MG 根域内的 inclusive/exclusive 耗时，覆盖 MG、任务规划/执行、宏步与接口。
+      不新增同步或变更数值调用顺序。新增 `.host.tsv` 与 rank/步数/闭合/启动扣除校验工具；
+      本地 CTest `StageProfiler.*` 5/5、Python 归账与 rank 校验各 4/4。
+      本地主求解器与 task_test 已构建；集群正确性门禁、1000 步同节点归账尚待完成，H1 保持未勾选。
 - [ ] **H2 多卡 VMFault（blocker，先于一切多卡优化）**：16 zone/2 卡、8 rank/2 卡、2 rank/2 卡
       都在 `libgalaxyhip` + `hsa-runtime64` 里 `signal 6`，VMFault 追踪指向
       `GradientCopyBoundaryKernel`（gradient / leftCell / rightCell 三个指针）。8 rank/1 卡正常。

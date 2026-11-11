@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -47,6 +49,35 @@ std::unordered_map< int, TaskTotal > & TaskTotals()
 {
     static std::unordered_map< int, TaskTotal > totals;
     return totals;
+}
+
+struct HostTotal
+{
+    unsigned long long count = 0;
+    double inclusiveMs = 0.0;
+    double exclusiveMs = 0.0;
+};
+
+std::map< std::string, HostTotal > & HostTotals()
+{
+    static std::map< std::string, HostTotal > totals;
+    return totals;
+}
+
+unsigned long long & DroppedHostRecords()
+{
+    static unsigned long long count = 0;
+    return count;
+}
+
+bool HostAccountingEnabled()
+{
+    static const bool requested = []()
+    {
+        const char * value = std::getenv( "ONEFLOW_HOST_ACCOUNTING" );
+        return value != nullptr && std::strcmp( value, "1" ) == 0;
+    }();
+    return requested && StageProfiler::Enabled();
 }
 
 std::array< CategoryTotal, 85 > & Totals()
@@ -320,6 +351,69 @@ void StageProfiler::Flush()
         throw std::runtime_error(
             "failed while writing task breakdown file: " + taskPath );
     }
+
+    if ( HostAccountingEnabled() )
+    {
+        if ( DroppedHostRecords() != 0 )
+        {
+            throw std::runtime_error( "host accounting lost timer records" );
+        }
+        std::ofstream hostOutput( path + ".host.tsv" );
+        hostOutput << std::setprecision( 17 );
+        hostOutput << "scope\tcount\tinclusive_ms\texclusive_ms\n";
+        for ( const auto & entry : HostTotals() )
+        {
+            const HostTotal & total = entry.second;
+            hostOutput << entry.first << '\t' << total.count << '\t'
+                       << total.inclusiveMs << '\t' << total.exclusiveMs << '\n';
+        }
+        if ( ! hostOutput )
+        {
+            throw std::runtime_error( "cannot write host accounting file: " + path );
+        }
+    }
+}
+
+void StageProfiler::RecordHost( const char * scope, double inclusiveMs,
+                                double exclusiveMs ) noexcept
+{
+    std::lock_guard< std::mutex > lock( OutputMutex() );
+    try
+    {
+        HostTotal & total = HostTotals()[ scope ];
+        ++total.count;
+        total.inclusiveMs += inclusiveMs;
+        total.exclusiveMs += exclusiveMs;
+    }
+    catch ( ... )
+    {
+        ++DroppedHostRecords();
+    }
+}
+
+thread_local ScopedHostTimer * ScopedHostTimer::current_ = nullptr;
+
+ScopedHostTimer::ScopedHostTimer( const char * scope, bool root )
+    : scope_( scope )
+{
+    if ( ! HostAccountingEnabled() || scope == nullptr ) return;
+    // Initialization and final output are outside the steady solver root.
+    if ( current_ == nullptr && ! root ) return;
+    parent_ = current_;
+    active_ = true;
+    start_ = std::chrono::steady_clock::now();
+    current_ = this;
+}
+
+ScopedHostTimer::~ScopedHostTimer() noexcept
+{
+    if ( ! active_ ) return;
+    const auto end = std::chrono::steady_clock::now();
+    const std::chrono::duration< double, std::milli > elapsed = end - start_;
+    current_ = parent_;
+    if ( parent_ != nullptr ) parent_->childrenMs_ += elapsed.count();
+    StageProfiler::RecordHost( scope_, elapsed.count(),
+                              std::max( 0.0, elapsed.count() - childrenMs_ ) );
 }
 
 const char * StageProfiler::CategoryForTask( const std::string & taskName )

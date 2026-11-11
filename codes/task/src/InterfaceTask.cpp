@@ -384,6 +384,7 @@ void ExchangeHipInterfaceQ(
         if ( ! ( isSource && isTarget ) )
         {
             ScopedStageTimer readyTimer( "interface_ready" );
+            ScopedHostTimer host_readyTimer( "interface_ready" );
             HXSwapData(
                 & sourceReady, 1, sourceRank, targetRank, tagBase );
             HXSwapData(
@@ -432,11 +433,13 @@ void ExchangeHipInterfaceQ(
         ZoneState::zid = sourceZone;
         {
             ScopedStageTimer uploadTimer( "interface_upload" );
+            ScopedHostTimer host_uploadTimer( "interface_upload" );
             backend.UploadBoundaryState(
                 sourceKey, sourceGrid->nCells, sourceGrid->nBFaces,
                 nEquations, sourceComponents );
         }
         ScopedStageTimer packTimer( "interface_pack" );
+        ScopedHostTimer host_packTimer( "interface_pack" );
         send = backend.PackBoundary(
             sourceKey, sourceEndpoint, nEquations,
             useDeviceDirect
@@ -449,11 +452,13 @@ void ExchangeHipInterfaceQ(
         ZoneState::zid = targetZone;
         {
             ScopedStageTimer uploadTimer( "interface_upload" );
+            ScopedHostTimer host_uploadTimer( "interface_upload" );
             backend.UploadBoundaryState(
                 targetKey, targetGrid->nCells, targetGrid->nBFaces,
                 nEquations, targetComponents );
         }
         ScopedStageTimer packTimer( "interface_pack" );
+        ScopedHostTimer host_packTimer( "interface_pack" );
         receive = backend.PrepareBoundaryReceive(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
@@ -491,6 +496,7 @@ void ExchangeHipInterfaceQ(
 
     {
         ScopedStageTimer mpiTimer( "interface_mpi" );
+        ScopedHostTimer host_mpiTimer( "interface_mpi" );
         int sendCount = isSource
             ? static_cast< int >( send.valueCount ) : 0;
         int payloadCount = 0;
@@ -571,6 +577,7 @@ void ExchangeHipInterfaceQ(
     if ( isTarget )
     {
         ScopedStageTimer unpackTimer( "interface_unpack" );
+        ScopedHostTimer host_unpackTimer( "interface_unpack" );
         backend.UnpackBoundary(
             targetKey, targetEndpoint, nEquations,
             useDeviceDirect
@@ -689,6 +696,7 @@ void CUpdateInterface::Run()
     if ( trackResidentHalo )
     {
         ScopedStageTimer ghostTimer( "interface_ghost_sync" );
+        ScopedHostTimer host_ghostTimer( "interface_ghost_sync" );
         SyncLocalResidentGhostStates();
     }
 #endif
@@ -716,11 +724,13 @@ void CUpdateInterface::SwapInterfaceData(
             ZoneState::rzid = jZone;
 
             ScopedStageTimer sendTimer( "interface_host_send" );
+            ScopedHostTimer host_sendTimer( "interface_host_send" );
             this->sendAction();
         }
 
         {
             ScopedStageTimer hostMpiTimer( "interface_host_mpi" );
+            ScopedHostTimer host_hostMpiTimer( "interface_host_mpi" );
             HXSwapData( ActionState::dataBook, sPid, rPid );
         }
 
@@ -730,6 +740,7 @@ void CUpdateInterface::SwapInterfaceData(
             ZoneState::szid = iZone;
 
             ScopedStageTimer recvTimer( "interface_host_recv" );
+            ScopedHostTimer host_recvTimer( "interface_host_recv" );
             this->recvAction();
         }
     }

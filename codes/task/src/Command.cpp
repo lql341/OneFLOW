@@ -22,6 +22,7 @@ License
 #include "Command.h"
 #include "Task.h"
 #include "TaskState.h"
+#include "StageProfiler.h"
 
 #include "DataBook.h"
 #include "FileInfo.h"
@@ -238,6 +239,7 @@ void CMD::Clear()
 
 void CMD::ExecuteCmd( SimuContext * context )
 {
+    ScopedHostTimer timer( "task_execute" );
     if ( CMD::commandOwners == nullptr )
     {
         return;

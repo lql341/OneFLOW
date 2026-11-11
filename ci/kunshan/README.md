@@ -92,6 +92,38 @@ For an already partitioned multi-zone fixture, set `ONEFLOW_F2_STABILITY_PARTITI
 
 ## Execution
 
+### Opt-in MG host wall accounting (H1)
+
+Set `ONEFLOW_HOST_ACCOUNTING=1` together with
+`ONEFLOW_STAGE_BREAKDOWN_FILE=<evidence>/breakdown-%r.tsv`. Each rank writes an
+additional `.host.tsv` with `scope`, `count`, `inclusive_ms`, `exclusive_ms`.
+Accounting is limited to `MG::Run`; initialization and final pipeline output are
+outside that root. Existing stage/task TSV schemas remain unchanged.
+
+Exclusive times subtract instrumented child scopes, including nested task
+dispatch, so their sum closes to `mg_run`. They include HIP/MPI waits and are
+not CPU execution time or GPU occupancy. `task_execute` is task payload, not
+dispatch overhead. No additional synchronization is introduced. Timers are
+inactive unless both environment switches are set; the choice is cached per
+process. This path assumes the current serial solver dispatch thread.
+
+Compare identical 1-step and 1000-step cases after warmup, on the same allocation:
+
+```bash
+python3 ci/kunshan/summarize-host-accounting.py \
+  --pattern '<evidence>/long-*.tsv.host.tsv' \
+  --short-pattern '<evidence>/short-*.tsv.host.tsv' \
+  --ranks 8 --steps 1000 --short-steps 1 \
+  --wall-ms <long-wall-ms> --short-wall-ms <short-wall-ms> \
+  --output <evidence>/host-summary.json
+```
+
+The verifier checks rank completeness, actual iteration counts, finite durations,
+exclusive-time closure, and a <10% gap between startup-corrected wall time and
+the slowest rank's MG time. Preserve individual ranks; do not add their times.
+Interleave accounting on/off runs to measure instrumentation overhead. Validate
+the numerical gates with accounting enabled before interpreting this diagnostic.
+
 Run **OneFLOW Kunshan Regression** from the Actions page and select:
 
 - `cpu-serial`: the five cases in `test/suites/cpu-serial.txt`; the job runs both normal (`1e-8`) and strict (`1e-15`) residual profiles;

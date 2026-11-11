@@ -58,6 +58,7 @@ bool NsResidentMacroStepSupported()
 
 void NsResidentMacroStep()
 {
+    ScopedHostTimer hostTimer( "resident_macrostep" );
     StringField unused;
 
     // CALC_TIME_STEP: local spectral radius and time step for this step.
@@ -67,6 +68,7 @@ void NsResidentMacroStep()
     // base accounting can name the segment instead of inferring it.
     {
         ScopedStageTimer timer( "macro_time_step" );
+        ScopedHostTimer hostTimer( "macro_time_step" );
         UTimeStep timeStep;
         timeStep.CalcTimeStep();
     }
@@ -80,23 +82,27 @@ void NsResidentMacroStep()
         // UPDATE_RESIDUALS: gradient, reconstruction, fused face flux, RHS.
         {
             ScopedStageTimer timer( "macro_update_residuals" );
+            ScopedHostTimer hostTimer( "macro_update_residuals" );
             NsUpdateResiduals( unused );
         }
         // CALC_LHS: scale the resident residual by dt/vol*rkcoef.
         {
             ScopedStageTimer timer( "macro_calc_lhs" );
+            ScopedHostTimer hostTimer( "macro_calc_lhs" );
             ULhs lhs;
             lhs.CalcLHS( NS_SOLVER );
         }
         // UPDATE_FLOWFIELD: primitive state update on the device.
         {
             ScopedStageTimer timer( "macro_update_flowfield" );
+            ScopedHostTimer hostTimer( "macro_update_flowfield" );
             UNsUpdate update;
             update.UpdateFlowField( NS_SOLVER );
         }
         // CALC_BOUNDARY: local boundary models on the resident state.
         {
             ScopedStageTimer timer( "macro_calc_boundary" );
+            ScopedHostTimer hostTimer( "macro_calc_boundary" );
             NsCalcBoundary( unused );
         }
         // UPDATE_INTERFACE_DATA: the explicit stage must publish updated
@@ -107,6 +113,7 @@ void NsResidentMacroStep()
         if ( ZoneState::nZones > 1 && ! DiagNoCommunication() )
         {
             ScopedStageTimer timer( "macro_interface" );
+            ScopedHostTimer hostTimer( "macro_interface" );
             SingleSolverSingleGridTask( kUpdateInterfaceDataTaskName );
         }
     }
