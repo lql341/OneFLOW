@@ -270,6 +270,16 @@ inline bool DiagNoCommunication()
     return value != nullptr && value[ 0 ] == '1';
 }
 
+// A same-rank interface pair lives in one process and one device context, so
+// its halo can travel device-to-device instead of through host staging plus an
+// MPI self-send. Enabled by default; =0 restores the host-staged local path
+// for A/B measurement.
+inline bool HipLocalDeviceExchangeEnabled()
+{
+    const char * value = CachedEnv( "ONEFLOW_HIP_LOCAL_DEVICE_EXCHANGE" );
+    return value == nullptr || value[ 0 ] != '0';
+}
+
 // Host history levels (q1/q2 and their residual counterparts) exist for the
 // dual-time scheme and for the restart stream. With the device-authoritative
 // explicit chain neither reads them during stepping: dual time is excluded by

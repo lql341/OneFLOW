@@ -317,8 +317,10 @@ void ExchangeHipInterfaceQ(
     // through host staging cost a synchronous D2H, a std::copy and a H2D per
     // endpoint, plus an MPI self-send for the length exchange; none of that
     // moves data that leaves the process.
-    const bool localPair = isSource && isTarget && sourceRank == targetRank;
-    const bool useDeviceStaged = useDeviceDirect || localPair;
+    const bool localSameRank = isSource && isTarget && sourceRank == targetRank;
+    const bool localDevice =
+        localSameRank && HipLocalDeviceExchangeEnabled();
+    const bool useDeviceStaged = useDeviceDirect || localDevice;
 
     if ( sourceRank != targetRank
          && GpuAwareMpiRequested()
@@ -508,7 +510,7 @@ void ExchangeHipInterfaceQ(
         int sendCount = isSource
             ? static_cast< int >( send.valueCount ) : 0;
         int payloadCount = 0;
-        if ( localPair )
+        if ( localDevice )
         {
             // Both endpoints are in this process: the length check is a plain
             // comparison, so skip the MPI self-send that only re-derived it.
