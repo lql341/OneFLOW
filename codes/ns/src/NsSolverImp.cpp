@@ -378,11 +378,17 @@ void NsImplicitMethod( StringField & data )
 
 namespace {
 
-// The explicit RK path exchanges the interface at the end of every stage, so
-// q and its resident device ghosts are already current when the outer
-// iteration reaches the post-process hook.  Repeating the upload/exchange/
-// download round trip here costs a full interface pass per step.  Opt in with
-// ONEFLOW_SKIP_POST_INTERFACE=1 until the trace and residual gates have run.
+// The explicit RK path exchanges the interface at the end of every stage, but
+// only the MPI move: NsResidentMacroStep dispatches kUpdateInterfaceDataTaskName
+// alone, while the q pack (kUploadInterfaceDataTaskName) and the ghost unpack
+// (kDownloadInterfaceDataTaskName) run once per step from here.  Reusing the
+// pack buffer across the stages is what produces the documented one-step halo
+// lag, and the CPU oracle has the same order.  Skipping this round therefore
+// does not "remove one redundant exchange": it stops refreshing the interface
+// buffer entirely, the ghosts freeze, and the interface contribution becomes a
+// function of how the mesh was partitioned.  Measured: 200-step cross-backend
+// residual drifts to 5.54e-07 (aero 4.0e-05).  Keep it as an A/B probe for
+// timing only, never as a production setting.
 bool SkipRedundantPostInterface()
 {
     const char * value = std::getenv( "ONEFLOW_SKIP_POST_INTERFACE" );

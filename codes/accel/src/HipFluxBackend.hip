@@ -3610,7 +3610,15 @@ BoundaryBufferView HipFluxBackend::PackBoundary(
         boundary.hostValues.resize( valueCount );
     if ( valueCount != 0 )
     {
-        boundary.values.CopyToHost( boundary.hostValues.data(), valueCount );
+        // Pageable host memory stages through a driver buffer and measured at
+        // roughly 200 MB/s on this platform, which made this per-endpoint copy
+        // dominate the interface round.  Transfer into the shared pinned
+        // staging block and memcpy the short distance on the host instead; the
+        // endpoint buffer keeps its own ownership and lifetime.
+        Real * staging = LocalPinnedStaging().Get( valueCount );
+        boundary.values.CopyToHost( staging, valueCount );
+        std::copy(
+            staging, staging + valueCount, boundary.hostValues.begin() );
     }
     // The pack copy above drained the queue, so a status read here costs a
     // four-byte transfer on an idle device instead of a full drain.
@@ -3903,8 +3911,11 @@ void HipFluxBackend::UnpackBoundary(
         }
         if ( valueCount != 0 )
         {
-            boundary.values.CopyFromHost(
-                boundary.hostValues.data(), valueCount );
+            Real * staging = LocalPinnedStaging().Get( valueCount );
+            std::copy(
+                boundary.hostValues.begin(), boundary.hostValues.end(),
+                staging );
+            boundary.values.CopyFromHost( staging, valueCount );
         }
     }
 
