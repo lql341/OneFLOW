@@ -44,7 +44,8 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 - [x] **H2（已完成，范围见 §5.2）**：根因是延迟状态标志的惰性分配，与卡数无关；
       多卡数值路径已复验（HIP vs CPU 残差逐位一致）。**完整门禁尚未跑**，扩展性数字仍待重测。
 - [x] **扩展性定性（2026-11-14）**：每 rank cell 数决定扩展性；核心可扩、交换不可扩；最优 2 卡；弱扩展迭代层持平（§5.5）
-- [ ] **网格加密能力（下一主线）**：`.ofl` 格式已解码（六面体），需自写 `refine_ofl.py`（§5.5）
+- [x] **网格加密能力（2026-11-14 完成）**：`ci/kunshan/refine_ofl.py` 六面体 2×2×2 加密；
+      M6 → 2,359,296 cell，体积守恒 5e-15，单 zone XB 3.07e-17，64-zone XB 全绿（§5.6）
 - [ ] **A4**：HIP `Advance` 接管 RK 循环；通过数值门禁并测量端到端收益。
 - [ ] A2′ / A3（降权）；原 A2 每步一次交换方案暂缓，不直接删除 post 轮。
 - [ ] B1：补 Roe 多区 trace 与对应 CPU 五算例证据；HLLC/AUSM 后续单列能力。
@@ -663,12 +664,14 @@ pack 消费”，不再为 4 字节单独排空队列。
       8000，`nIFaces` 由块位置决定（1200/1600/…/2400），不再随 METIS 随机波动。
       验收前半（cell 相同）已达成；**后半（用它重跑 CPU/DCU 弱扩展）待专门分配**：
       本日样本跨度 21–31%，无法下结论，见 §4.8b
-- [ ] **D1b 等 halo 弱扩展**：只在整节点配置间比（32→64→128，或 4×4×4→8×8×8），
-      表里带 `nIFaces/rank` 与频率说明；验收：给出“扣除 halo 后的每 cell 计算时间”是常数
-- [ ] **D1 合法 fixture**：≥1M cell 的分区网格。**2026-11-14 定位：唯一缺口是仓库无网格加密/导出能力**
-      （`IsSupportedConversion` 中 `OneFLOW` 只在 target 位；无细化工具；集群无 gmsh）。
-      `.ofl` 二进制布局已实测确认、M6 为六面体，原生加密方案见 §5.5。
-      拿到之前 D2/D3 只做只读评估、不出数字。历史 1/2/4 卡弱扩展记录受 H2 阻塞的结论已由 H2 修复解除，
+- [x] **D1b 等 halo 弱扩展（部分，2026-11-14）**：M6 首个固定 36,864 cell/rank 弱扩展点
+      已测（8 rank/1 卡 vs 64 rank/8 卡，同作业交错中位，17.0 → 22.2 ms/步，§5.6）；
+      但两侧 nIFaces/rank 不等（METIS 4.4k vs 6.3k，+43%），“扣除 halo 后每 cell 计算时间
+      为常数”的验收还需 partition_type=2 的等块分区版本；只在整节点配置间比的要求未满足（64 rank 跨 2 节点）
+- [x] **D1 合法 fixture**（2026-11-14 完成）：`fixtures/m6-refined-r1/`（集群）登记 2,359,296 cell
+      的 M6 加密网格及 8/32/64 zone 分区（METIS，manifest 验证通过）；单 zone XB 残差 3.07e-17、
+      64-zone XB 全绿、加密 vs 原 CPU 气动力一致到 0.2%。制作链路见 §5.6，工具
+      `ci/kunshan/refine_ofl.py`。拿到之前 D2/D3 只做只读评估、不出数字。历史 1/2/4 卡弱扩展记录受 H2 阻塞的结论已由 H2 修复解除，
       但那些数字仍是小子域读数（每 rank 36,864 cell），不能当弱扩展证据
 - [ ] **B4 SA**（依赖 B3）
 - [ ] **B5 LU-SGS**（依赖 A4）
@@ -758,9 +761,54 @@ nBFaces=7,680 / nIFaces=4,785`，**114,432 个面全部是四边形 → 六面�
    命令级要 `CMD::ExecuteCmd` 里补（`727c1ed75` 已做，未开 breakdown 时零开销）。
 8. **单 zone 的 `m6wing.ofl` 是旧格式**（zone 头多 2 个 int），当前 reader/writer 用 3-int 布局；
    做加密请以 `m6wing-8.ofl` 为准。
+   **修正（2026-11-14）**：仓库内 `test/cfd/m6wingroe_sa/grid/m6wing.ofl` 逐字节闭合解析就是
+   当前 3-int 布局（nLength 精确、EOF 零剩余）；加密工具已直接读它并通过全部自检，
+   无需迁移到 8-zone 文件。
 
 **不要做**：靠加卡提升（§4.8b 已说明）；"一 rank 多 zone"（A1.8 实测更慢）；
 继续端到端盲试（曾因读数噪声或归因错误返工三次）。
+
+#### 5.6 交付 2026-11-14：网格加密完成，M6 DCU 弱扩展已测
+
+**基线**：`dev @ 727c1ed75` 部署树（本轮无 C++ 改动，未重建）。工具与作业脚本：
+`ci/kunshan/refine_ofl.py`（仓库）+ 集群 `scripts/of-fixture-{refine,validate,partition}.sh`、
+`of-probe-weakscale.sh`。证据（集群 `evidence/`，jobid 链）：
+
+| 步骤 | jobid | 结果 |
+|---|---|---|
+| 加密 + 自检 | `fixture/128020525` | `REFINE_ALL_PASS`：V=2,405,665 / F=7,123,968 / C=2,359,296 / nB=92,160，体积守恒 rel 5.0e-15，重读全结构校验过 |
+| 分区 + manifest | `fixture/128020818` | METIS（type 1）8/32/64 zone，`MULTIZONE_FIXTURE_PASS`×3；64 zone：cells/rank 36,458–37,076（±0.9%），nIFaces/rank 4,211–8,330（均 6,292） |
+| 单 zone 数值 | `fixture/128021352` | 原/加密网格 XB 残差 1.16e-17 / 3.07e-17；加密 vs 原 CPU 气动力一致 0.2%；aero 差 8e-3 为单 zone HIP 既有缺陷（见坑 41），非网格问题 |
+| 弱扩展 + 64-zone XB | `probe/128021420` | XB（64 rank，残差+aero+flow）全绿后测时序，18 次运行同作业交错 |
+
+**M6 DCU 弱扩展结论（36,864 cell/rank，8 ranks/卡，同作业交错中位，1000 步 wall/1000）**：
+
+| 口径 | A：原网格（294,912 cell） | B：加密网格（2,359,296 cell） | 弱扩展代价 |
+|---|---|---|---|
+| 36,864 cell/rank | 8 rank / 1 卡：**17.0 ms/步** | 64 rank / 8 卡：**22.2 ms/步** | **+31%（总规模 ×8）** |
+
+分项归因（rank0）：`interface_mpi` 2.12 → 7.70 ms/步（3.63×，+5.6 ms），
+恰覆盖整步 +5.2 ms；计算段（rhs_inviscid/gradient/macro_update_residuals）反而下降。
+**弱扩展代价全部在接口交换**，与 §5.5 强扩展定性一致（跨节点延迟 + METIS halo +43%）。
+
+同作业的加密网格强扩展（固定 2,359,296 cell）：1→4→8 卡 = 105.45/33.07/22.21 ms/步，
+加速比 1.0/3.19/4.75（8 卡效率 59%）。每卡吞吐：8 rank×294,912/rank/卡 = 22.4 kcell/ms
+vs 64 rank×36,864/rank = 13.3 kcell/ms —— **每 rank cell 数大的配置每卡吞吐高 1.7×**，
+与“每 rank cell 数决定”的结论在弱轴上再次成立。
+
+73,728/rank（4 rank/1 卡 vs 32 rank/4 卡）与 294,912/rank（1 rank 独占卡 vs 8 rank/卡）
+两个系列因 A/B 两侧卡内 rank 密度不等，不能作弱扩展结论，只作参考
+（17.85→33.07、22.97→105.45 ms/步）。
+
+**下一刀候选（按归因排序）**：
+1. **`partition_type = 2`（结构化等块）重切 64 zone**：METIS 的 nIFaces/rank +43% 直接
+   抬高 interface_mpi；D1a 在 32 rank 曾收 −4.4%，64 rank 跨 2 节点时 halo 占比更大；
+2. **A4**：设备驻留宏步循环，减少每步 host 往返与交换轮次（既有下一主线）；
+3. **大网格用更粗的 rank/卡 packing**：22.4 vs 13.3 kcell/ms/卡说明 8 ranks/卡对大
+   per-rank 网格不是最优（本口径结论，非生产建议）。
+
+**本轮新坑**：41（单 zone HIP aero 读陈旧 host 梯度）、`--cpus`/`--memory` 为每节点值
+（见 handoff §5）。
 
 ### 6. 关键开关与脚本
 

@@ -1,7 +1,8 @@
 # OneFLOW 交接（living）
 
-> 最后核对：2026-11-14；工作分支 `dev @ 727c1ed75`，数值门禁基准仍为 `6f7a49e3d`。
-> 本轮结论：H2 已解；扩展性定性为「每 rank cell 数决定」；下一主线是网格加密。
+> 最后核对：2026-11-14；工作分支 `dev`（本轮新增提交见 §4），数值门禁基准仍为 `6f7a49e3d`。
+> 本轮结论：网格加密已交付（2,359,296 cell，XB 全绿）；M6 DCU 弱扩展已测
+> （36,864 cell/rank，1→8 卡 +31%，全部在 interface_mpi）；下一刀见 todo §5.6。
 > H2 根因与修复：`d41650729`（已有集群构建与多卡数值对照，**未跑完整门禁**）。
 
 > **这是唯一的交接文档，就地更新，不再按日期新建。**
@@ -105,9 +106,23 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**修订与证据边界**：工作分支 `dev @ 727c1ed75`（2026-11-14）。数值门禁基准仍为
-`6f7a49e3d`；本轮 6 个提交均已在集群构建，XB 门禁逐位不变（`2.331035e-18`）。
-接手前核对真实 HEAD 与 `src/REVISION`，不以文档修订号代替运行证据。
+**修订与证据边界**：工作分支 `dev`（本轮新增：`ci/kunshan/refine_ofl.py` + 文档提交，见
+`git log`）。集群部署树仍为 `727c1ed75`（本轮无 C++ 改动，未重建）；加密工具本轮从
+`snapshots/` 暂存运行，下轮快照随 dev 提交进入 `src/OneFLOW/ci/kunshan/`。数值门禁基准
+仍为 `6f7a49e3d`；接手前核对真实 HEAD 与 `src/REVISION`。
+
+**本轮（2026-11-14 下午）交付：网格加密 + M6 DCU 弱扩展测量**。全部数字与证据链在
+todo §5.6，要点：M6 单 zone `.ofl` 加密至 2,359,296 cell（体积守恒 5e-15）；METIS 分区
+8/32/64 zone 带 manifest；单 zone XB 残差 3.07e-17；64-zone XB 全绿；加密 vs 原
+CPU 气动力一致 0.2%。弱扩展（36,864 cell/rank，8 ranks/卡，同作业交错）：1 卡 17.0 →
+8 卡 22.2 ms/步（+31%），归因全部在 `interface_mpi`（2.12→7.70 ms/步）。
+新 fixture：集群 `fixtures/m6-refined-r1/`（只读登记）。
+
+**下一刀（按归因排序，详见 todo §5.6）**：① `partition_type=2` 重切 64 zone 压 halo；
+② A4 设备驻留宏步循环；③ 大 per-rank 网格的 rank/卡 packing。另有一个独立小修候选：
+坑 41（单 zone HIP aero）——`UNsInvFlux::CalcInvFace` 的 `mirrorBoundaryGradient`
+依赖 `packedExchange`（要求 nZones>1），单 zone 时 host 梯度镜像从不更新，aero 力积分
+读到陈旧梯度；多 zone 不受影响。修复需过单 zone XB + 8-zone 门禁 + paired。
 
 **H1 当前交付**：新增显式开启的 MG 根域 inclusive/exclusive wall accounting，
 保留原 stage/task TSV，另写 `.host.tsv`；修复两个旧漏登记类别。集群 HIP/计时契约、
@@ -388,6 +403,27 @@ M6 为**六面体**（面全为四边形），8 zone / 294,912 cell / 306,577 no
     朴素解析会读出 `nNodes = 文件大小−20` 这种值）；当前 reader/writer 与 `m6wing-8.ofl`
     用 3-int 布局（`zoneBytes, ?, nNodes, nFaces, nCells`，实测见 todo §5.5）。
     做网格工具以 8-zone 文件为准。
+    **修正（2026-11-14）**：仓库当前 `test/cfd/m6wingroe_sa/grid/m6wing.ofl` 逐字节闭合
+    解析就是 3-int 布局（nLength 精确、EOF 零剩余、nIFaces=0）；`refine_ofl.py` 直接读它
+    通过全部自检。该坑里的“旧格式”描述不适用于仓库现行副本，保留作历史记录。
+41. **单 zone HIP 的 aero 力积分读陈旧 host 梯度（2026-11-14 定位）**：
+    `UNsInvFlux::CalcInvFace` 里 `mirrorBoundaryGradient` 以 `packedExchange` 为前提，
+    而 `packedExchange` 要求 `crossZoneGhostGradient`（`nZones>1 || nLocal>1`）。
+    单 zone/单 rank 时三个开关全 false，`CalcGradHip` 既不下载也不镜像梯度 →
+    host `dqdx/dqdy/dqdz` 停在初值，`AeroForceTask` 的壁面压力重构
+    `wp = q[lc] + dqdx·dx + …` 退化为格心值 → HIP aero 与 CPU 差 ~8%
+    （cl 8.2e-3），而残差 1e-17 逐位一致（残差不走 host 梯度）。**多 zone 不受影响**
+    （镜像激活，XB aero=0.0 历史仍成立）。单 zone XB 门禁因此只能拿残差当判据；
+    修复方向：`mirrorBoundaryGradient` 改为“存在 host 读者即镜像”，不依赖跨 zone 前提，
+    修复后需补单 zone XB + 8-zone 门禁 + paired。
+42. **OpenAPI 提交的 `--cpus`/`--memory` 是每节点值（2026-11-14）**：`--nodes 2 --cpus 64`
+    会被拒（`max_cpus_per_node=32`），`--memory` 同理按节点算（128G/节点直接报
+    “Memory specification can not be satisfied”）。64 rank 的作业用
+    `--nodes 2 --cpus 32 --memory 60G`。上传覆盖同名文件要 `--cover`；偶发超时原样重试。
+43. **弱扩展测量的 A/B 必须同卡内 rank 密度（2026-11-14）**：固定 cell/rank 的 A/B 配对
+    若一侧 1 rank 独占卡、另一侧 8 ranks/卡，差异主要来自卡内分时而非扩展性
+    （本轮 294,912/rank 系列因此只能作参考）。设计系列时保证两侧都是 8 ranks/卡，
+    或从 16 rank/2 卡起（前一轮立方体弱扩展即从 2 卡起）。
 
 ## 6. 本文维护规则
 
