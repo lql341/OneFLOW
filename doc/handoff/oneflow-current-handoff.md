@@ -1,6 +1,7 @@
 # OneFLOW 交接（living）
 
-> 最后核对：2026-11-11；本轮起点 `1d283c31a`，已验证求解器修订 `6f7a49e3d`。
+> 最后核对：2026-11-14；工作分支 `dev @ 727c1ed75`，数值门禁基准仍为 `6f7a49e3d`。
+> 本轮结论：H2 已解；扩展性定性为「每 rank cell 数决定」；下一主线是网格加密。
 > H2 根因与修复：`d41650729`（已有集群构建与多卡数值对照，**未跑完整门禁**）。
 
 > **这是唯一的交接文档，就地更新，不再按日期新建。**
@@ -104,11 +105,9 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**修订与证据边界**：上游基线 `f36f0c6b3` 已合入 dev；本轮求解器构建、
-数值门禁和归账对应 **`6f7a49e3d`**，集群 `src/REVISION` 也指向该修订。
-后续 `fb246bb3a` 只补几何测试库的结构化分区链接依赖，与该修订的
-`codes/`、`cmake/`、`system/`、`test/` 及根 CMake 无差异；其 Linux Build 已通过。
-后续文档提交不等于重新构建求解器，接手时核对真实 HEAD 与远端版本标记。
+**修订与证据边界**：工作分支 `dev @ 727c1ed75`（2026-11-14）。数值门禁基准仍为
+`6f7a49e3d`；本轮 6 个提交均已在集群构建，XB 门禁逐位不变（`2.331035e-18`）。
+接手前核对真实 HEAD 与 `src/REVISION`，不以文档修订号代替运行证据。
 
 **H1 当前交付**：新增显式开启的 MG 根域 inclusive/exclusive wall accounting，
 保留原 stage/task TSV，另写 `.host.tsv`；修复两个旧漏登记类别。集群 HIP/计时契约、
@@ -122,17 +121,23 @@ trace、200 步 XB、CPU normal/strict、50 步稳定性和五对 1000 步归账
 CPU 侧 step 2/13 就非物理，因此它**不具备 oracle 资格**。固定 `CFL=0.01` 后，
 多卡 HIP（2 节点/2 DCU）与 CPU 残差逐位一致。
 
-**下一步（只开一条主线）**
+**扩展性已定性（2026-11-14）**：由每 rank 的 cell 数决定，不由卡数决定。
+M6 强扩展 1/2/4/8/16/32 卡 = 11.70/**7.60**/9.87/18.73/24.08/30.62 ms/步（最优 2 卡）；
+立方体 884k 强扩展同形状；立方体弱扩展（110,592 cell/rank）2→32 卡迭代 13.78→13.68。
+求解器核心 1→32 卡可扩（M6 2.5×、立方体 6.0×），差额全在接口交换。
+经验阈值：每 rank ≳5 万 cell 正常，≈1 万开始变差，<5 千明显变差。
+详细数据见 todo §5.5。
 
-1. **先在 `d41650729` 上补完 H2 遗留门禁**：集群 `src/` 仍是 `113f00a41`，需重新打包上传、
-   重编 `build/app`，再跑 HIP 契约 + CPU 五算例（normal/strict）+ 3 步 trace + 200 步 XB。
-   没有这轮门禁，A4 的数值回归就没有干净基线。
-2. **然后 A4**：H1 已排除 MG 外循环与任务规划/派发是数毫秒大项。候选是
-   `NsResidentMacroStep` 尾部 `CheckResidentStatus()` 的阻塞读取/清零，以及 RHS
-   `swap_download` 的队列等待。先区分设备工作与 host 等待，保持每步状态检查
-   和 post 轮 lag，再确定减少同步/传输的最小切片；不以删派发直接推算收益。
-3. **扩展性数字需重测**：历史 1/2/4 卡弱扩展可能都落在同一个空指针路径上，
-   不能直接引用；须用合法 fixture（D1）在修复后的修订上重跑。
+**下一步（只开一条主线）：原生六面体加密**
+
+仓库无网格加密/导出能力（`IsSupportedConversion` 里 `OneFLOW` 只作为 target；无细化工具；
+集群无 gmsh），所以 M6 弱扩展和 D1 都卡在这里。`.ofl` 二进制布局已实测确认（todo §5.5 有字段表），
+M6 为**六面体**（面全为四边形），8 zone / 294,912 cell / 306,577 node。
+
+写 `refine_ofl.py`：读 8-zone `.ofl` → 每个 hex 剖 8 个 → 棱/面/体心去重、边界与 interface 保持 → 按同格式写回。
+预期 2,359,296 cell，**仍是单一连通算例**。验证顺序：解析自检 → 单 zone 200 步比残差 → 分区成 64 zone 测弱扩展。
+
+其余已停：A4（版图已变，优先级下降）、通信优化（7%）、halo 均衡（r=−0.007 无相关）、kernel 融合（依赖阻塞）。
 
 原始证据与分析脚本留在本轮固定 category 目录。清理可再生成的 trace/case 大文件后，
 保留每 rank breakdown、汇总、日志与复现脚本；继续使用唯一 `build/app`。
@@ -360,6 +365,29 @@ CPU 侧 step 2/13 就非物理，因此它**不具备 oracle 资格**。固定 `
     （`‘posix_spawn_file_actions_addchdir_np’ was not declared`）。已改成按
     `__GLIBC__/__GLIBC_MINOR__` 版本判断，低于 2.29 走 `ENOTSUP` 分支。以后合并 upstream
     先在本集群跑一次 `OneFLOW_RuntimeObjects`，不要假设上游在 CentOS 7 上编译过。
+
+34. **每步残差/气动力输出会让多卡测量完全失真**（2026-11-14，本轮最大坑）：
+    `fixtures/m6-8zone-cpu8/case` 的 `cfd.txt` 是 `nResSave=1`、`nForceSave=1`，
+    `DumpFile()` 每步对 `results/res.dat` 做 open/append/close。256 rank 时
+    `DUMP_RESIDUAL` 实测 **37.2 ms/步**，占整步 93%，而且随 rank 数增长（共享存储争抢），
+    看起来就像"卡越多越慢"。基准必须走 `prep-case.sh`（它把三个 `*Save` 设成 100000）。
+    **本轮前半所有 M6 扩展性数字都因这个作废。**
+35. **`sed` 改参数必须用 `[[:space:]]+`**：fixture 里是 `int    nResSave = 1;`，
+    写成 `^int nResSave = .*` 不匹配且不报错。改完用 `grep` 确认。
+36. **集群资源按节点算**：`max_cpus_per_node=32`、`max_dcus_per_node=4`；
+    `--dcus` 是每节点值；`mpirun --host` 必须带槽位（`h1:32,h2:32`），否则 `-np 64` 报槽位不足；
+    内存 ≤2 GB/core。`NDEV = local_rank % 4`，不是 8。
+37. **GPU 占用率要按分配到的卡读**：取 `/sys/class/drm/card*/gpu_busy_percent` 的最大值
+    会把同节点其他租户的 100% 当成自己的（本轮因此误判一次）。先看哪个卡在我们的运行期间
+    从 0 起变化。
+38. **作业脚本里的 `python3` 必须先 `source scripts/env.sh`**，否则 `command not found`。
+39. **`RecordTask` 是有调用者的**（`CmxTask.cpp:70` 的 `TaskDispatchTimer`），`tasks.tsv` 只记
+    dispatch 级；父任务包住的子命令要自己在 `CMD::ExecuteCmd` 里记（`727c1ed75` 已做，
+    未开 breakdown 时零开销）。排查时先看 `.tasks.tsv` 再看 `.host.tsv`。
+40. **`.ofl` 有两种写法的残留**：单 zone 的 `m6wing.ofl` 是旧格式（zone 头多 2 个 int，
+    朴素解析会读出 `nNodes = 文件大小−20` 这种值）；当前 reader/writer 与 `m6wing-8.ofl`
+    用 3-int 布局（`zoneBytes, ?, nNodes, nFaces, nCells`，实测见 todo §5.5）。
+    做网格工具以 8-zone 文件为准。
 
 ## 6. 本文维护规则
 

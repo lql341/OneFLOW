@@ -1,8 +1,7 @@
 # OneFLOW 开发待办与衔接（living document）
 
-> 最后核对：2026-11-11（H2 修复轮）；本轮起点 `1d283c31a`，求解器门禁/归账修订 `6f7a49e3d`。
-> 后续 `fb246bb3a` 仅修复几何测试链接；`d41650729` 修复延迟状态标志的惰性分配（H2 根因）。
-> 该提交已有集群构建 + 多卡数值对照证据，**尚未跑完整门禁**（见 §5.2）。
+> 最后核对：2026-11-14（扩展性/网格能力轮）；工作分支 dev @ `727c1ed75`。
+> 数值门禁基准仍为 `6f7a49e3d`；`d41650729` 修 H2 根因，其后 5 个提交为接口/诊断改动。
 
 ## 交接摘要与整体路线图
 
@@ -22,9 +21,12 @@
 完整原则见长期计划 §0，数值口径变更按 `AGENTS.md` 审查。
 
 受限无粘 3D 显式 RK 路径的 **q 已设备权威，A1 固定开销优化已收口**；
-完整 HIP `Advance` 尚未实现。**H1、H2 均已完成，下一主线 A4 → A2′/A3**。Roe 只有单点/单 zone 证据，
-Barth 未过数值门禁。H2 的根因是延迟状态标志的惰性分配（空指针进 `atomicExch`），与卡数无关；
-多卡数值路径已复验通过，但**性能/扩展性结论仍须用合法 fixture 重测**（§5.2、§4.8b）。
+完整 HIP `Advance` 尚未实现。**H1、H2 均已完成**。Roe 只有单点/单 zone 证据，
+Barth 未过数值门禁。H2 的根因是延迟状态标志的惰性分配（空指针进 `atomicExch`），与卡数无关。
+
+**扩展性已定性（2026-11-14）**：由每 rank 的 cell 数决定，不由卡数决定。求解器核心可扩（1→32 卡 2.5–6.0×），
+交换不可扩，净最优在 2 卡；弱扩展（每 rank 110,592 cell）在迭代层近乎持平。
+**下一主线是网格能力**：仓库无加密/导出能力，M6 弱扩展与 D1 都卡在这里，需自写原生六面体加密（§5.5）。
 
 ### 0.1 完成与待办总览（checkbox）
 
@@ -41,6 +43,8 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 - [x] **H1（已完成）**：五对归账差额 0.34%–2.14%；下一刀见 §5.2。
 - [x] **H2（已完成，范围见 §5.2）**：根因是延迟状态标志的惰性分配，与卡数无关；
       多卡数值路径已复验（HIP vs CPU 残差逐位一致）。**完整门禁尚未跑**，扩展性数字仍待重测。
+- [x] **扩展性定性（2026-11-14）**：每 rank cell 数决定扩展性；核心可扩、交换不可扩；最优 2 卡；弱扩展迭代层持平（§5.5）
+- [ ] **网格加密能力（下一主线）**：`.ofl` 格式已解码（六面体），需自写 `refine_ofl.py`（§5.5）
 - [ ] **A4**：HIP `Advance` 接管 RK 循环；通过数值门禁并测量端到端收益。
 - [ ] A2′ / A3（降权）；原 A2 每步一次交换方案暂缓，不直接删除 post 轮。
 - [ ] B1：补 Roe 多区 trace 与对应 CPU 五算例证据；HLLC/AUSM 后续单列能力。
@@ -55,15 +59,16 @@ H1/H2 是本轮任务，D1a 是子项，均不额外计入 28 个阶段父项。
 
 | 项 | 值 |
 |---|---|
-| refs | 本轮求解器门禁证据仍对应 `6f7a49e3d`；`fb246bb3a` 只改测试 CMake；`d41650729` 修复 H2 根因（已有集群构建 + 多卡数值对照，未跑完整门禁）。工作分支 dev。上游基线 `f36f0c6b3` 已合入；接手仍须核对实际 HEAD |
+| refs | 工作分支 dev @ `727c1ed75`。数值门禁基准仍为 `6f7a49e3d`。`d41650729`（H2 根因）、`d44e0253b`、`970508e7c`、`2006b0a84`、`d9e6a14db`、`727c1ed75` 为本轮提交，均已在集群构建；XB 门禁逐位不变。上游基线 `f36f0c6b3` 已合入；接手仍须核对实际 HEAD |
 | upstream PR | #159 / #160 / #203 / #227 / #238 / #253 全部 MERGED（#227 = 3D HIP 功能线；#238 = 昆山工作区 runbook；#253 = upstream 同步与收口） |
 | 集群口径 | Kunshan DTK 26.04 / `gfx906` / 1 DCU；CPU 基线在 `kshcnormal`；**1 DCU 槽 = 8 核** |
-| 性能基线 | 历史 8 zone / 8 rank / 1 DCU、1000 步 paired：**14.62 ms/step**（2026-11-07 同节点交错 5 对中位）。CPU 288.20 来自 2026-11-02 的 F1 报告，不与此点拼接新加速比。F1 当次配对为 CPU 288.20 / HIP 15.59 = 18.5×；新 HEAD 需重测 |
+| 性能基线 | 历史 8 zone / 8 rank / 1 DCU、1000 步 paired：**14.62 ms/step**（2026-11-07 同节点交错 5 对中位）。CPU 288.20 来自 2026-11-02 的 F1 报告。F1 当次配对 CPU 288.20 / HIP 15.59 = 18.5×；2026-11-14 复测同作业配对 CPU 282.5 / HIP 15.84 = **17.8×** |
+| 扩展性（2026-11-14 实测） | 每 rank cell 数决定扩展性，不由卡数：M6 强扩展 1/2/4/8/16/32 卡 = 11.70/**7.60**/9.87/18.73/24.08/30.62 ms/步（最优 2 卡）；立方体 884k 强扩展同形状；立方体弱扩展（110,592 cell/rank）2→32 卡迭代 13.78→13.68。求解器核心 1→32 卡 M6 2.5×、立方体 6.0×，差额全在交换 |
 | 门禁基线 | `6f7a49e3d`：HIP/计时契约 22/22；3 步多区 trace PASS、resident `24/0/0`；200 步 XB residual `2.331035e-18` / aero `0.0`；CPU normal/strict 各 5/5（判据 1e-8 / 1e-15 未变）；50 步 HIP 稳定性及五对 1000 步归账 PASS。全量 GoogleTest 未重跑 |
 | 加速器构建 | 可选、后端无关：`ONEFLOW_ACCEL_SDK_ROOT`（+ 可选 `_ARCH`/`_FLAGS`），种类由 `ONEFLOW_ENABLE_HIP/CUDA` 或前缀内容推断；一键 `scripts/build-accel.sh`。不请求则完全不生效（CPU/CI 不受影响） |
 | 已知红灯 | **H2 已解（`d41650729`）**：根因不是多卡，而是 `ONEFLOW_HIP_DEFER_STATUS=1` 下 `stateUpdateStatus` 惰性分配被 defer 分支完全跳过，`Data()` 返回空指针进 `atomicExch`；表现为 `libgalaxyhip`/`hsa-runtime64` 里 signal 6，回溯指向 `GradientCopyBoundaryKernel`（该内核只是恰好在队列里）。**单卡也会触发**。B2 的 `1.113e-06` 未过门禁。`ActionMapReadFileTest` 曾在全量并发下偶发 |
 | 能力边界 | `NS_SOLVER` / 5 方程 / **Lax–Friedrichs 或 Roe** / `ilim=0`（Barth 已实现但数值未过门禁，默认不放行）/ `vismodel=0` / 单网格层 / 稳态显式多阶段 RK / `nGhostCells==nBFaces`；其它配置自动回退 host，显式请求不支持项 fail-fast。**多 zone/rank 可通过配置检查，多卡数值路径已复验**；多卡扩展性要求每 rank 固定 cell 数（§4.8b），1 rank 多 zone 更慢（§4.1 A1.8） |
-| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡数值路径已通，仍缺 ≥1M 合法分区 fixture（D1）及控制 halo 的弱扩展证据 |
+| 尚未覆盖 | Venkat、粘性/RANS、LUSGS、multigrid、双时间；IO/restart/气动力/可视化仍在 host；多卡数值路径已通。**缺 ≥1M 合法分区 fixture（D1）的唯一原因是该仓库无网格加密/导出能力**（`IsSupportedConversion` 中 `OneFLOW` 只作为 target），需自写原生六面体加密，见 §5.5 |
 
 ### 1.1 工作环境与固定路径（不要另建目录）
 
@@ -660,11 +665,11 @@ pack 消费”，不再为 4 字节单独排空队列。
       本日样本跨度 21–31%，无法下结论，见 §4.8b
 - [ ] **D1b 等 halo 弱扩展**：只在整节点配置间比（32→64→128，或 4×4×4→8×8×8），
       表里带 `nIFaces/rank` 与频率说明；验收：给出“扣除 halo 后的每 cell 计算时间”是常数
-- [ ] **D1 合法 fixture**：≥1M cell 带 `.skl` 的分区网格（或修 `GenerateLink`）。
-      外部依赖，越早启动越好；拿到之前 D2/D3 只做只读评估、不出数字。
-      2026-11-08：分区配方与 manifest 校验已跑通（runbook §1b，16/32 zone 均 PASS），
-      历史 1/2/4 卡弱扩展记录现受 H2 阻塞（§4.8b）。仍缺 ≥1M 的合法分区网格，
-      公开多卡结论须等 H2 修复、D1 与复验全部完成
+- [ ] **D1 合法 fixture**：≥1M cell 的分区网格。**2026-11-14 定位：唯一缺口是仓库无网格加密/导出能力**
+      （`IsSupportedConversion` 中 `OneFLOW` 只在 target 位；无细化工具；集群无 gmsh）。
+      `.ofl` 二进制布局已实测确认、M6 为六面体，原生加密方案见 §5.5。
+      拿到之前 D2/D3 只做只读评估、不出数字。历史 1/2/4 卡弱扩展记录受 H2 阻塞的结论已由 H2 修复解除，
+      但那些数字仍是小子域读数（每 rank 36,864 cell），不能当弱扩展证据
 - [ ] **B4 SA**（依赖 B3）
 - [ ] **B5 LU-SGS**（依赖 A4）
 - [ ] **B6 multigrid**（依赖 A4）
@@ -672,6 +677,87 @@ pack 消费”，不再为 4 字节单独排空队列。
       B1–B5 全绿才可勾，这是旗舰算例离开 CPU 的唯一途径
 
 C1–C5、D2–D4、E2–E5、F2–F4 均未启动，定义见 §4，不在本轮排期。
+
+#### 5.5 交接 2026-11-14：扩展性已定性，网格能力是唯一缺口
+
+**基线**：`dev @ 727c1ed75`。本轮交付的提交（按序）：
+
+| 提交 | 内容 | 证据 |
+|---|---|---|
+| `d41650729` | H2 根因：`DEFER_STATUS` 下状态缓冲惰性分配被跳过 → 空指针进 `atomicExch` | trace `24/0/0`、XB `2.331035e-18`、CPU 5/5 + 5/5 |
+| `d44e0253b` | 同 rank 接口改设备直传 + 状态读取搭车已有同步点 | XB 逐位不变；np8 端到端 −1.1% |
+| `970508e7c` | `ONEFLOW_HIP_LOCAL_DEVICE_EXCHANGE=0` 回退开关 | — |
+| `2006b0a84` | 端点拷贝改 pinned；修正 post 轮的错误注释 | np8 无变化，np1 −5% |
+| `d9e6a14db` | plan 与 per-rank exchange 子集按拓扑指纹缓存 | XB 逐位不变；256 zone 时迭代 4.44 → 2.00 ms/步 |
+| `727c1ed75` | `CMD::ExecuteCmd` 按命令计时（诊断用，未开 breakdown 时零开销） | 定位到 `DUMP_RESIDUAL` |
+
+**结论一：扩展性由每 rank 的 cell 数决定，不由卡数决定。** 两套几何、两个方向一致：
+
+| 口径 | 1 卡 | 2 卡 | 4 卡 | 8 卡 | 16 卡 | 32 卡 |
+|---|---:|---:|---:|---:|---:|---:|
+| M6 强扩展 端到端 ms/步 | 11.70 | **7.60** | 9.87 | 18.73 | 24.08 | 30.62 |
+| M6 核心 `resident_macrostep` | 2.70 | 2.23 | 1.45 | 1.41 | 1.22 | 1.08 |
+| 立方体强扩展 端到端 | 17.53 | **14.81** | 16.08 | 24.59 | 24.70 | 39.29 |
+| 立方体核心 | 7.07 | 4.48 | 2.78 | 1.66 | 1.19 | 1.18 |
+| 立方体弱扩展 迭代（110,592 cell/rank） | 23.07 | 13.78 | 13.93 | 14.06 | 12.69 | 13.68 |
+
+- **求解器核心能扩展**：M6 2.5×、立方体 6.0×（1→32 卡）。
+- **交换不能扩展**：它在总时间里从约一半涨到主导，所以净最优落在 **2 卡**。
+- **弱扩展在迭代层近乎持平**（立方体，2→32 卡 13.78→13.68）。
+- 经验阈值：每 rank ≳5 万 cell 正常；≈1 万开始变差；<5 千明显变差。
+
+**结论二：瓶颈不在通信带宽**（`interface_mpi` 占 7%，rank 数 ×16 只涨 25%）。
+
+**结论三（关键）：M6 的扩展性做不了，是因为缺更大的 M6 网格，不是网格质量问题。**
+仓库无细化工具；`GridConversion` 里 `OneFLOW` 只作为 target（`IsSupportedConversion`），
+`.ofl` 无导出路径；集群无 gmsh。所以下一步必须是**自己写原生加密**。
+
+**已验证的 `.ofl` 二进制布局**（读 8-zone M6 实测，字节闭合差 8）：
+
+```
+int32  nZones
+int32  pid[nZones]
+int32  zoneType[nZones]
+每 zone:
+  int32 zoneBytes, int32 ?, int32 nNodes, int32 nFaces, int32 nCells
+  double xN[nNodes], yN[nNodes], zN[nNodes]
+  int32 volBcType
+  int32 numFaceNode[nFaces]
+  int32 faceNodeMem[sum(numFaceNode)]      # 0-based
+  int32 leftCells[nFaces], rightCells[nFaces]
+  int32 nBFaces, bcType[nBFaces], bcNameId[nBFaces]
+  int32 nIFaces
+  (nIFaces>0) int32 zoneId[], localInterfaceId[], i2b[]
+```
+
+实测值（8-zone M6）：`nZones=8`、每 zone `nNodes=40,817 / nFaces=114,432 / nCells=36,864 /
+nBFaces=7,680 / nIFaces=4,785`，**114,432 个面全部是四边形 → 六面体网格**；总计 294,912 cell。
+
+**下一轮唯一主线：原生六面体加密（`refine_ofl.py`）**
+
+1. 读 8-zone `.ofl`（上述布局，含 `zoneBytes` 校验）
+2. 每个 hex 从 6 个面恢复 8 个角点 → 加 12 棱中点 + 6 面心 + 1 体心 → 8 个子 hex
+3. 节点去重：棱 `(n1,n2)`、面排序 `(n1..n4)`、体心按 cell
+4. 子面重编号、left/right 重映射；边界子面沿用 `bcType/bcNameId`；界面子面沿用 `zoneId`
+5. 按同一格式写回（用 `zoneBytes` 自检）
+6. 验证顺序：解析自检 → 单 zone 200 步与原始 M6 比残差 → 分区成 64 zone（每 rank 36,864 cell）测弱扩展
+
+预期：294,912 × 8 = **2,359,296 cell**，仍是**一个连通算例**（不是拼接），8 个 zone 的界面连通性保持。
+
+**本轮新踩的坑（务必不要再踩）**
+
+1. **每步残差/气动力输出会让多卡测量失真**：fixture 的 `cfd.txt` 是 `nResSave=1`、`nForceSave=1`，
+   256 rank 时 `DUMP_RESIDUAL` 每步 37.2 ms，占整步 93%。基准必须走 `prep-case.sh`
+   （它把三个 `*Save` 设成 100000），或自己显式设。**本轮前半的所有 M6 扩展性数字都因此作废。**
+2. **`sed` 改参数必须用 `[[:space:]]+`**：fixture 里是 `int    nResSave = 1;`，写成 `^int nResSave = .*` 不匹配，会静默失败两次。
+3. **`--dcus` 是每节点、上限 4；`--cpus` 上限 32/节点**；`mpirun --host` 必须带槽位（`h1:32,h2:32`）。
+4. **`NDEV = local_rank % 4`**（每节点 4 卡），不是 8。
+5. **GPU 占用率必须按分配到的卡号读**，不能取 `/sys/class/drm/card*/` 的最大值——同节点别的租户会把读数顶到 100%。
+6. **作业脚本里用 `python3` 必须先 `source scripts/env.sh`**，否则 `command not found`。
+7. **`RecordTask` 是有调用者的**（`CmxTask.cpp:70` 的 `TaskDispatchTimer`）；`tasks.tsv` 只记 dispatch 级，
+   命令级要 `CMD::ExecuteCmd` 里补（`727c1ed75` 已做，未开 breakdown 时零开销）。
+8. **单 zone 的 `m6wing.ofl` 是旧格式**（zone 头多 2 个 int），当前 reader/writer 用 3-int 布局；
+   做加密请以 `m6wing-8.ofl` 为准。
 
 **不要做**：靠加卡提升（§4.8b 已说明）；"一 rank 多 zone"（A1.8 实测更慢）；
 继续端到端盲试（曾因读数噪声或归因错误返工三次）。
