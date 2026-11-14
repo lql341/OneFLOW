@@ -674,20 +674,53 @@ void SyncLocalResidentGhostStates()
 }
 
 
-CUpdateInterface::CUpdateInterface()
+namespace
 {
-    ;
+
+// The zone graph and the zone-to-rank assignment are fixed inputs of one domain
+// build: they change only when the domain is rebuilt.  The interface task used
+// to rebuild the plan and then walk every exchange in it on every rank every
+// round, so a rank that takes part in a handful of interfaces still paid for
+// the whole table.  At 256 zones that scan dominated the step (measured 7.0 ms
+// per dispatch, 7 dispatches per step, against 1.2 ms at 8 zones).  Cache the
+// plan and this rank's share of it, and keep the original relative order so the
+// per-rank sequence of exchanges is unchanged.
+struct LocalInterfacePlan
+{
+    bool valid = false;
+    std::size_t signature = 0;
+    DistributedDomainPlan plan;
+    std::vector< BoundaryExchange > mine;
+};
+
+// Cheap O(nZones) fingerprint of exactly the inputs DistributedDomainPlan::Build
+// consumes.  Reading the contents (not just the address) keeps the cache honest
+// when a process runs grid, then partition, then solve on the same zone count.
+std::size_t InterfaceTopologySignature()
+{
+    std::size_t signature = 1469598103934665603ull;
+    auto mix = [ & signature ]( long long value )
+    {
+        signature ^= static_cast< unsigned long long >( value );
+        signature *= 1099511628211ull;
+    };
+    mix( ZoneState::nZones );
+    mix( GridState::gridLevel );
+    mix( Parallel::GetNProc() );
+    mix( static_cast< long long >( ZoneState::pid.size() ) );
+    for ( int zone = 0; zone < ZoneState::nZones; ++ zone )
+    {
+        mix( ZoneState::pid[ zone ] );
+        mix( Zone::GetNumberOfZoneNeighbors( zone ) );
+    }
+    return signature;
 }
 
-CUpdateInterface::~CUpdateInterface()
+const LocalInterfacePlan & LocalPlanForThisRank()
 {
-    ;
-}
-
-void CUpdateInterface::Run()
-{
-    ActionState::dataBook = this->dataBook.get();
-    ExportFixtureMetadataShard();
+    static LocalInterfacePlan cache;
+    const std::size_t signature = InterfaceTopologySignature();
+    if ( cache.valid && cache.signature == signature ) return cache;
 
     std::vector< int > ownerRanks(
         ZoneState::pid.begin(),
@@ -704,17 +737,53 @@ void CUpdateInterface::Run()
         }
     }
 
-    const DistributedDomainPlan plan = DistributedDomainPlan::Build(
-        ownerRanks,
-        zoneNeighbors,
-        Parallel::GetNProc() );
+    cache.plan = DistributedDomainPlan::Build(
+        ownerRanks, zoneNeighbors, Parallel::GetNProc() );
+    cache.mine.clear();
+    cache.mine.reserve( cache.plan.BoundaryExchanges().size() );
+    for ( const BoundaryExchange & exchange : cache.plan.BoundaryExchanges() )
+    {
+        // Mirror the predicate SwapInterfaceData uses, so the filtered list
+        // contains exactly the exchanges this rank would have acted on.
+        if ( Parallel::pid == cache.plan.OwnerRank( exchange.sourceZone )
+             || Parallel::pid == cache.plan.OwnerRank( exchange.targetZone ) )
+        {
+            cache.mine.push_back( exchange );
+        }
+    }
+    cache.signature = signature;
+    cache.valid = true;
+    return cache;
+}
+
+}
+
+CUpdateInterface::CUpdateInterface()
+{
+    ;
+}
+
+CUpdateInterface::~CUpdateInterface()
+{
+    ;
+}
+
+void CUpdateInterface::Run()
+{
+    ActionState::dataBook = this->dataBook.get();
+    ExportFixtureMetadataShard();
+
+    // The plan and this rank's exchanges are topology-derived; build them once
+    // per domain instead of once per round (see LocalInterfacePlan above).
+    const LocalInterfacePlan & localPlan = LocalPlanForThisRank();
+    const DistributedDomainPlan & plan = localPlan.plan;
 #ifdef ONEFLOW_ENABLE_HIP
     // When the legacy host exchange is skipped the host ghost cells are stale,
     // so the resident repair pass must not upload them over the device ghosts.
     const bool trackResidentHalo =
         HipProductionBackendSelected() && ! HostInterfaceSkipped();
 #endif
-    for ( const BoundaryExchange & exchange : plan.BoundaryExchanges() )
+    for ( const BoundaryExchange & exchange : localPlan.mine )
     {
 #ifdef ONEFLOW_ENABLE_HIP
         if ( trackResidentHalo
