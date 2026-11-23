@@ -105,7 +105,7 @@ oneflow-euler-performance-current.html
    `references` 与 `documentation.paths`、代码注释里的出处指引。只改文件级链接
    会漏掉这些，`aca126d53` 就是这么漏了 `.github/workflows/PublishMySite.yml`
    的 `cd doc`。改完运行 `python3 scripts/check-doc-paths.py`，它专门检查
-   `doc/` 残留和 `docs/` 指向不存在文件两类错误，CI 两个分支都会跑。
+   `doc/` 残留和 `docs/` 指向不存在文件两类错误，CI 在 `master` 上会跑。
 4. Git 历史就是档案；不需要用 `_archive/` 目录堆积副本。
 5. 每轮收尾按 `docs/README.md` §5 的检查表执行。
 

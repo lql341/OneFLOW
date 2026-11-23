@@ -365,8 +365,9 @@ markdown 里的文件级链接是不够的：CI 的 `cd` 与 `sphinx-build` 参�
 `documentation.paths` 都各自硬编码了目录路径。漏掉工作流那一处会让 deploy 在 Sphinx
 之前失败；漏掉契约 JSON 会让 `test_contract_catalog` 变红，而这个套件只在 `hexin` 上跑
 （`python-tools.yml`），master 上看不到。现在 `scripts/check-doc-paths.py` 覆盖两类错误
-（旧根残留、指向不存在的 `docs/` 目标），`docs-check.yml` 覆盖 master 与 hexin，Linux CI
-额外跑一次契约测试。
+（旧根残留、指向不存在的 `docs/` 目标），在 `master` 上由 `docs-check.yml` 执行，Linux
+CI 额外跑一次契约测试。脚本会在运行时判定文档根（`docs/source` 存在即 `docs`，否则
+`doc`），所以 hexin 合并后可以直接把它加进 `docs-check.yml` 的分支列表。
 
 **粘性探针注意事项（2026-11-19，2026-11-19 更新）**。通量探针 `ONEFLOW_VISCOUS_PROBE_FILE`
 会覆盖输出，CPU 与 DCU 用不同路径，同一进程开启自检时也须避免互相覆盖。

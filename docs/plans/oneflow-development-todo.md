@@ -6,7 +6,7 @@
 
 分支 `dev`，HEAD `813d364ed`，即 upstream master 合并 PR #267 后的提交；`dev`、`origin/dev`、`origin/master` 与 upstream master 完全一致，工作树干净。PR #267 与上游 master 推送的 CI 均全绿。
 
-**文档根改名遗留已收口（2026-11-23）**：修掉 `PublishMySite.yml` 的构建路径（原 `cd doc`），清掉 53 处 `doc/` 残留，其中 `stl_geometry_asset_preparation.json` 的 7 处曾让 `test_contract_catalog` 在 master 上静默红 8 个用例。新增 `scripts/check-doc-paths.py`，接入 `docs-check.yml`（分支扩到 master+hexin）与 Linux CI 的契约测试步骤。根因与坑记录见[当前交接](../handoff/oneflow-current-handoff.md) §5。
+**文档根改名遗留已收口（2026-11-23）**：修掉 `PublishMySite.yml` 的构建路径（原 `cd doc`），清掉 53 处 `doc/` 残留，其中 `stl_geometry_asset_preparation.json` 的 7 处曾让 `test_contract_catalog` 在 master 上静默红 8 个用例。新增 `scripts/check-doc-paths.py`，接入 `docs-check.yml`（仅 master；hexin 仍用 `doc/` 根且有自己的存量引用，合并后再加）与 Linux CI 的契约测试步骤。根因与坑记录见[当前交接](../handoff/oneflow-current-handoff.md) §5。
 
 ## 上一个收口点（2026-11-22）
 
