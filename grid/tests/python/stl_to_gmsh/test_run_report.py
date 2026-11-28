@@ -27,6 +27,25 @@ class RunReportTest(unittest.TestCase):
         self.assertIn("[NOT RUN] mesh_structure", summary)
         self.assertIn("[NOT CHECKED] mesh_quality", summary)
 
+    def test_summary_keeps_file_inventory_in_json_not_console_output(self):
+        report = build_run_report(
+            "Mesh-to-CFD Validation",
+            {"mesh_generation": stage_result("PASS")},
+            0,
+            artifacts={
+                "run_directory": "run",
+                "files": [{
+                    "path": "stl_to_gmsh/results/mesh.msh",
+                    "sha256": "a" * 64,
+                    "size_bytes": 1024,
+                }],
+            },
+        )
+        summary = format_run_summary(report)
+        self.assertIn("run_directory: run", summary)
+        self.assertNotIn("  files:", summary)
+        self.assertNotIn("sha256", summary)
+
     def test_success_report_cannot_contain_a_failed_stage(self):
         with self.assertRaisesRegex(ValueError, "cannot contain a failed stage"):
             build_run_report("STL -> Gmsh", {"gmsh": stage_result("FAIL")}, 0)
@@ -43,7 +62,7 @@ class GenerateVolumeMeshReportTest(unittest.TestCase):
     def _mesh_summary(self):
         return {"format":"4.1","nodes":10,"elements":20,"triangle_elements":8,
                 "tetrahedron_elements":12,
-                "physical_groups":[{"dimension":2,"name":"wall"},{"dimension":3,"name":"fluid_domain"}],
+                "physical_groups":[{"dimension":2,"name":"wall","element_count":8},{"dimension":3,"name":"fluid_domain","element_count":12}],
                 "triangle_quality":{"minimum_quality":0.8}}
 
     def test_success_prints_short_summary_and_writes_stage_report(self):

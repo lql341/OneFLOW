@@ -411,6 +411,123 @@ def validate_closed_genus_zero_surface(
     }
 
 
+def _triangle_geometry_key(triangle: Triangle, tolerance: float) -> tuple:
+    """Return an orientation-independent, tolerance-quantized triangle key."""
+    quantum = max(tolerance, 1.0e-12)
+    return tuple(sorted(
+        tuple(int(round(float(value) / quantum)) for value in point)
+        for point in triangle
+    ))
+
+
+def _region_aware_closed_surface_volume_geo(
+    stl: Path, triangles: list[Triangle], config: dict, tolerance: float
+) -> tuple[str, dict]:
+    """Build a volume mesh while preserving the cutter's named STL regions."""
+    topology = validate_closed_genus_zero_surface(triangles, tolerance)
+    manifest_path = Path(str(config.get("region_manifest", ""))).expanduser().resolve()
+    if not manifest_path.is_file():
+        raise Stl2DError(f"region manifest does not exist: {manifest_path}")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise Stl2DError(f"cannot read region manifest: {exc}") from exc
+    if manifest.get("schema") != "oneflow.stl-surface-regions" or manifest.get("version") != 1:
+        raise Stl2DError("unsupported STL surface-region manifest")
+    regions = manifest.get("regions")
+    if not isinstance(regions, dict) or set(regions) != {"wall", "inflow", "outflow"}:
+        raise Stl2DError("region manifest must define wall, inflow and outflow")
+    import hashlib
+    import shlex
+    region_paths = {}
+    region_counts = {}
+    region_triangle_keys: Counter[tuple] = Counter()
+    for name in ("wall", "inflow", "outflow"):
+        record = regions[name]
+        if not isinstance(record, dict):
+            raise Stl2DError(f"invalid {name} region record")
+        relative = Path(str(record.get("file", "")))
+        if relative.is_absolute() or ".." in relative.parts or len(relative.parts) != 1:
+            raise Stl2DError(f"{name} region file must be a manifest-relative filename")
+        path = (manifest_path.parent / relative).resolve()
+        if not path.is_file():
+            raise Stl2DError(f"{name} region STL does not exist: {path}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != record.get("sha256"):
+            raise Stl2DError(f"{name} region STL checksum does not match its manifest")
+        region_triangles = read_stl(path)
+        if not region_triangles or len(region_triangles) != record.get("triangle_count"):
+            raise Stl2DError(f"{name} region triangle count does not match its manifest")
+        region_paths[name] = path
+        region_counts[name] = len(region_triangles)
+        region_triangle_keys.update(
+            _triangle_geometry_key(triangle, tolerance)
+            for triangle in region_triangles
+        )
+    closed_triangle_keys = Counter(
+        _triangle_geometry_key(triangle, tolerance) for triangle in triangles
+    )
+    if region_triangle_keys != closed_triangle_keys:
+        raise Stl2DError(
+            "wall, inflow and outflow patch STLs must form an exact triangle partition of the closed STL"
+        )
+    if hashlib.sha256(stl.read_bytes()).hexdigest() != manifest.get("closed_surface_sha256"):
+        raise Stl2DError("closed STL checksum does not match its region manifest")
+
+    mesh_size_min = float(config.get("mesh_size_min", config.get("mesh_size", 0.2)))
+    mesh_size_max = float(config.get("mesh_size_max", config.get("mesh_size", 0.2)))
+    if (not math.isfinite(mesh_size_min) or mesh_size_min <= 0
+            or not math.isfinite(mesh_size_max) or mesh_size_max <= 0
+            or mesh_size_min > mesh_size_max):
+        raise Stl2DError("mesh size bounds must be positive, finite and ordered")
+    lines = [
+        "// Region-preserving generic STL cutting volume mesh.",
+        'SetFactory("Built-in");',
+        "Mesh.MshFileVersion = 4.1;",
+        "Mesh.Binary = 0;",
+        "Mesh.ElementOrder = 1;",
+    ]
+    for index, name in enumerate(("wall", "inflow", "outflow")):
+        path = region_paths[name].as_posix()
+        if '"' in path:
+            raise Stl2DError("region STL path must not contain a quote character")
+        lines.append(f'Merge "{path}";')
+        if index == 0:
+            lines.append("wall[] = Surface{:};")
+        else:
+            lines.extend((
+                "allImportedSurfaces[] = Surface{:};",
+                f"{name}[] = allImportedSurfaces[];",
+                f"{name}[] -= wall[];",
+            ))
+            if index == 2:
+                lines.append("outflow[] -= inflow[];")
+    lines.extend((
+        "Coherence Mesh;",
+        "CreateTopology;",
+        "CreateGeometry;",
+        "Surface Loop(1) = {wall[], inflow[], outflow[]};",
+        "Volume(1) = {1};",
+        f"Mesh.MeshSizeMin = {mesh_size_min:.17g};",
+        f"Mesh.MeshSizeMax = {mesh_size_max:.17g};",
+        "Mesh.MeshSizeFromPoints = 1;",
+        "Mesh.MeshSizeExtendFromBoundary = 1;",
+        'Physical Surface("wall") = {wall[]};',
+        'Physical Surface("inflow") = {inflow[]};',
+        'Physical Surface("outflow") = {outflow[]};',
+        'Physical Volume("fluid_domain") = {1};',
+        "",
+    ))
+    return "\n".join(lines), {
+        **topology,
+        "geometry": "region_aware_generic_stl",
+        "region_triangle_counts": region_counts,
+        "physical_groups": ["wall", "inflow", "outflow", "fluid_domain"],
+        "mesh_size_min": mesh_size_min,
+        "mesh_size_max": mesh_size_max,
+        "region_manifest": str(manifest_path),
+    }
+
+
 def _closed_surface_volume_geo(
     stl: Path, triangles: list[Triangle], config: dict, tolerance: float
 ) -> tuple[str, dict]:
@@ -655,6 +772,14 @@ def convert(stl: Path, sidecar: Path, geo: Path, tolerance: float = 1e-9) -> dic
         if hashlib.sha256(stl.read_bytes()).hexdigest() != manifest.get("stl_sha256"):
             raise Stl2DError("cylinder STL checksum does not match its geometry manifest")
     triangles = read_stl(stl)
+    if sidecar_data.get("mesh_dimension") == 3 and volume_mesh == "region_aware_closed_surface_automatic_tetrahedra":
+        geometry, report = _region_aware_closed_surface_volume_geo(
+            stl, triangles, sidecar_data, tolerance
+        )
+        geo.parent.mkdir(parents=True, exist_ok=True)
+        geo.write_text(geometry, encoding="utf-8", newline="\n")
+        report["geo"] = str(geo)
+        return report
     if sidecar_data.get("mesh_dimension") == 3 and volume_mesh == "cylinder_internal_flow":
         geometry, report = _cylinder_internal_flow_geo(
             stl, triangles, sidecar_data, tolerance
@@ -819,6 +944,43 @@ def inspect_msh4(path: Path) -> dict:
         for axis in range(3)
     )
     area_tolerance = 64.0 * math.ulp(1.0) * coordinate_scale * coordinate_scale
+    volume_tolerance = 64.0 * math.ulp(1.0) * coordinate_scale ** 3
+
+    try:
+        entity_tokens = " ".join(section("Entities")).split()
+    except Stl2DError:
+        # Older synthetic regression fixtures omitted Entities; their physical
+        # element counts are unknown and must not be treated as validated.
+        entity_tokens = []
+    entity_physical_tags: dict[tuple[int, int], list[int]] = {}
+    if entity_tokens:
+        if len(entity_tokens) < 4:
+            raise Stl2DError("MSH Entities section is empty or truncated")
+        entity_counts = list(map(int, entity_tokens[:4]))
+        entity_cursor = 4
+        for dimension, entity_count in enumerate(entity_counts):
+            for _ in range(entity_count):
+                if entity_cursor >= len(entity_tokens):
+                    raise Stl2DError("truncated MSH 4.1 entity record")
+                entity_tag = int(entity_tokens[entity_cursor])
+                entity_cursor += 1
+                entity_cursor += 3 if dimension == 0 else 6
+                if entity_cursor >= len(entity_tokens):
+                    raise Stl2DError("truncated MSH 4.1 entity physical-tag count")
+                physical_count = int(entity_tokens[entity_cursor])
+                entity_cursor += 1
+                if entity_cursor + physical_count > len(entity_tokens):
+                    raise Stl2DError("truncated MSH 4.1 entity physical tags")
+                physical_tags = list(map(int, entity_tokens[entity_cursor:entity_cursor + physical_count]))
+                entity_cursor += physical_count
+                entity_physical_tags[(dimension, entity_tag)] = physical_tags
+                if dimension > 0:
+                    if entity_cursor >= len(entity_tokens):
+                        raise Stl2DError("truncated MSH 4.1 entity boundary count")
+                    boundary_count = int(entity_tokens[entity_cursor])
+                    entity_cursor += 1 + boundary_count
+        if entity_cursor != len(entity_tokens):
+            raise Stl2DError("MSH 4.1 Entities section has unexpected trailing values")
 
     element_tokens = " ".join(section("Elements")).split()
     if len(element_tokens) < 4:
@@ -827,14 +989,19 @@ def inspect_msh4(path: Path) -> dict:
     cursor = 4
     element_types: Counter[int] = Counter()
     element_records: list[tuple[int, int, tuple[int, ...]]] = []
+    physical_group_element_counts: Counter[tuple[int, int]] = Counter()
     triangle_areas: list[float] = []
     triangle_qualities: list[float] = []
     triangle_min_angles: list[float] = []
+    tetrahedron_volumes: list[float] = []
+    tetrahedron_qualities: list[float] = []
+    tetrahedron_quality_records: list[dict] = []
+    degenerate_tetrahedron_count = 0
     positive_xy = negative_xy = 0
     for _ in range(element_block_count):
         if cursor + 4 > len(element_tokens):
             raise Stl2DError("truncated MSH 4.1 element block header")
-        entity_dim, _entity_tag, element_type, count = map(
+        entity_dim, entity_tag, element_type, count = map(
             int, element_tokens[cursor:cursor + 4]
         )
         cursor += 4
@@ -842,6 +1009,8 @@ def inspect_msh4(path: Path) -> dict:
         if arity is None:
             raise Stl2DError(f"unsupported element type {element_type} in reference mesh")
         element_types[element_type] += count
+        for physical_tag in entity_physical_tags.get((entity_dim, entity_tag), []):
+            physical_group_element_counts[(entity_dim, physical_tag)] += count
         for _element in range(count):
             if cursor + 1 + arity > len(element_tokens):
                 raise Stl2DError("truncated MSH 4.1 element connectivity")
@@ -851,42 +1020,86 @@ def inspect_msh4(path: Path) -> dict:
             if any(node_id not in nodes for node_id in node_ids):
                 raise Stl2DError("MSH element references an unknown node")
             element_records.append((entity_dim, element_type, tuple(node_ids)))
-            if element_type != 2:
-                continue
-            p0, p1, p2 = (nodes[node_id] for node_id in node_ids)
-            u = tuple(p1[i] - p0[i] for i in range(3))
-            v = tuple(p2[i] - p0[i] for i in range(3))
-            cross = (
-                u[1] * v[2] - u[2] * v[1],
-                u[2] * v[0] - u[0] * v[2],
-                u[0] * v[1] - u[1] * v[0],
-            )
-            area = 0.5 * math.sqrt(sum(value * value for value in cross))
-            signed_xy = 0.5 * (u[0] * v[1] - u[1] * v[0])
-            lengths = (
-                math.dist(p0, p1), math.dist(p1, p2), math.dist(p2, p0)
-            )
-            if area <= area_tolerance or min(lengths) <= 0.0:
-                raise Stl2DError("generated mesh contains a degenerate TRI_3 element")
-            angles = []
-            for opposite, adjacent_a, adjacent_b in (
-                (lengths[1], lengths[0], lengths[2]),
-                (lengths[2], lengths[0], lengths[1]),
-                (lengths[0], lengths[1], lengths[2]),
-            ):
-                cosine = (adjacent_a**2 + adjacent_b**2 - opposite**2) / (
-                    2.0 * adjacent_a * adjacent_b
+            if element_type == 2:
+                p0, p1, p2 = (nodes[node_id] for node_id in node_ids)
+                u = tuple(p1[i] - p0[i] for i in range(3))
+                v = tuple(p2[i] - p0[i] for i in range(3))
+                cross = (
+                    u[1] * v[2] - u[2] * v[1],
+                    u[2] * v[0] - u[0] * v[2],
+                    u[0] * v[1] - u[1] * v[0],
                 )
-                angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
-            triangle_areas.append(area)
-            triangle_qualities.append(
-                4.0 * math.sqrt(3.0) * area / sum(length * length for length in lengths)
-            )
-            triangle_min_angles.append(min(angles))
-            if signed_xy > 0.0:
-                positive_xy += 1
-            elif signed_xy < 0.0:
-                negative_xy += 1
+                area = 0.5 * math.sqrt(sum(value * value for value in cross))
+                signed_xy = 0.5 * (u[0] * v[1] - u[1] * v[0])
+                lengths = (
+                    math.dist(p0, p1), math.dist(p1, p2), math.dist(p2, p0)
+                )
+                if area <= area_tolerance or min(lengths) <= 0.0:
+                    raise Stl2DError("generated mesh contains a degenerate TRI_3 element")
+                angles = []
+                for opposite, adjacent_a, adjacent_b in (
+                    (lengths[1], lengths[0], lengths[2]),
+                    (lengths[2], lengths[0], lengths[1]),
+                    (lengths[0], lengths[1], lengths[2]),
+                ):
+                    cosine = (adjacent_a**2 + adjacent_b**2 - opposite**2) / (
+                        2.0 * adjacent_a * adjacent_b
+                    )
+                    angles.append(math.degrees(math.acos(max(-1.0, min(1.0, cosine)))))
+                triangle_areas.append(area)
+                triangle_qualities.append(
+                    4.0 * math.sqrt(3.0) * area / sum(length * length for length in lengths)
+                )
+                triangle_min_angles.append(min(angles))
+                if signed_xy > 0.0:
+                    positive_xy += 1
+                elif signed_xy < 0.0:
+                    negative_xy += 1
+            elif entity_dim == 3 and element_type == 4:
+                p0, p1, p2, p3 = (nodes[node_id] for node_id in node_ids)
+                a = tuple(p1[i] - p0[i] for i in range(3))
+                b = tuple(p2[i] - p0[i] for i in range(3))
+                c = tuple(p3[i] - p0[i] for i in range(3))
+                cross_bc = (
+                    b[1] * c[2] - b[2] * c[1],
+                    b[2] * c[0] - b[0] * c[2],
+                    b[0] * c[1] - b[1] * c[0],
+                )
+                determinant = sum(a[i] * cross_bc[i] for i in range(3))
+                volume = abs(determinant) / 6.0
+                if volume <= volume_tolerance:
+                    degenerate_tetrahedron_count += 1
+                edge_squared_sum = sum(
+                    math.dist(nodes[node_ids[i]], nodes[node_ids[j]]) ** 2
+                    for i, j in ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+                )
+                # Mean-ratio quality is scale-independent and equals one
+                # for an equilateral tetrahedron. Degenerate cells are kept
+                # in the report with quality zero; diagnostics do not gate
+                # conversion or the solver smoke-test workflow.
+                quality = (
+                    12.0 * (3.0 * volume) ** (2.0 / 3.0) / edge_squared_sum
+                    if volume > volume_tolerance and edge_squared_sum > 0.0
+                    else 0.0
+                )
+                quality = min(1.0, quality)
+                tetrahedron_volumes.append(volume)
+                tetrahedron_qualities.append(quality)
+                tetrahedron_quality_records.append({
+                    "element_tag": _tag,
+                    "node_tags": node_ids,
+                    "quality": quality,
+                    "volume": volume,
+                    "centroid": [
+                        sum(nodes[node_id][axis] for node_id in node_ids) / 4.0
+                        for axis in range(3)
+                    ],
+                })
+                if len(tetrahedron_quality_records) > 10:
+                    tetrahedron_quality_records.sort(
+                        key=lambda item: (item["quality"], item["element_tag"])
+                    )
+                    del tetrahedron_quality_records[10:]
 
     if sum(element_types.values()) != element_count:
         raise Stl2DError("MSH 4.1 element block counts do not match the file header")
@@ -915,6 +1128,9 @@ def inspect_msh4(path: Path) -> dict:
                 "dimension": int(values[0]),
                 "tag": int(values[1]),
                 "name": values[2].strip().strip('"'),
+                "element_count": physical_group_element_counts.get(
+                    (int(values[0]), int(values[1])), 0
+                ),
             })
         if len(physical_groups) != expected_groups:
             raise Stl2DError("MSH PhysicalNames count does not match its header")
@@ -923,6 +1139,40 @@ def inspect_msh4(path: Path) -> dict:
     bounds = {
         "minimum": [min(point[axis] for point in coordinates) for axis in range(3)],
         "maximum": [max(point[axis] for point in coordinates) for axis in range(3)],
+    }
+
+    ordered_qualities = sorted(tetrahedron_qualities)
+
+    def percentile(fraction: float) -> float:
+        if not ordered_qualities:
+            return 0.0
+        position = (len(ordered_qualities) - 1) * fraction
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return ordered_qualities[lower]
+        return ordered_qualities[lower] + (
+            ordered_qualities[upper] - ordered_qualities[lower]
+        ) * (position - lower)
+
+    quality_thresholds = (0.1, 0.2, 0.3)
+    tetrahedron_quality_records.sort(key=lambda item: (item["quality"], item["element_tag"]))
+    tetrahedron_quality_summary = {
+        "metric": "mean_ratio",
+        "degenerate_count": degenerate_tetrahedron_count,
+        "minimum_quality": min(tetrahedron_qualities) if tetrahedron_qualities else 0.0,
+        "mean_quality": (sum(tetrahedron_qualities) / len(tetrahedron_qualities)) if tetrahedron_qualities else 0.0,
+        "quality_percentiles": {
+            f"p{int(fraction * 100):02d}": percentile(fraction)
+            for fraction in (0.05, 0.50, 0.95)
+        },
+        "quality_below_threshold_counts": {
+            f"{threshold:.1f}": sum(value < threshold for value in tetrahedron_qualities)
+            for threshold in quality_thresholds
+        },
+        "worst_elements": tetrahedron_quality_records[:10],
+        "minimum_volume": min(tetrahedron_volumes) if tetrahedron_volumes else 0.0,
+        "total_volume": sum(tetrahedron_volumes),
     }
     return {
         "format": format_values[0],
@@ -938,6 +1188,7 @@ def inspect_msh4(path: Path) -> dict:
         "tetrahedral_topology": tetrahedral_topology,
         "physical_groups": physical_groups,
         "coordinate_bounds": bounds,
+        "tetrahedron_quality": tetrahedron_quality_summary,
         "triangle_quality": {
             "degenerate_count": 0,
             "positive_xy_orientation_count": positive_xy,

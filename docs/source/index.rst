@@ -40,7 +40,9 @@ Mesh and engineering workflows
 * :doc:`stl_to_gmsh_2d` — planar STL boundary extraction, explicit CFD boundary groups, and Gmsh 2D generation.
 * :doc:`stl_to_gmsh_3d` — cube STL volume reconstruction, fixed HEXA_8/TETRA_4 topology, and automatic tetrahedral meshing.
 * :doc:`stl_geometry_generation` — parameterized STL geometry library, GUI workflow, sphere/spheroid/cylinder construction, patch identity, units and artifact policy.
+* :doc:`stl_pipe_bend` — swept circular-section 90-degree pipe bend, Python/C++ generators, patch semantics and analytic volume checks.
 * :doc:`mesh_stl_geometry_pipeline` — geometry asset preparation, STL validation, C++/Python adapters, Gmsh reconstruction and CFD handoff.
+* :doc:`stl_generic_surface_cutting` — blind-input STL cutting with two arbitrary planar sections and generated end caps.
 * :doc:`stl_to_gmsh_sphere` — unit-sphere STL validation, Gmsh surface reconstruction, tetrahedral volume generation, commands, and evidence.
 * :doc:`stl_to_gmsh_prolate_spheroid` — 6:1 prolate spheroid STL, automatic tetrahedral meshing, and Mesh-to-CFD smoke route.
 * :doc:`stl_to_gmsh_commands` — copy-and-run commands for generating 3-D tetrahedral meshes from closed STL surfaces and controlling mesh size.
@@ -58,6 +60,8 @@ Mesh and engineering workflows
 
 Developer resources
 -------------------
+
+* :doc:`change_preflight` — repository-wide contract, evidence, and Python test-registration checks before committing.
 
 * :doc:`test_inventory` — source-discovered test catalog, separated by framework, with input/expected/result contracts.
 * :doc:`cmake_build_architecture` — module source discovery, compatibility rules, dependency boundaries, and CMake self-tests.
@@ -168,6 +172,7 @@ The existing reference library covers programming languages, build systems, para
    stl_to_gmsh_3d
    run_result_reporting
    stl_geometry_generation
+   stl_pipe_bend
    mesh_stl_geometry_pipeline
    stl_to_gmsh_sphere
    stl_to_gmsh_prolate_spheroid
