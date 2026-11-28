@@ -269,6 +269,7 @@ add_executable(bc_policy_test
 )
 target_include_directories(bc_policy_test PRIVATE
   ${CMAKE_SOURCE_DIR}/codes/ns/include
+  ${CMAKE_SOURCE_DIR}/codes/accel/include
   ${CMAKE_SOURCE_DIR}/codes/basic/include
 )
 target_link_libraries(bc_policy_test PRIVATE GTest::gtest_main)

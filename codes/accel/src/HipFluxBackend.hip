@@ -13,6 +13,7 @@ License
 // independent. Including the CPU adapter for it made the accelerator backend
 // depend on a host header it never calls into.
 #include "PrimitiveFaceContract.h"
+#include "BoundaryArithmetic.h"
 #include "DeviceBuffer.h"
 #include "HipProductionPolicy.h"
 #include "Ns3DDomain.h"
@@ -1256,9 +1257,17 @@ __global__ void CapLocalTimeStepKernel(
     if ( timeStep[ cell ] > maximum ) timeStep[ cell ] = maximum;
 }
 
-__device__ Real BoundaryPower( Real value, Real exponent, Real gamma )
+__device__ Real BoundaryPower(
+    Real value, Real exponent, Real gamma, int inviscid )
 {
-    if ( gamma > 1.399999999999 && gamma < 1.400000000001
+    // Host: NsBcSolver.cpp:FarFieldPower takes the x*x*sqrt(x) shortcut only
+    // when vis_model.vismodel == INVISCID, so that a viscous case stays
+    // bitwise-compatible with pow().  The kernel receives viscousWall, which is
+    // vis_model.vismodel != 0 (NsSolverImp.cpp), so !viscousWall is exactly the
+    // INVISCID condition.  Without this guard the viscous flagship used the
+    // sqrt form where the host used pow and the two differed by up to 1 ulp.
+    if ( inviscid
+         && gamma > 1.399999999999 && gamma < 1.400000000001
          && exponent > 2.499999999999 && exponent < 2.500000000001 )
     {
         return value * value * sqrt( value );
@@ -1345,12 +1354,27 @@ __global__ void UpdateBoundaryPrimitiveKernel(
         }
         else
         {
-            // Symmetry (type 3): the CPU oracle copies the owner primitive into
-            // the ghost (NsBcSolver::SymmetryBc sets primt1 = prims1); the
-            // velocity reflection is only used to build the averaged bcQ face
-            // state below.
-            for ( int eq = 0; eq < nEq; ++ eq )
-                ghostValues[ eq ] = q[ eq * totalCells + left ];
+            // Symmetry (type 3).  The host writes the reflected velocity into
+            // the ghost, not the owner copy: NsBcSolver::SymmetryBc copies
+            // prims1 into primt1 and then overwrites the three velocity
+            // components with ReflectVelocityRelativeToMovingFace, and
+            // UNsBcSolver::UpdateBc stores primt1 in q[rc].  An earlier version
+            // of this branch read only the copy in the first sentence and left
+            // the normal velocity in the ghost; with ilim=0 the ghost feeds
+            // 0.5*(q[lc]+q[rc]) for the face state, so the symmetry-face flux
+            // differed from the host.  That was the B.4.1 boundary residual.
+            //
+            // Same reflection helper as the host, so the two cannot drift.
+            const Real nx = xNormal[ face ] * faceOuterNormal;
+            const Real ny = yNormal[ face ] * faceOuterNormal;
+            const Real nz = zNormal[ face ] * faceOuterNormal;
+            Real ru = u, rv = v, rw = w;
+            ReflectVelocityRelativeToMovingFaceHd(
+                u, v, w, nx, ny, nz, meshVelocityNormal[ face ],
+                ru, rv, rw );
+            ghostValues[ 1 ] = ru;
+            ghostValues[ 2 ] = rv;
+            ghostValues[ 3 ] = rw;
         }
     }
     else if ( type == 4 ) // FARFIELD
@@ -1392,20 +1416,21 @@ __global__ void UpdateBoundaryPrimitiveKernel(
             Real vtz;
             if ( vnb >= 0.0 )
             {
-                entropy = pressure / BoundaryPower( rho, gamma, gamma );
+                entropy = pressure / BoundaryPower( rho, gamma, gamma, ! viscousWall );
                 vtx = u - nx * vnin;
                 vty = v - ny * vnin;
                 vtz = w - nz * vnin;
             }
             else
             {
-                entropy = pref / BoundaryPower( rref, gamma, gamma );
+                entropy = pref / BoundaryPower( rref, gamma, gamma, ! viscousWall );
                 vtx = uref - nx * vnref;
                 vty = vref - ny * vnref;
                 vtz = wref - nz * vnref;
             }
             const Real rhoBoundary = BoundaryPower(
-                cb * cb / ( entropy * gamma ), 1.0 / gamm1, gamma );
+                cb * cb / ( entropy * gamma ), 1.0 / gamm1, gamma,
+                ! viscousWall );
             const Real ub = vtx + nx * vnb;
             const Real vb = vty + ny * vnb;
             const Real wb = vtz + nz * vnb;

@@ -1,20 +1,22 @@
 #include "NsBcPolicy.h"
+#include "BoundaryArithmetic.h"
 #include "HXMath.h"
 #include "NsInvFluxPolicy.h"
 #include <cmath>
 
 BeginNameSpace( ONEFLOW )
 
+// The body lives in BoundaryArithmetic.h so the HIP symmetry kernel evaluates
+// the same expressions instead of its own transcription.  Keeping the public
+// symbols here means every host caller and the existing tests are unchanged.
 void ReflectVelocityRelativeToMovingFace(
     Real u, Real v, Real w,
     Real xfn, Real yfn, Real zfn, Real vfn,
     Real & uReflected, Real & vReflected, Real & wReflected )
 {
-    const Real vnRel = RelativeFaceNormalVelocity(
-        xfn, yfn, zfn, vfn, u, v, w );
-    uReflected = u - two * xfn * vnRel;
-    vReflected = v - two * yfn * vnRel;
-    wReflected = w - two * zfn * vnRel;
+    ReflectVelocityRelativeToMovingFaceHd(
+        u, v, w, xfn, yfn, zfn, vfn,
+        uReflected, vReflected, wReflected );
 }
 
 void ImageVelocityAboutWall(
@@ -29,7 +31,7 @@ void ImageVelocityAboutWall(
 
 Real ArithmeticAverage( Real a, Real b )
 {
-    return half * ( a + b );
+    return ArithmeticAverageHd( a, b );
 }
 
 void SubsonicAcousticRiemannCombine(
