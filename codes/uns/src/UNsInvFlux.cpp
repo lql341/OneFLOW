@@ -909,6 +909,36 @@ bool UNsInvFlux::UseHipBatchAdapter() const
 
     const EulerInvFluxCapabilityDecision decision =
         EvaluateEulerInvFluxCapability( request );
+    if ( std::getenv( "ONEFLOW_UNS_HIP_STAGE_DIAGNOSTIC" ) != nullptr )
+    {
+        // Print the decision either way.  Reporting only on rejection left the
+        // opposite question unanswerable: a "device path is slow" result looks
+        // identical whether the batch is enabled and genuinely slow, or was
+        // never selected and the host fallback was timed.  Job 128983927 spent
+        // a round on exactly that ambiguity.
+        static bool reported = false;
+        if ( ! reported )
+        {
+            reported = true;
+            std::cout << "HIP_BATCH_DIAGNOSTIC enabled="
+                      << ( decision.enabled ? 1 : 0 )
+                      << " reason="
+                      << EulerInvFluxCapabilityReasonName( decision.reason )
+                      << " nEq=" << request.nEquations
+                      << " limiterEq=" << request.limiterEquations
+                      << " scheme=" << ( request.laxFriedrichsScheme ? "lax" : "" )
+                      << ( request.roeScheme ? "roe" : "" )
+                      << " viscousActive=" << ( request.viscousModelActive ? 1 : 0 )
+                      << " allowViscousEnv="
+                      << ( std::getenv( "ONEFLOW_ALLOW_VISCOUS_HIP_BATCH" ) != nullptr
+                           ? std::getenv( "ONEFLOW_ALLOW_VISCOUS_HIP_BATCH" ) : "unset" )
+                      << " gridLevel=" << request.gridLevel
+                      << " gridCount=" << request.gridCount
+                      << " localZones=" << request.localZoneCount
+                      << " iface=" << ( request.hasInterfaceExchange ? 1 : 0 )
+                      << std::endl;
+        }
+    }
     if ( ! decision.enabled )
     {
         if ( ! HipProductionFeatureExplicitlyEnabled( feature ) )

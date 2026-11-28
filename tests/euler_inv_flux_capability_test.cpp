@@ -160,4 +160,44 @@ TEST( EulerInvFluxCapability, AcceptsMultipleLocalZonesWithSupportedExchange )
         EulerInvFluxCapabilityReason::Supported );
 }
 
+
+// The viscous gate is about the model being active, not about which opt-in
+// switches the caller set.  Two separate helpers consult those switches later
+// (UNsInvFlux::UseHipBatchAdapter and UseHipGradient), and the flagship needs
+// BOTH to reach the device path.  This test pins the capability contract so a
+// later reader does not conclude that setting one switch should be enough, or
+// that the capability table needs a limiter/viscous exception: job 128983927
+// showed enabled=1 with limiterEq=5 while the gradient still ran on the host.
+TEST( EulerInvFluxCapability, ViscousModelRejectsRegardlessOfOptInSwitches )
+{
+    auto request = SupportedRequest();
+    request.viscousModelActive = true;
+
+    const auto decision = EvaluateEulerInvFluxCapability( request );
+    EXPECT_FALSE( decision.enabled );
+    EXPECT_EQ(
+        decision.reason,
+        EulerInvFluxCapabilityReason::ViscousModelActive );
+    // The caller clears this flag itself once ONEFLOW_ALLOW_VISCOUS_HIP_BATCH
+    // is set; the capability table never inspects the environment.
+    EXPECT_STREQ(
+        EulerInvFluxCapabilityReasonName( decision.reason ),
+        "viscous_model_active" );
+}
+
+// ilim=0 still reports five limiter equations (the limiter field exists even
+// when the scheme is zero order), so the limiter check is not the reason a
+// flagship run falls back.  Keeping this explicit stops the next investigation
+// from re-deriving the same dead end.
+TEST( EulerInvFluxCapability, ZeroOrderLimiterStillNeedsFiveEquations )
+{
+    auto request = SupportedRequest();
+    request.limiterEquations = 0;
+
+    const auto decision = EvaluateEulerInvFluxCapability( request );
+    EXPECT_FALSE( decision.enabled );
+    EXPECT_EQ(
+        decision.reason,
+        EulerInvFluxCapabilityReason::UnsupportedLimiterEquationCount );
+}
 } // namespace

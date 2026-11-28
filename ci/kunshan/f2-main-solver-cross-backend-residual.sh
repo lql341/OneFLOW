@@ -26,6 +26,18 @@
 #                            HIP run only (default unset: legacy behaviour)
 #   ONEFLOW_XB_HIP_SKIP_HOST_INTERFACE  pass ONEFLOW_HIP_SKIP_HOST_INTERFACE to
 #                            the HIP run only (default unset: legacy behaviour)
+#   ONEFLOW_XB_HIP_ALLOW_VISCOUS_BATCH  export ONEFLOW_ALLOW_VISCOUS_HIP_BATCH
+#                            (default: 1 for flagship, 0 for inviscid)
+#   ONEFLOW_XB_HIP_ALLOW_VISCOUS_GRADIENT  export
+#                            ONEFLOW_ALLOW_VISCOUS_HIP_GRADIENT
+#                            (default: 1 for flagship, 0 for inviscid)
+#
+# The two viscous opt-ins are separate because the helpers that read them are:
+# UseHipBatchAdapter checks the batch switch, UseHipGradient checks the gradient
+# switch.  A vismodel=3 case with only the batch switch runs device flux with a
+# host gradient, which passes the residual gate but must never be quoted as a
+# device timing.  Set either to 0 for a deliberate host-flux control arm; the
+# run then reports DEVICE_PATH_REPORT=not_usable.
 #
 # The runner intentionally contains no cluster paths, hostnames or job
 # metadata. Two profiles:
@@ -59,12 +71,28 @@ profile="${ONEFLOW_XB_PROFILE:-inviscid}"
 case "$profile" in
     inviscid)
         cfg_vismodel=0; cfg_ischeme=5; cfg_time_integral=1; cfg_rk_stage=3
-        cfg_keep_turb=0; cfg_grid_obj=3 ;;
+        cfg_keep_turb=0; cfg_grid_obj=3
+        # The inviscid path has no viscous gate to satisfy, so these stay off to
+        # keep its behaviour identical to every earlier run.
+        cfg_allow_viscous_batch=0; cfg_allow_viscous_gradient=0 ;;
     flagship)
         cfg_vismodel=3; cfg_ischeme=1; cfg_time_integral=2; cfg_rk_stage=1
-        cfg_keep_turb=1; cfg_grid_obj=0 ;;
+        cfg_keep_turb=1; cfg_grid_obj=0
+        # The flagship is vismodel=3, and two independent helpers refuse the
+        # device path in that case unless their own switch is set:
+        #   UNsInvFlux::UseHipBatchAdapter   (UNsInvFlux.cpp:899) checks
+        #     ONEFLOW_ALLOW_VISCOUS_HIP_BATCH
+        #   UNsInvFlux::UseHipGradient       (UNsInvFlux.cpp:791) checks
+        #     ONEFLOW_ALLOW_VISCOUS_HIP_GRADIENT
+        # Setting only the first produced a mixed configuration (device flux,
+        # host gradient) that was both slow and mislabelled as a device run
+        # (job 128983927).  Both default on here; set the knob to 0 for a
+        # deliberate host-flux control arm.
+        cfg_allow_viscous_batch=1; cfg_allow_viscous_gradient=1 ;;
     *) echo "invalid ONEFLOW_XB_PROFILE=$profile (inviscid|flagship)" >&2; exit 2 ;;
 esac
+cfg_allow_viscous_batch="${ONEFLOW_XB_HIP_ALLOW_VISCOUS_BATCH:-$cfg_allow_viscous_batch}"
+cfg_allow_viscous_gradient="${ONEFLOW_XB_HIP_ALLOW_VISCOUS_GRADIENT:-$cfg_allow_viscous_gradient}"
 cfg_vismodel="${ONEFLOW_XB_VISMODEL:-$cfg_vismodel}"
 cfg_ischeme="${ONEFLOW_XB_ISCHEME:-$cfg_ischeme}"
 cfg_time_integral="${ONEFLOW_XB_TIME_INTEGRAL:-$cfg_time_integral}"
@@ -101,6 +129,7 @@ mkdir -p "$ONEFLOW_XB_RUN_ROOT"
     echo "vismodel=$cfg_vismodel ischeme=$cfg_ischeme"
     echo "time_integral=$cfg_time_integral rk_stage=$cfg_rk_stage"
     echo "keep_turb=$cfg_keep_turb grid_obj=$cfg_grid_obj"
+    echo "allow_viscous_batch=$cfg_allow_viscous_batch allow_viscous_gradient=$cfg_allow_viscous_gradient"
     echo "cpu_ranks=$cpu_ranks"
     echo "hip_ranks=$hip_ranks"
     echo "cfl=$cfl"
@@ -188,9 +217,10 @@ run_backend() {
             if [ -n "${ONEFLOW_XB_HIP_SKIP_UNUSED_INTERFACE:-}" ]; then
                 export ONEFLOW_HIP_SKIP_UNUSED_INTERFACE="$ONEFLOW_XB_HIP_SKIP_UNUSED_INTERFACE"
             fi
-            if [ -n "${ONEFLOW_XB_HIP_ALLOW_VISCOUS_BATCH:-}" ]; then
-                export ONEFLOW_ALLOW_VISCOUS_HIP_BATCH="$ONEFLOW_XB_HIP_ALLOW_VISCOUS_BATCH"
-            fi
+            # Both defaults come from the profile (flagship=1, inviscid=0) and
+            # can be overridden per run for a host-flux control arm.
+            export ONEFLOW_ALLOW_VISCOUS_HIP_BATCH="$cfg_allow_viscous_batch"
+            export ONEFLOW_ALLOW_VISCOUS_HIP_GRADIENT="$cfg_allow_viscous_gradient"
             # Generic HIP-only env passthrough: semicolon-separated KEY=VALUE,
             # e.g. "ONEFLOW_ENABLE_UNS_HIP_VISFLUX=1;ONEFLOW_VISCOUS_SELFCHECK=1".
             # Lets a device-hook experiment be run without editing this script.
@@ -228,6 +258,10 @@ printf 'backend\tranks\texit_code\n' > "$ONEFLOW_XB_RUN_ROOT/runs.tsv"
 run_backend CPU "$cpu_ranks" cpu
 run_backend HIP "$hip_ranks" hip
 
+# The comparison returns 1 on a numeric mismatch.  Under set -e that would
+# skip the device-path report entirely, losing the evidence that tells
+# whether the mismatch came from the device chain or a host fallback.
+set +e
 python3 - \
     "$ONEFLOW_XB_RUN_ROOT/case-cpu" \
     "$ONEFLOW_XB_RUN_ROOT/case-hip" \
@@ -343,5 +377,42 @@ pathlib.Path(out_path).write_text("\n".join(lines) + "\n")
 print("\n".join(lines))
 sys.exit(0 if ok else 1)
 PY
+# Do not abort on a numeric failure: the device-path report below is what
+# tells a reader whether the failing numbers came from the device chain or
+# from a host fallback, and that decides where to look next.  Job 129056842
+# exited here and left no device-path.txt, which hid the fact that its
+# gradient never reached the host.
+numeric_rc=$?
+set -e
+if [ "$numeric_rc" -ne 0 ]; then
+    echo "CROSS_BACKEND_RESIDUAL_FAIL"
+else
+    echo "CROSS_BACKEND_RESIDUAL_PASS"
+fi
 
-echo "CROSS_BACKEND_RESIDUAL_PASS"
+# Report the device path shape as its own artifact.  A numeric pass says nothing
+# about which path produced it, and the failure mode this guards against (device
+# flux on, host gradient) still passes the residual gate while being useless as
+# a performance baseline.  Written after the gate so it is recorded even when
+# the comparison itself fails.
+device_path_report="${ONEFLOW_XB_RUN_ROOT}/device-path.txt"
+if [ -f "$(dirname "$0")/parse-xb-device-path.py" ]; then
+    # The parser exits 2 when the path is not fully on the device.  That is a
+    # finding, not a script error, so do not let `set -e` abort the run: the
+    # residual verdict above has already been written.
+    set +e
+    python3 "$(dirname "$0")/parse-xb-device-path.py" \
+        "$ONEFLOW_XB_RUN_ROOT/hip.log" \
+        "$ONEFLOW_XB_RUN_ROOT/hip-stage.tsv" \
+        > "$device_path_report" 2>&1
+    device_path_rc=$?
+    set -e
+    cat "$device_path_report"
+    if [ "$device_path_rc" -ne 0 ]; then
+        echo "DEVICE_PATH_REPORT=not_usable"
+    else
+        echo "DEVICE_PATH_REPORT=usable"
+    fi
+else
+    echo "DEVICE_PATH_REPORT=parser_missing" >&2
+fi
