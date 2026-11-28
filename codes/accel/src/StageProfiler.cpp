@@ -106,6 +106,14 @@ auto & Totals()
         { "calc_lhs", 0.0 },
         { "update_flowfield", 0.0 },
         { "calc_boundary", 0.0 },
+        // LU-SGS stage rows.  Registered here as well as in CategoryForTask:
+        // Record() drops any category that is not in this table, so a missing
+        // entry would make the timer silently invisible.
+        { "lusgs_lower_sweep", 0.0 },
+        { "lusgs_upper_sweep", 0.0 },
+        { "lusgs_update_flowfield", 0.0 },
+        { "lusgs_init", 0.0 },
+        { "lusgs_zero_dq", 0.0 },
         { "boundary_gamma_inner", 0.0 },
         { "boundary_viscosity_inner", 0.0 },
         { "boundary_bc", 0.0 },
@@ -430,6 +438,18 @@ const char * StageProfiler::CategoryForTask( const std::string & taskName )
     if ( taskName == "CALC_LHS" ) return "calc_lhs";
     if ( taskName == "UPDATE_FLOWFIELD" ) return "update_flowfield";
     if ( taskName == "CALC_BOUNDARY" ) return "calc_boundary";
+    // LU-SGS stages.  These must precede the generic INIT match below: every
+    // one of them used to fall through to "" (or, for INIT_LUSGS, into
+    // "initialization"), so the sweep that dominates an LU-SGS run had no row
+    // in stage.tsv at all.  Without an independent timer the implicit solver
+    // could not be sized against the rest of the step, which is the whole
+    // question behind the B.4.4 decision.  Names match CmxTaskNames.h and
+    // system/ns/function/funcMap.txt exactly.
+    if ( taskName == "LUSGS_LOWER_SWEEP" ) return "lusgs_lower_sweep";
+    if ( taskName == "LUSGS_UPPER_SWEEP" ) return "lusgs_upper_sweep";
+    if ( taskName == "UPDATE_FLOWFIELD_LUSGS" ) return "lusgs_update_flowfield";
+    if ( taskName == "INIT_LUSGS" ) return "lusgs_init";
+    if ( taskName == "ZERO_DQ_FIELD" ) return "lusgs_zero_dq";
     if ( taskName.find( "INIT" ) != std::string::npos
          || taskName.find( "READ_RESTART" ) != std::string::npos )
     {

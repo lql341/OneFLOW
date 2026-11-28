@@ -161,4 +161,65 @@ TEST_F( StageProfiler, RegistersResidentProfilingCategories )
     EXPECT_DOUBLE_EQ( totals[ "residual_zero" ], 1.25 );
     EXPECT_DOUBLE_EQ( totals[ "host_mirror_refresh" ], 2.5 );
 }
+
+// LU-SGS stage categories (B.4.4-prep).
+//
+// Two failure modes are silent and both were live before this change: a task
+// name missing from CategoryForTask returns "", so the timer is never created;
+// a category missing from the registry is dropped by Record(), so the row never
+// reaches the TSV.  Either one hides the sweep that dominates an LU-SGS run,
+// which is exactly the number the B.4.4 decision needs.
+TEST_F( StageProfiler, MapsLusgsTasksToCategories )
+{
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "LUSGS_LOWER_SWEEP" ),
+        "lusgs_lower_sweep" );
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "LUSGS_UPPER_SWEEP" ),
+        "lusgs_upper_sweep" );
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "UPDATE_FLOWFIELD_LUSGS" ),
+        "lusgs_update_flowfield" );
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "INIT_LUSGS" ), "lusgs_init" );
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "ZERO_DQ_FIELD" ),
+        "lusgs_zero_dq" );
+
+    // INIT_LUSGS must not fall into the generic INIT bucket any more: that
+    // bucket is shared with grid/restart setup and would bury the implicit
+    // solver's own initialization.
+    EXPECT_STRNE(
+        ONEFLOW::StageProfiler::CategoryForTask( "INIT_LUSGS" ),
+        "initialization" );
+    // Other INIT tasks keep their existing mapping.
+    EXPECT_STREQ(
+        ONEFLOW::StageProfiler::CategoryForTask( "READ_RESTART" ),
+        "initialization" );
+}
+
+TEST_F( StageProfiler, RecordsLusgsCategories )
+{
+    ONEFLOW::StageProfiler::Record( "lusgs_lower_sweep", 11.5 );
+    ONEFLOW::StageProfiler::Record( "lusgs_upper_sweep", 12.25 );
+    ONEFLOW::StageProfiler::Record( "lusgs_update_flowfield", 0.75 );
+    ONEFLOW::StageProfiler::Flush();
+
+    std::ifstream input( directory / "rank-3.tsv" );
+    std::string line;
+    std::getline( input, line );
+    std::map< std::string, double > totals;
+    while ( std::getline( input, line ) )
+    {
+        const auto tab = line.find( '\t' );
+        ASSERT_NE( tab, std::string::npos );
+        totals[ line.substr( 0, tab ) ] = std::stod( line.substr( tab + 1 ) );
+    }
+    EXPECT_EQ( totals.count( "lusgs_lower_sweep" ), 1u );
+    EXPECT_EQ( totals.count( "lusgs_upper_sweep" ), 1u );
+    EXPECT_EQ( totals.count( "lusgs_update_flowfield" ), 1u );
+    EXPECT_DOUBLE_EQ( totals[ "lusgs_lower_sweep" ], 11.5 );
+    EXPECT_DOUBLE_EQ( totals[ "lusgs_upper_sweep" ], 12.25 );
+    EXPECT_DOUBLE_EQ( totals[ "lusgs_update_flowfield" ], 0.75 );
+}
 }
