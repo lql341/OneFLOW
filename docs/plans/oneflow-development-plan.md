@@ -153,14 +153,18 @@ Phase A（执行模型）
 
 - **无粘 HIP batch**。Lax-Friedrichs 和 Roe 是候选通量，还要满足运行时、网格、
   方程数和接口交换等能力守卫。组合不受支持时，显式强制 batch 会报错，自动选择时可回落。
-- **设备梯度与显式驻留执行**。设备梯度要求无粘模式、HIP batch，以及关闭限制器或使用
-  Barth；多区还要求设备 interface。历史 Barth 对照差约 `1.1e-6`，超过当时的
-  `1e-12` 门槛。关闭限制器仍是该验收基线的配置。
+- **设备梯度与显式驻留执行**。设备梯度要求 HIP batch、关闭限制器或使用 Barth；
+  多区还要求设备 interface。`vismodel!=0` 时还需 `ONEFLOW_ALLOW_VISCOUS_HIP_GRADIENT=1`
+  显式 opt-in（与 batch 的 `ONEFLOW_ALLOW_VISCOUS_HIP_BATCH` 独立）。
+  历史 Barth 对照差约 `1.1e-6`，超过当时的 `1e-12` 门槛。关闭限制器仍是该验收基线的配置。
+  **多区粘性下的设备梯度数值仍未通过**：已二分定位到该链（见 Living TODO B.4.1 L4），
+  单区 full-dev 200 步则已通过。
 - **独立的粘性与 SA hook**。`UNsVisFlux::CalcVisFluxHip` 要求五方程、VIS_STD、
   非等温壁和必要字段。条件不满足时走主机粘性循环。
-  `test/cfd/m6wingroe_sa` 使用 Roe、LU-SGS 和 SA；部分 hook 可命中，整算例设备
-  端到端尚未验收。已核对状态（`cc1dd4b3a`，单 rank/单 DCU）：全关与仅开粘性各
-  400 步的 `aero.dat`、`res.dat` 逐字节一致；全开 hook、收敛后气动力和多区仍未验收。
+  `test/cfd/m6wingroe_sa` 使用 Roe、LU-SGS 和 SA；单 zone / 单 rank 的完整设备链
+  已通过 200 步跨后端验收（`129048798`，residual `3.2e-20`、aero `0`，见 Living TODO B.4.1 L3）。
+  多区（8 zone / 8 rank）的 full-dev 仍未通过，已定位到 device 梯度链；纯 device flux
+  臂数值正确（`129083701`）。性能口径：单区 2.42× 是 1 核 / 1 DCU，与 8:1 不可比。
   写回门禁以 `SELFCHECK result=PASS|FAIL` 判定：先统计非有限值，再比相对误差，
   并同时看面归一化差与绝对差；只有相对误差的旧日志不能证明通过。
   当前切片与证据见 [Living TODO](oneflow-development-todo.md)。

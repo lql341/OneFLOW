@@ -2,11 +2,18 @@
 
 本页跟踪 [Phase Plan](oneflow-development-plan.md) 的当前切片。父项和子项沿用计划编号；更细的执行步骤记在对应子项下。当前验收完成后移出本页，将复验结论和证据索引留在计划或对应报告。
 
-## 当前状态（2026-11-23 收口）
+## 当前状态（2026-11-28 收口）
 
-分支 `dev`，HEAD `813d364ed`，即 upstream master 合并 PR #267 后的提交；`dev`、`origin/dev`、`origin/master` 与 upstream master 完全一致，工作树干净。PR #267 与上游 master 推送的 CI 均全绿。
+分支 `dev`，HEAD `7b97d2b52`，已推送 `origin/dev`，工作树干净。local/origin/upstream `master`
+三端均为 `701234a71`，已并入 `dev`。本轮 5 个 commit：B.4.1 symmetry 算术共享、`-O3` 设备编译、
+LU-SGS profiler、门禁硬化、台账收口。合并 master 到本地及推送后 8/8 + 20/20 本地单测通过。
 
-**文档根改名遗留已收口（2026-11-23）**：修掉 `PublishMySite.yml` 的构建路径（原 `cd doc`），清掉 53 处 `doc/` 残留，其中 `stl_geometry_asset_preparation.json` 的 7 处曾让 `test_contract_catalog` 在 master 上静默红 8 个用例。新增 `scripts/check-doc-paths.py`，接入 `docs-check.yml`（仅 master；hexin 仍用 `doc/` 根且有自己的存量引用，合并后再加）与 Linux CI 的契约测试步骤。根因与坑记录见[当前交接](../handoff/oneflow-current-handoff.md) §5。
+**本页就是加速器主线的活 handoff**：当前状态、活动切片和证据索引都在这里；固定路径/命令见
+[当前交接](../handoff/oneflow-current-handoff.md) §1–§3，坑见 §5，导航与当前摘要见
+[AI_CONTEXT](../AI_CONTEXT.md)。长期计划见 [Phase Plan](oneflow-development-plan.md)。
+
+**当前焦点**：B.4.1 的 L1–L3（1 zone / 1 rank）已全过；8 zone / 8 rank full-dev 数值 fail，
+已二分定位到 device 梯度链（见下方 B.4.1 的 L4 项），未修好前不报 8:1 加速比。
 
 ## 上一个收口点（2026-11-22）
 
