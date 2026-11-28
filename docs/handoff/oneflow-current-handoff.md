@@ -111,7 +111,42 @@ normal/strict → 50 步稳定性；性能改动再加 paired。任何一步失�
 
 ## 4. 当前任务指针（每次会话就地更新）
 
-**2026-11-23 收口点（覆盖下方所有旧记录）**。`dev` HEAD `813d364ed`，即 upstream master 合并 PR #267 后的提交；`dev`、`origin/dev`、`origin/master` 三者与 upstream master 完全一致，工作树干净。PR #267 三项检查全绿（publish site / Linux / Windows），上游 master 推送后同样全绿。
+**2026-11-27 收口点（覆盖下方所有旧记录）**。`dev` HEAD `f20c08f2d`（工作树含未提交改动）。
+
+**完整 device 链首次跑通，B.4.1 三级验收全部通过**：
+- L1 host-flux 20 步 `128965585`（只隔离 boundary）
+- L2 full-dev 20 步 `129045272`（三判据 yes，residual 6.78e-21 / aero 0）
+- L3 full-dev 200 步 `129048798`（三判据 yes，residual 3.22e-20 / aero 0，两臂 rc=0）
+
+**关键根因**：`vismodel != 0` 时 `UseHipBatchAdapter`（`UNsInvFlux.cpp:899`）和 `UseHipGradient`
+（`:791`）各查一个**独立**开关。只设 `ONEFLOW_ALLOW_VISCOUS_HIP_BATCH` 会得到「device flux +
+host 梯度」的混合路径——`HIP_BATCH_DIAGNOSTIC enabled=1`、`HIP kernel` 非零，但
+`gradient_kernel=0`、`rhs_inviscid` 从 21 涨到 360 ms/step（`128983927`）。两个都设之后
+`rhs_inviscid` 回到 20.54 ms/step，与历史 `128693499` 的 ~21.5 同量级。门禁的 flagship profile
+现在默认两个都开。
+
+**性能基线（full-dev 200 步，`129048798`，b13r3n03，1 rank，binary `c51e1706`）**：
+单步顶层 CPU 7155.56 → HIP 2957.66 ms/step，**端到端 2.42×**。HIP 侧最大项是 **LU-SGS
+上下扫 1558.92 ms/step（52.7%）**，而它 HIP/CPU ≈ 0.84——主控 LU-SGS 至今没有设备代码
+（`UNsLusgs.cpp` / `NsLusgs.cpp` 的 Hip 引用数为 0）。真正上设备的三项：`rhs_inviscid` 0.03、
+`reconstruction` 0.01、`calc_boundary` 0.02。
+
+**旧结论作废**：「device LU-SGS 比 host 慢 6.6%」不成立，主控从来没有 device 版本；差异来自
+不同轮次的 env 与步数口径不一致。
+
+**2026-11-26 收口点**。`dev` HEAD `f20c08f2d`（工作树含本轮未提交改动，见下）。
+
+**B.4.1 已 Done**：symmetry ghost 反射语义修好，**residual 与 aero 均逐位一致**（`max_rel=0.000000e+00`），20 步与 200 步两次门禁均通过。根因是 device `HipFluxBackend.hip` 的 `type==3` 分支写 `ghost = owner`，而 host `NsBcSolver::SymmetryBc` 在拷贝 `primt1 = prims1` 之后**紧接着把三个速度分量覆盖成反射值**；`ilim=0` 时 ghost 进 `0.5*(q[lc]+q[rc])`，对称面法向速度没被消掉。原注释只读了 host 的前半句（提交 `ab7a40fa8` 沿用了这个误读）。
+- 改法：新增 `codes/accel/include/BoundaryArithmetic.h`（HD-safe 共享实现，仿 `TurbSaArithmetic.h`），host `NsBcPolicy.cpp` 与 device kernel 转调同一函数，公式不再有第二份。
+- 顺带收掉次要项：`BoundaryPower` 加 `inviscid` 参数（= `!viscousWall`），对齐 host `FarFieldPower` 只在 `vismodel == INVISCID` 走 `x*x*sqrt(x)` 快路的条件。
+- 证据：`evidence/gate/128965585-b41sym`（20 步）、`evidence/gate/128967034-b41sym`（200 步）。残差非平凡（step20 `5.01829618388647769e-06`、step200 `3.06957041038148102e-06`），HIP 臂 `boundary_device 97.77ms` / `bnd_kernel 2.82ms` 非零，两臂后端分别为 `CPU` 与 `HIP/DCU`。
+- 本地：`bc_policy_test` 新增 3 例 symmetry 契约，13/13 通过。
+
+**设备代码优化等级是 `-O0`，已修**（本轮独立发现，与 B.4.1 无交叉）。项目从未设置 `CMAKE_BUILD_TYPE`，因此 `CMAKE_HIP_FLAGS_RELEASE` 不存在，clang 对 device 代码退回 `-O0`。后果是 `SaFaceSpectrumKernel` 的 `private_segment_size = 17360` 字节/线程，8 rank 挤 1 张 DCU 时耗尽 HSA 资源（`HSA_STATUS_ERROR_OUT_OF_RESOURCES`，作业 `128829862`）。`cmake/OneFLOWAccelSDK.cmake` 现在在无 build type 且调用方未显式指定 `-O` 时追加 `-O3 -fno-fast-math -ffp-contract=off`；`-ffp-contract=off` 是硬要求（clang 默认把 `a*b+c` 收缩成 fma，会破坏 aero 的逐位等价，`OneFLOWEulerContract.cmake:64` 已有同样先例）。修复后 8 rank / 1 DCU 可跑通（`evidence/build/128962098-o3fix`，CPU 101.11s vs HIP 83.79s）。**归因已验证**：只含 `-O3` 的快照（`evidence/gate/128976121-o3only`）residual 仍是 `1.808152e-12`，说明 `-O3` 不改数值，B.4.1 的逐位归零完全来自 symmetry 修复。
+
+**口径提醒**：此前所有旗舰加速比（2.19x / 2.28x）都是 **1 rank 对 1 DCU**，即作业申请 8 核但只用了 1 核（`runs.tsv` 的 `ranks` 列为 1）。8 rank / 1 DCU 的同口径数字只有在 `-O3` 修复之后才第一次跑通，1.21x（200 步，`128962098`）。两者不可混谈。
+
+**2026-11-23 收口点**。`dev` HEAD `813d364ed`，即 upstream master 合并 PR #267 后的提交；`dev`、`origin/dev`、`origin/master` 三者与 upstream master 完全一致，工作树干净。PR #267 三项检查全绿（publish site / Linux / Windows），上游 master 推送后同样全绿。
 **文档根改名的遗留问题已收口**：`aca126d53` 把 `doc/` 并入 `docs/` 时只改了文件级链接，漏了 `.github/workflows/PublishMySite.yml` 的 `cd doc`，deploy 在 Sphinx 之前就 `No such file or directory` 退出。修复提交（本收口点）同时做了三件事：修掉构建路径；清掉 53 处 `doc/` 残留（含 `stl_geometry_asset_preparation.json` 的 7 处，这 7 处让 `test_contract_catalog` 在 master 上静默红了 8 个用例）；新增 `scripts/check-doc-paths.py` 并接入 `docs-check.yml`（分支扩到 master）与 Linux CI 的契约测试步骤。**根因**：文档根路径分散在 PublishMySite / docs-check / .readthedocs.yaml / Makefile 四处，且契约测试只在 hexin 上跑，master 没有门禁。
 **SSH 现状更正（2026-11-23）**：`git push` 走 `origin` 的 SSH 会间歇性超时（`Connection to UNKNOWN port 65535 timed out`，同一会话内重试有时成功），`scripts/sync-master.sh` 因此经常失败。改用 HTTPS 推送稳定：`git push https://github.com/lql341/OneFLOW.git <sha>:refs/heads/<branch>`，凭据来自 gh 的 keyring，不需要交互。`ssh -T git@github.com` 本身仍能认证。
 
@@ -358,6 +393,64 @@ M6 为**六面体**（面全为四边形），8 zone / 294,912 cell / 306,577 no
 `of-probe-cleanup` CPU 作业中，接手先查该作业与 evidence/probe 下的结果。
 
 ## 5. 已知坑与设计约束（只加有长期价值的）
+
+**8 zone full-dev 数值 fail：根因在 device 梯度，已二分定位（2026-11-27）**。
+- 症状：8 rank / 8 zone flagship 在 batch 与 gradient 双 allow 下残差从 step 2 起冻结
+  （`7.6341627e-06` 二十步不变，只有末位 ulp 抖动），gate residual 2.0e-6 / aero 3.6e-2。
+  1 zone 同配置是逐位 0（`129048798`）。
+- **三组对照把问题锁在 device 梯度，不在 device flux**：
+  - 全 host（`129082789`）：residual **0 pass**
+  - device flux on、device 梯度 off（原始代码，`129083701`）：residual **3.4e-21 pass**
+  - device flux + 梯度双 on（`129056842`）：residual 2.0e-6 **fail**
+- **aero 3.6e-2 与 device 无关**：纯 host 对照下两臂 aero 同样差 3.6e-2
+  （CPU field3 3.78e-2 vs HIP 2.17e-3），是 8 zone 分区后的累加/归属差异。
+  B.4.1 的 aero 闸门只在单 zone 有效，8 zone 需另立判据。
+- **一个被证伪的假设**：曾以为 `gradient_download=0` 是根因（`CalcGradHip(downloadGradient && !packedExchange, ...)`），
+  加了 `HipGradientNeedsFullDownload()` 强制全量下载，单测 24/24 通过，但集群上 residual 从 2e-6 **恶化到 1.4e-4**，
+  step 1 就不一致。说明 device 梯度值本身在多 zone 下是错的，强制下载只是让错误更早暴露。
+  **该修复已回退**，不要在台账里把它当作已解决。
+- 触发条件与 zone 数绑定而非 rank 数：`Zone.cpp` 要求 `zones % ranks == 0`，
+  `crossZoneGhostGradient = hipReconstruction && (nZones > 1 || nLocal > 1)`，8 rank 必然 8 zone。
+- 下一枪：读 `HipFluxBackend::CalcGradient` 的 ghost 梯度来源，区分是 kernel 算错还是 halo 交换错。
+  修好后必须重跑 8 zone 20 步确认 residual pass，才能谈 8:1 加速比。
+
+**更换 SSH 密钥必须同时重新生成 `.pub`（2026-11-27）**。从控制台下载的密钥文件是私钥，
+拷贝到 `~/.ssh/id_rsa_<集群>` 之后，必须再执行
+`ssh-keygen -y -f ~/.ssh/id_rsa_<集群> > ~/.ssh/id_rsa_<集群>.pub`。
+否则 SSH 拿旧的 `.pub` 做指纹匹配，`ssh -v` 里 `Offering public key` 显示的还是旧指纹，
+服务端一律 `Permission denied`，看起来像"新密钥无效"。本机旧密钥备份在
+`~/.ssh/backup-20261127/`。验证指纹只能用 `ssh-keygen -y -f <私钥> | ssh-keygen -lf -`；
+**不要用 `ssh-keygen -lf <私钥文件>`**——它读的是同名 `.pub`，会给假答案，我就因此误判过一次。
+另外，新下载私钥文件的权限默认是 664，`ssh-keygen` 会拒绝读取，先 `chmod 600`。
+苏北昆山 OpenAPI 在 2026-11-27 下午持续 `HTTP 500 /hpc/openapi/v2/cluster`，
+`ssh` 后端不受影响；SSH 的 `submit` 只接受 `--remote-path`（现成 sbatch 脚本），
+且脚本里必须写 `#SBATCH --gres=dcu:1`，否则报 `QOSMinGRES`。
+
+**shell 续行中间不能写注释（2026-11-27）**。在一串 `VAR=... \` 续行的中间插一行 `# 注释`
+会终止续行：它之前的所有 `VAR=` 变成对空命令的赋值，最后的命令单独执行、一个 env 也没拿到。
+作业 `129044654` 就是这样失败的——`ONEFLOW_XB_SOURCE_CASE` 未设，门禁在 `:?` 处退出，所有
+计时为 0，表面看像"门禁逻辑坏了"。注释要写在整条命令**之上**。排查时的判据：`result.txt`
+里所有 category 都是 0 且 `HIPLOG_MISSING`，先看驱动的续行，不要动求解器。
+
+**vismodel!=0 需要两个独立的 device opt-in（2026-11-27）**。`UseHipBatchAdapter`
+（`UNsInvFlux.cpp:899`）读 `ONEFLOW_ALLOW_VISCOUS_HIP_BATCH`，`UseHipGradient`
+（`UNsInvFlux.cpp:791`）读 `ONEFLOW_ALLOW_VISCOUS_HIP_GRADIENT`，两者互不覆盖。只设前者
+会得到混合路径：`HIP_BATCH_DIAGNOSTIC enabled=1`、`HIP kernel` 非零，但 `gradient_kernel=0`，
+`rhs_inviscid` 从 ~21 涨到 ~360 ms/step（作业 `128983927`）。`UseHipDeviceReconstruction`
+依赖 `UseHipGradient`，所以梯度开关会连带打开设备重构。旗舰 profile 现在在门禁里默认两个都开
+（inviscid profile 保持 0）。
+
+**判断 device 路径形态只看三判据，不看耗时**。`DEVICE_FLUX_ON`（能力报告 `enabled=1`）、
+`DEVICE_GRADIENT_ON`（`gradient_kernel` 累计 > 0）、`TIMING_USABLE`（两者皆 yes）。
+`HIP kernel` 计时器只包住 `hipLaunchKernelGGL`，不含同步，所以它非零不代表完整设备路径；
+`rhs_inviscid` 的步均同样不能判断——设备慢和 host 回退可以给出相同的数字。工具：
+`ci/kunshan/parse-xb-device-path.py <hip.log> <hip-stage.tsv>`，exit 0=完整设备，
+exit 2=mixed（会显式区分 `mixed_device_host_paths` 与 `host_fallback`）。
+
+**LU-SGS 与 update_residuals 是兄弟阶段，不是父子（2026-11-27）**。用
+`lusgs_sweeps / update_residuals` 算占比会得到 130%，超过 100% 就是在提示分母错了。
+单步顶层阶段 = 残差计算 + LU-SGS 上下扫 + 边界 + 时间步 + 流场更新；旗舰 20 步 full-dev
+下 LU-SGS 占其中约一半。
 
 **文档根改名会连带多处目录级路径（2026-11-23）**。文档树从 `doc/` 改名为 `docs/` 时，只改
 markdown 里的文件级链接是不够的：CI 的 `cd` 与 `sphinx-build` 参数、`.readthedocs.yaml`、

@@ -41,27 +41,71 @@
 
 ## 进行中 / 待收口
 
-- [ ] **B.4.1 boundary 残差 1.808e-12**（Partial，device 已跑，aero 已 0）
+- [x] **B.4.1 boundary 残差 1.808e-12**（**Done**，三级验收全部通过）
+  - [x] **L1 host-flux 20 步**：`evidence/gate/128965585-b41sym`，residual/aero 均 `max_rel=0`。当时两臂都不走 device flux，所以这一级只隔离了 boundary 一项。
+  - [x] **L2 full-dev 20 步**：`evidence/gate/129045272-b41sym`，`DEVICE_FLUX_ON=yes`、`DEVICE_GRADIENT_ON=yes`、`TIMING_USABLE=yes`（parse exit 0），residual `6.776264e-21` pass、aero `0`。
+  - [x] **L3 full-dev 200 步**：`evidence/gate/129048798-b41sym`，同三判据全 yes，residual `3.218725e-20` pass（row 179 field 6）、aero `0`，两臂 rc=0。`flow` 仍是 level2 历史槽 `binary_byte_diff`，属已知项，不影响续算。
+  - [ ] **L4 8 zone / 8 rank（未完成，二分已定位）**：上述 L1–L3 都是 **1 zone / 1 rank**。8 zone 的 flagship full-dev 数值 fail，已用三组实验锁定问题在 device 梯度链，不在 device flux：全 host `129082789` residual 0 pass；device flux on + 梯度 off（原始代码）`129083701` residual 3.4e-21 pass；双 on `129056842` residual 2.0e-6 fail。另注：8 zone 下 aero 3.6e-2 的差在纯 host 对照里同样存在（分区累加顺序差异），B.4.1 的 aero 闸门只对单 zone 有效。一个「强制全量梯度下载」的假设被证伪（单测 24/24 但集群 residual 恶化到 1.4e-4），已回退，详见 handoff §5。修好 device 梯度的多 zone 正确性后才能谈 8:1 加速比。
   - [x] 去掉 `HipBoundarySupported` 的 `vismodel!=0` 硬拒绝；kernel 补 viscous 壁面、symmetry ghost、bcQ 覆盖所有 BC。提交 `ab7a40fa8`。
   - [x] `bnd_kernel 2.78 / bnd_ghost_copy 10.04 / boundary_device 89.19ms`，`boundary_calc_face_bc` 归零；aero max_rel=0。
   - [x] **已排除 SA 移植的影响**：SA 设备化前后 res/turbres 逐位相同，证明这 1.808e-12 来自 NS 非壁面 BC，与湍流无关。
-  - [ ] **待收：对称面 ghost 反射语义（首选假设，附验证方法）**
-    - 证据链：`NsBcSolver::SymmetryBc`（`codes/ns/src/NsBcSolver.cpp:376`）先把 `primt1 = prims1`，**紧接着又用 `ReflectVelocityRelativeToMovingFace` 把 primt1 的三个速度分量覆盖成反射值**；`UNsBcSolver::UpdateBc`（`codes/uns/src/UNsBcSolver.cpp:184`）写回 `q[rc] = primt1`。所以 host 的 symmetry ghost **带反射法向速度**。
-    - device kernel（`codes/accel/src/HipFluxBackend.hip`，type==3 分支）按 "ghost = owner" 实现，注释引用的 "NsBcSolver::SymmetryBc sets primt1 = prims1" 是**只读了前半句**。提交 `ab7a40fa8` 的说明沿用了这个误读。
-    - 影响路径：ilim=0 时 `NsLimField::BcQlQrFix`（`codes/uns/src/UNsLimiter.cpp:49`）对非壁面取 `0.5*(q[lc]+q[rc])`，ghost 直接进无粘通量→残差。
-    - **验证方法**：把 device type==3 分支改成与 wall 相同的反射式（`ghost = u - 2*n*(u·n - vfn)`，rho/p 取 owner），重跑 20 步 gate；若 `residual` 从 `1.808e-12` 掉到 `1e-20` 量级即证实。
-    - 若证实，同时要核对 symmetry 的 **bcQ**。已核对：`SetBc` 里 symmetry 分支不改 `updateFlag`（默认 `true`），所以 `UpdateBc` 确实写 bcQ；host 写 `ArithmeticAverage(prims1, primt1)`，device 写 `0.5*(owner+反射)`，**这两者等价**（已核对，非假设）。所以 bcQ 不是差异来源，ghost q 才是。
-  - [ ] **次要项：farfield 幂函数快路不一致**。host `FarFieldPower`（`codes/ns/src/NsBcSolver.cpp:44`）的 `x*x*sqrt(x)` 快路只在 `vismodel == INVISCID` 时走；device `BoundaryPower`（`HipFluxBackend.hip:1259`）无条件走。粘性算例上 host 用 `pow(x,2.5)`、device 用 `sqrt` 形式，差 ≤1 ulp（实测 3.7e-16）。修法：给 device 加同一个 `viscousWall` 守卫。
+  - [x] **已收：对称面 ghost 反射语义**（2026-11-26）
+    - 假设成立。host `NsBcSolver::SymmetryBc` 把 `primt1` 的速度分量覆盖成反射值，`UNsBcSolver::UpdateBc` 写回 `q[rc]`；device type==3 却写 owner 副本。ilim=0 时 ghost 进 `0.5*(q[lc]+q[rc])`，对称面法向速度没被消掉 → 通量不同 → 残差。
+    - 改法：新增 backend-neutral `codes/accel/include/BoundaryArithmetic.h`（`ReflectVelocityRelativeToMovingFaceHd` / `ArithmeticAverageHd` / `RelativeFaceNormalVelocityHd`，仿 `TurbSaArithmetic.h` 的 HD 宏），host `NsBcPolicy.cpp` 与 device kernel 都转调同一实现，公式不再有第二份转录。
+    - 验收：`evidence/gate/128965585-b41sym`（20 步）、`evidence/gate/128967034-b41sym`（200 步），两作业均 `residual max_rel=0.000000e+00`、`aero max_rel=0`，两臂 rc=0。残差非平凡（step20 `5.01829618388647769e-06`，step200 `3.06957041038148102e-06`），HIP 臂 `boundary_device 97.77ms` / `bnd_kernel 2.82ms` 非零证明设备真执行。
+    - 本地契约测试：`bc_policy_test` 新增 3 例（法向抵消、面平均法向归零、斜法向幅值守恒），13/13 通过。
+    - **归因已隔离**：只含 `-O3`、不含 symmetry 修复的快照独立跑 20 步门禁（`evidence/gate/128976121-o3only`，binary `4b8b4ef9`），residual 仍为 `1.808152e-12` fail、aero 仍 0。因此 `-O3` 对数值无影响，逐位归零完全来自 symmetry ghost 修复。
+- [x] **B.4.1 次要项：farfield 幂函数快路不一致**（Done）
+  - host `FarFieldPower` 的 `x*x*sqrt(x)` 快路只在 `vismodel == INVISCID` 时走；device `BoundaryPower` 原先无条件走。已给 device 加 `inviscid` 参数（= `!viscousWall`，等价于 `vis_model.vismodel == INVISCID`），三处调用点同步更新。随同上条 200 步门禁一并验证为逐位一致。
 - [ ] **B.4.2 SA 湍流 device 化**（Done，code-complete）
   - [x] 梯度（CSR 重写，去掉 O(nCells×nFaces)）、显式更新、隐式谱、边界、LU-SGS 全部接线；`TurbSaGradientView`/`TurbSaUpdateView` 由孤儿代码变为生产路径。
   - [x] 三个 "已有入口但从未调用" 的根因已修：`CalcGradient`/`Update` 曾把 host 指针直接传给 kernel。
   - [x] 集群验证：编译链接通过，HIP rc=0，数值与移植前逐位等价。
 - [ ] **B.4.3 HIP 开关语义统一**（Done）
   - [x] 9 个 `ONEFLOW_ENABLE_UTURB_HIP_*` 并入 `HipProductionPolicy.h` 白名单，backend=HIP 即生效；显式 =0 仍可单独关闭。与 UNS 语义一致。
+- [x] **完整 device 链 env 硬化**（Done，B.4.4-prep 前置）
+  - [x] 根因：`vismodel != 0` 时 `UseHipBatchAdapter` 与 `UseHipGradient` 各查一个独立开关
+    （`UNsInvFlux.cpp:899` / `:791`），只设前者会得到「device flux + host 梯度」的混合路径
+    （作业 `128983927`：`gradient_kernel=0`、`rhs_inviscid` 360 ms/step）。
+  - [x] `ci/kunshan/f2-main-solver-cross-backend-residual.sh`：flagship profile **默认双 allow**，
+    inviscid profile 保持 0，两者都可用 `=0` 覆盖出 host-flux 对照臂。
+  - [x] 新增 `ci/kunshan/parse-xb-device-path.py`：三判据（`DEVICE_FLUX_ON` / `DEVICE_GRADIENT_ON` /
+    `TIMING_USABLE`），exit 0=完整设备、exit 2=mixed 或 host_fallback；gate 末尾自动输出 `device-path.txt`。
+  - [x] `tests/euler_inv_flux_capability_test.cpp` 补 2 例（viscous 与 opt-in 无关、ilim=0 仍需 5 方程），8/8 通过。
 
 ## 后续（性能提升路径）
 
-- [ ] **B.4.4 LU-SGS（当前最大项，实测 host 更快）**：三条可选路径——(a) 默认关回 host，代码留用；(b) 红黑/多色排序把层数从 221 压到 O(1)，但破坏 Gauss-Seidel 逐位等价，需重新做门禁；(c) 换 GMRES/多重网格等可并行求解器。当前状态：保留启用，44.4s vs host 40.1s。
+- [ ] **B.4.4 LU-SGS（full-dev 基线已建立，待决策）**
+  - **旧结论作废**：「device LU-SGS 比 host 慢 6.6%」不成立。主控 LU-SGS 至今**没有设备代码**
+    （`UNsLusgs.cpp` / `NsLusgs.cpp` 的 `Hip` 引用数为 0），所谓差异来自不同轮次的 env 与步数口径不一致。
+  - **full-dev 200 步基线**（`evidence/gate/129048798-b41sym`，b13r3n03，1 rank，binary `c51e1706`）：
+    单步顶层合计 CPU 7155.56 → HIP 2957.66 ms/step，**端到端 2.42×**。
+  - **口径警告**：上述 2.42× 是 **1 核 / 1 DCU**，与历史 18.5×（8 核 / 1 DCU 的无粘受限路径）不可比。
+    1 核跑 294,912 单元时 cache 几乎全失效，CPU 基线被高估；8 核分摊后每核 36,864 单元进 L2，
+    从 1→8 核墙钟改善达 18.6×（超线性）。8c/8c1d 口径下新测的 device flux 单臂
+    `rhs_inviscid` 仅 0.76×（`129083701`），远小于 1c/1d 的 0.03×。在 8 zone device 梯度修好、
+    且用同 rank 数配对测出可信 8:1 数字之前，不要把 2.42× 当作对外性能结论。
+
+    | 顶层阶段 | CPU ms/step | HIP ms/step | HIP 占比 |
+    |---|---:|---:|---:|
+    | LU-SGS 上下扫 | 1864.82 | 1558.92 | **52.7%** |
+    | update_residuals | 3159.49 | 1161.33 | 39.3% |
+    | calc_time_step | 196.44 | 164.26 | 5.6% |
+    | calc_boundary | 1894.54 | 37.53 | 1.3% |
+    | lusgs_update_flowfield | 40.27 | 35.62 | 1.2% |
+
+  - **LU-SGS 仍是 host**：HIP/CPU = 1558.92/1864.82 ≈ **0.84**（并非加速）。对照
+    `rhs_inviscid` 0.03、`reconstruction` 0.01、`calc_boundary` 0.02——真正上设备的三项都是 1–2 个数量级。
+  - **它现在是 HIP 侧最大的单项**（52.7%），也是唯一没上设备的大块。
+  - **next action 三选一（只能选一条）**：
+    - (a) 维持 host LU-SGS，继续优化仍走 host 的 `rhs_viscous`（HIP/CPU 0.78，575.37 ms/step，占 19.5%）与同步开销（B.4.5）
+    - (b) 立项**主控 LU-SGS device 化**（单 zone 优先，独立 milestone；当前 0 设备代码，收益上限约 52.7% 的顶层时间）
+    - (c) 先做 **A.4 宏步**，减少每步 LU-SGS 前后的 H2D/D2H 往返
+  - **建议**：(b)。理由——(a) 的剩余空间只有 `rhs_viscous` 的 22% 与同步项，(c) 的前置是 A.4 本身尚未实现；
+    而 (b) 直接作用在 52.7% 的最大项上，且主控 LU-SGS 是标量 5 方程块扫、比 SA 的单方程扫更适合按层并行。
+    立项前必须先做一次**层数测量**（历史记录 221 层、每层约 1300 单元），若层数确实上千，
+    每层一次 kernel launch 的固定开销会吃掉并行收益——这正是当初"设备更慢"传闻的来源，
+    需要先把这个数字测准再决定是否值得做。
 - [ ] **B.4.5 同步开销**：`gradient_download 206ms / v_download 116ms / v_upload 88ms / gradient_mirror 37ms`（20步累计）是为 oracle 对齐付出的回传代价，SA 常驻化后可减少。
 - [ ] **B.4.6 更长步数/多 rank**：35.19s 是 20 步含固定开销的数字，需 200+ 步、多 rank 复测端到端。
 
@@ -71,6 +115,10 @@
 - 三项输出：`xb-final-check/128676813`、`xb-history-shift/128676991`
 - 确定性：`xb-determinism/128677591`
 - boundary device：`xb-boundary/128680850`（220x，res 1.8e-12 待收）
+- **B.4.1 收口（symmetry ghost）**：`evidence/gate/128965585-b41sym`（L1 20 步）、`evidence/gate/128967034-b41sym`（200 步）
+- **B.4.1 L2/L3（full-dev）**：`evidence/gate/129045272-b41sym`（20 步，三判据 yes）、`evidence/gate/129048798-b41sym`（200 步，residual 3.2e-20 / aero 0）
+- **B.4.4 full-dev 基线**：同 `129048798`，LU-SGS 占 HIP 顶层 52.7%，端到端 2.42×
+- **混合路径反例（勿当基线）**：`evidence/gate/128983927-b41sym`，只设 batch allow，`gradient_kernel=0`
 - **SA 全链路**：`128693499-saport`（首版，b13r2n04）、`128694886-saport`（去无用上传后，b13r3n03）
 - 早期粘性：§5.40–§5.44；H1/H2：§5.2；网格阶梯：§5.6/§5.9
 

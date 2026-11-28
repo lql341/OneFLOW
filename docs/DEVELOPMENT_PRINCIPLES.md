@@ -222,6 +222,26 @@ Use this compact format in the owning document:
 Do not record every transient command failure. Record the generalizable lesson, link the
 fixing commit or test where useful, and update the rule if later evidence changes it.
 
+### Recorded lesson: bisect a device-path failure before accepting a plausible root cause
+
+| Field | What to record |
+|---|---|
+| Symptom | On the multi-zone viscous flagship the residual froze at its step-2 value for 20 steps while the CPU arm converged normally (gate residual 2.0e-6 / aero 3.6e-2). The fastest explanation — the gradient was never downloaded to the host — fit the first timer (`gradient_download=0`). A one-line fix forced the download and added four passing unit tests, yet the next 20-step run was worse: residual 1.4e-4 and divergence starting at step 1. |
+| Root cause | The first hypothesis was never discriminated against its alternative. A three-way bisection on the same grid showed: device flux alone passes (residual 3.4e-21, job `129083701`), full host passes (residual 0, job `129082789`), and device gradient on fails in both the original and "fixed" code. The defect is in the device gradient kernel on a multi-zone field, not in the host download; forcing the download only exposed the wrong gradient earlier. The tempting fix was reverted. |
+| Rule | Treat a plausible root cause as a hypothesis until a discriminating experiment separates it from the next candidate. When changing a device/host hand-off, require the numeric result to improve before calling it fixed; a positive kernel timer and a green truth-table unit test prove the path was taken, not that the values are correct. Crossed configurations (viscous × multi-zone) need their own evidence. |
+| Guard | Keep `parse-xb-device-path.py` as the authoritative path-shape report (`DEVICE_FLUX_ON`/`DEVICE_GRADIENT_ON`/`TIMING_USABLE`), but do not encode an unvalidated hand-off rule into it. Record bisection jobs with their residual verdicts in the handoff so the next reader sees which arm passed. |
+| Scope | Any accelerator defect with more than one plausible cause; especially device gradient / interface paths where a timer can confirm execution without confirming correctness. |
+
+### Recorded lesson: reject a failed measurement before interpreting it
+
+| Field | What to record |
+|---|---|
+| Symptom | A 200-step flagship run was reported with an absolute path timer of 0 for every category and `HIPLOG_MISSING`; earlier attempts were interpreted as OOM, private-memory exhaustion and a compiler-flag problem before the real cause — a shell comment inside a backslash continuation that swallowed every `VAR=` — was found. |
+| Root cause | Measurement drivers were trusted as evidence without first proving that the launched process received its configuration and produced output. The gate itself also called `sys.exit(1)` on a numeric mismatch before emitting the device-path report, so the most diagnostic artifact was missing exactly when it was needed. |
+| Rule | A run with no output, a zeroed timer table, or a missing backend banner is not a failed performance run; it is a failed measurement. Diagnose the harness before the solver. A gate must always emit its configuration and path-shape report, even when the numeric comparison fails. |
+| Guard | `ci/kunshan/f2-main-solver-cross-backend-residual.sh` now records `numeric_rc` and prints `DEVICE_PATH_REPORT` on both pass and fail; `parse-xb-device-path.py` exits 2 on missing logs or mixed device/host paths. |
+| Scope | Cluster gate scripts, paired A/B drivers, and any workflow where a shell wrapper assembles the runtime environment. |
+
 
 ## 10. Practical text-output review checklist
 
