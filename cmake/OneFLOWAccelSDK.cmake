@@ -127,6 +127,30 @@ function ( _OneFLOW_ConfigureHipSDK root )
         set ( CMAKE_HIP_FLAGS "${ONEFLOW_ACCEL_SDK_FLAGS}" CACHE STRING
               "HIP compiler flags" FORCE )
     endif ()
+
+    # The device compiler needs an explicit optimization level.  This project
+    # never sets CMAKE_BUILD_TYPE, so CMAKE_HIP_FLAGS_RELEASE does not exist and
+    # clang falls back to -O0 on device code.  At -O0 every local in the
+    # turbulence kernels spills to scratch: SaFaceSpectrumKernel was measured
+    # with private_segment_size = 17360 bytes per thread on gfx906, and with
+    # eight ranks per card that exhausts the HSA runtime's resources (job
+    # 128829862, HSA_STATUS_ERROR_OUT_OF_RESOURCES).  The same kernel at -O3
+    # keeps those values in registers.
+    #
+    # -ffp-contract=off is not optional here.  clang contracts a*b+c into an
+    # fma by default, and the cross-backend gates compare this device code
+    # against the host arithmetic bit for bit (aero max_rel is expected to be
+    # exactly zero).  ONEFLOWEulerContract.cmake already pins the same flag for
+    # the 1D port for the same reason.  -fno-fast-math keeps -O3 from taking any
+    # other floating-point liberty.
+    #
+    # Only supplied when the caller did not already ask for a level, so an
+    # explicit -O in ONEFLOW_ACCEL_SDK_FLAGS, or a configured build type, still
+    # wins.
+    if ( NOT CMAKE_BUILD_TYPE AND NOT ONEFLOW_ACCEL_SDK_FLAGS MATCHES "(^| )-O[0-9sgz]?($| )" )
+        set ( CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -O3 -fno-fast-math -ffp-contract=off"
+              CACHE STRING "HIP compiler flags" FORCE )
+    endif ()
 endfunction ()
 
 function ( _OneFLOW_ConfigureCudaSDK root )
@@ -149,6 +173,13 @@ function ( _OneFLOW_ConfigureCudaSDK root )
     if ( NOT ONEFLOW_ACCEL_SDK_FLAGS STREQUAL "" )
         set ( CMAKE_CUDA_FLAGS "${ONEFLOW_ACCEL_SDK_FLAGS}" CACHE STRING
               "CUDA compiler flags" FORCE )
+    endif ()
+
+    # Same reasoning as the HIP branch: without a build type nvcc also sees no
+    # optimization level on device code.
+    if ( NOT CMAKE_BUILD_TYPE AND NOT ONEFLOW_ACCEL_SDK_FLAGS MATCHES "(^| )-O[0-9sgz]?($| )" )
+        set ( CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -fmad=false"
+              CACHE STRING "CUDA compiler flags" FORCE )
     endif ()
 endfunction ()
 
